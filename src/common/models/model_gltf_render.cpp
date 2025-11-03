@@ -40,6 +40,8 @@
 #include "bitmap.h"
 #include "image.h"
 #include "textures.h"
+#include "v_video.h"
+#include "hw_bonebuffer.h"
 
 //===========================================================================
 //
@@ -97,11 +99,6 @@ public:
         // Get direct access to pixel data (BGRA format, 4 bytes per pixel)
         uint8_t* pixels = bmp->GetPixels();
 
-        Printf("*** FGLTFColoredImage::CopyPixels: color.r=%d color.g=%d color.b=%d color.a=%d\n",
-               (int)color.r, (int)color.g, (int)color.b, (int)color.a);
-        Printf("*** Writing BGRA: [%d, %d, %d, %d]\n",
-               (int)color.b, (int)color.g, (int)color.r, (int)color.a);
-
         // Fill entire bitmap with the solid color
         for (int i = 0; i < Width * Height; ++i) {
             int offset = i * 4;
@@ -140,9 +137,6 @@ static FGameTexture* CreateColoredTexture(const FVector4& color)
     int b = clamp(int(color.Z * 255.0f), 0, 255);
     int a = clamp(int(color.W * 255.0f), 0, 255);
 
-    Printf("*** CreateColoredTexture: Input=(%.3f,%.3f,%.3f,%.3f) RGB=(%d,%d,%d,%d)\n",
-           color.X, color.Y, color.Z, color.W, r, g, b, a);
-
     // Create a unique name for this color
     FString texName;
     texName.Format("GLTFColor_%02X%02X%02X%02X", r, g, b, a);
@@ -154,11 +148,11 @@ static FGameTexture* CreateColoredTexture(const FVector4& color)
 
     auto cached = colorTextureCache.CheckKey(colorKey);
     if (cached) {
-        Printf("*** Using cached color texture for RGBA=(%d,%d,%d,%d)\n", r, g, b, a);
+        DPrintf(DMSG_NOTIFY, "Using cached color texture\n");
         return *cached;
     }
 
-    Printf("*** Creating NEW color texture for RGBA=(%d,%d,%d,%d)\n", r, g, b, a);
+    DPrintf(DMSG_NOTIFY, "Creating NEW color texture\n");
 
     // Create new colored image source
     FImageSource* imgSrc = new FGLTFColoredImage(r, g, b, a);
@@ -175,12 +169,12 @@ static FGameTexture* CreateColoredTexture(const FVector4& color)
     // FORCE the texture to generate its pixels NOW by calling GetTexture
     // This ensures CopyPixels is called and the texture has actual data
     auto hwTexture = gameTex->GetTexture();
-    Printf("*** Forced texture creation. HW Texture: %p\n", hwTexture);
+    DPrintf(DMSG_NOTIFY, "Forced texture creation\n");
 
     // Cache it
     colorTextureCache[colorKey] = gameTex;
 
-    Printf("*** Added to TexMan and cached. TexID=%d\n", texID.GetIndex());
+    DPrintf(DMSG_NOTIFY, "Added to TexMan and cached\n");
     DPrintf(DMSG_NOTIFY, "Created glTF colored texture '%s' (RGBA: %d,%d,%d,%d)\n",
            texName.GetChars(), r, g, b, a);
 
@@ -299,6 +293,23 @@ void FGLTFModel::BuildVertexData(FModelRenderer* renderer, ModelRendererType ren
             gzVertex.u = gltfVertex.u;
             gzVertex.v = gltfVertex.v;
 
+            // Bone indices and weights for skinning
+            gzVertex.boneselector[0] = gltfVertex.boneIndices[0];
+            gzVertex.boneselector[1] = gltfVertex.boneIndices[1];
+            gzVertex.boneselector[2] = gltfVertex.boneIndices[2];
+            gzVertex.boneselector[3] = gltfVertex.boneIndices[3];
+
+            // Convert float weights (0.0-1.0) to uint8_t (0-255)
+            gzVertex.boneweight[0] = static_cast<uint8_t>(gltfVertex.boneWeights[0] * 255.0f);
+            gzVertex.boneweight[1] = static_cast<uint8_t>(gltfVertex.boneWeights[1] * 255.0f);
+            gzVertex.boneweight[2] = static_cast<uint8_t>(gltfVertex.boneWeights[2] * 255.0f);
+            gzVertex.boneweight[3] = static_cast<uint8_t>(gltfVertex.boneWeights[3] * 255.0f);
+
+            // Lightmap (not used for GLTF)
+            gzVertex.lu = 0.0f;
+            gzVertex.lv = 0.0f;
+            gzVertex.lindex = -1.0f;
+
             gzVertices.Push(gzVertex);
         }
 
@@ -404,18 +415,50 @@ void FGLTFModel::RenderFrame(
         // 🔹 Animation handling
         //------------------------------------------------------------
 
-        // Automatically select animation by frame index
+        // If we have animations but haven't selected one yet, select animation 0
+        if (scene.animations.Size() > 0 && currentAnimationIndex < 0)
+        {
+            SetCurrentAnimation(0);
+            Printf("GLTF: Auto-selected animation 0 '%s' (duration=%.2fs)\n",
+                   scene.animations[0].name.GetChars(),
+                   scene.animations[0].duration);
+        }
+
+        // Automatically select animation by frame index (if frame is valid)
         if (frame != currentAnimationIndex &&
             frame >= 0 && frame < static_cast<int>(scene.animations.Size()))
         {
             SetCurrentAnimation(frame);
         }
 
-        // Advance animation clock if valid animation is active
-        if (currentAnimationIndex >= 0 &&
-            currentAnimationIndex < static_cast<int>(scene.animations.Size()))
+        // Calculate bone matrices for animation if we have skinning
+        int actualBoneStartPosition = -1;
+        if (hasSkinning && scene.skins.Size() > 0)
         {
-            UpdateAnimationState(I_GetTime() * (1.0 / TICRATE));
+            // Advance animation clock if valid animation is active
+            if (currentAnimationIndex >= 0 &&
+                currentAnimationIndex < static_cast<int>(scene.animations.Size()))
+            {
+                double currentTime = I_GetTime() * (1.0 / TICRATE);
+
+                // Debug animation progress every 60 frames
+                static int debugCounter = 0;
+                if (debugCounter++ % 60 == 0) {
+                    double animTime = currentTime - lastAnimationTime;
+                    double duration = scene.animations[currentAnimationIndex].duration;
+                    Printf("GLTF Anim: time=%.2f/%.2f bones=%d\n",
+                           animTime, duration, boneMatrices.Size());
+                }
+
+                UpdateAnimationState(currentTime);
+            }
+
+            // Upload bone matrices to GPU (following IQM pattern)
+            if (boneStartPosition >= 0) {
+                actualBoneStartPosition = boneStartPosition;
+            } else if (boneMatrices.Size() > 0) {
+                actualBoneStartPosition = screen->mBones->UploadBones(boneMatrices);
+            }
         }
 
         //------------------------------------------------------------
@@ -465,23 +508,14 @@ void FGLTFModel::RenderFrame(
                      mesh.material.baseColorFactor.Z != 1.0f ||
                      mesh.material.baseColorFactor.W != 1.0f);
 
-                Printf("*** Mesh %zu: baseColorFactor=(%.3f, %.3f, %.3f, %.3f)"
-                       " hasCustomColor=%d skin=%p\n",
-                       meshIndex,
-                       mesh.material.baseColorFactor.X,
-                       mesh.material.baseColorFactor.Y,
-                       mesh.material.baseColorFactor.Z,
-                       mesh.material.baseColorFactor.W,
-                       hasCustomColor, skin);
-
                 if (!hasCustomColor && skin)
                 {
                     meshSkin = skin;
-                    Printf("*** Using MODELDEF skin fallback\n");
+                    DPrintf(DMSG_NOTIFY, "Using MODELDEF skin fallback\n");
                 }
                 else if (hasCustomColor)
                 {
-                    Printf("*** Will generate colored texture from baseColorFactor\n");
+                    DPrintf(DMSG_NOTIFY, "Will generate colored texture from baseColorFactor\n");
                 }
             }
 
@@ -499,13 +533,13 @@ void FGLTFModel::RenderFrame(
             {
                 RenderMeshWithPBR(renderer, mesh, meshSkin,
                                   usingGeneratedColor ? FTranslationID() : translation,
-                                  vertexOffset);
+                                  vertexOffset, actualBoneStartPosition);
             }
             else
             {
                 RenderMeshStandard(renderer, mesh, meshSkin,
                                    usingGeneratedColor ? FTranslationID() : translation,
-                                   vertexOffset);
+                                   vertexOffset, actualBoneStartPosition);
             }
 
             vertexOffset += mesh.vertices.Size();
@@ -519,7 +553,7 @@ void FGLTFModel::RenderFrame(
 
 void FGLTFModel::RenderMeshWithPBR(FModelRenderer* renderer, const GLTFMesh& mesh,
                                    FGameTexture* skin, FTranslationID translation,
-                                   size_t vertexOffset)
+                                   size_t vertexOffset, int boneStartPosition)
 {
     // Set up PBR material
     const auto& pbrProps = mesh.material;
@@ -535,34 +569,30 @@ void FGLTFModel::RenderMeshWithPBR(FModelRenderer* renderer, const GLTFMesh& mes
     // 4. Render with PBR lighting
 
     // Fall back to standard rendering for now
-    RenderMeshStandard(renderer, mesh, skin, translation, vertexOffset);
+    RenderMeshStandard(renderer, mesh, skin, translation, vertexOffset, boneStartPosition);
 }
 
 void FGLTFModel::RenderMeshStandard(FModelRenderer* renderer, const GLTFMesh& mesh,
                                     FGameTexture* skin, FTranslationID translation,
-                                    size_t vertexOffset)
+                                    size_t vertexOffset, int boneStartPosition)
 {
     // Validate material before rendering
     // glTF models may not have textures embedded, so we need to handle NULL skin
     if (!skin) {
         // Create a colored texture from the material's baseColorFactor
         // This properly renders materials that use only vertex colors or baseColorFactor
-        Printf("*** RenderMeshStandard: Creating colored texture from baseColorFactor=(%.3f,%.3f,%.3f,%.3f)\n",
-               mesh.material.baseColorFactor.X,
-               mesh.material.baseColorFactor.Y,
-               mesh.material.baseColorFactor.Z,
-               mesh.material.baseColorFactor.W);
+        DPrintf(DMSG_NOTIFY, "RenderMeshStandard: Creating colored texture\n");
 
         skin = CreateColoredTexture(mesh.material.baseColorFactor);
 
         if (!skin) {
-            Printf("*** ERROR: Failed to create colored texture!\n");
+            Printf("ERROR: Failed to create colored texture!\n");
             DPrintf(DMSG_ERROR, "Cannot render glTF mesh: failed to create colored texture\n");
             return;
         }
-        Printf("*** Created colored texture successfully: %p\n", skin);
+        DPrintf(DMSG_NOTIFY, "Created colored texture\n");
     } else {
-        Printf("*** RenderMeshStandard: Using provided skin: %p\n", skin);
+        DPrintf(DMSG_NOTIFY, "Using provided skin\n");
     }
 
     // If we're using generated color from baseColorFactor, DO NOT apply actor translation.
@@ -576,7 +606,8 @@ void FGLTFModel::RenderMeshStandard(FModelRenderer* renderer, const GLTFMesh& me
 
     // Setup vertex/index buffers - CRITICAL for rendering!
     // This binds the vertex and index buffers to the rendering state
-    renderer->SetupFrame(this, vertexOffset, vertexOffset, mesh.vertices.Size(), -1);
+    // Pass bone start position for skeletal animation
+    renderer->SetupFrame(this, vertexOffset, vertexOffset, mesh.vertices.Size(), boneStartPosition);
 
     // Render geometry
     if (mesh.indices.Size() == 0) {
@@ -604,6 +635,7 @@ void FGLTFModel::UpdateAnimationState(double currentTime)
     const auto& anim = scene.animations[currentAnimationIndex];
 
     if (anim.duration > 0.0f) {
+        // Calculate elapsed time since animation started and loop it
         float animTime = fmod(currentTime - lastAnimationTime, anim.duration);
 
         // Update bone matrices if we have skinning
@@ -617,8 +649,8 @@ void FGLTFModel::UpdateAnimationState(double currentTime)
             }
         }
     }
-
-    lastAnimationTime = currentTime;
+    // Note: We do NOT update lastAnimationTime here - it stays at animation start time
+    // This allows animTime to continuously increase and loop via fmod
 }
 
 //===========================================================================

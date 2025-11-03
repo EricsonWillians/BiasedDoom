@@ -355,8 +355,8 @@ private:
     void BuildVertexData(FModelRenderer* renderer, ModelRendererType rendererType);
     void UploadVertexData(IModelVertexBuffer* buffer, const TArray<FModelVertex>& vertices, const TArray<unsigned int>& indices);
     void UploadBoneData(FModelRenderer* renderer);
-    void RenderMeshWithPBR(FModelRenderer* renderer, const GLTFMesh& mesh, FGameTexture* skin, FTranslationID translation, size_t vertexOffset);
-    void RenderMeshStandard(FModelRenderer* renderer, const GLTFMesh& mesh, FGameTexture* skin, FTranslationID translation, size_t vertexOffset);
+    void RenderMeshWithPBR(FModelRenderer* renderer, const GLTFMesh& mesh, FGameTexture* skin, FTranslationID translation, size_t vertexOffset, int boneStartPosition);
+    void RenderMeshStandard(FModelRenderer* renderer, const GLTFMesh& mesh, FGameTexture* skin, FTranslationID translation, size_t vertexOffset, int boneStartPosition);
     void UpdateAnimationState(double currentTime);
 };
 
