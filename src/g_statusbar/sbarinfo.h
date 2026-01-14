@@ -44,88 +44,81 @@
 class FScanner;
 class DSBarInfo;
 class SBarInfoMainBlock;
+struct FMugShotState;
 
-//Popups!
-struct Popup
-{
-	enum PopupTransition
-	{
-		TRANSITION_NONE,
-		TRANSITION_SLIDEINBOTTOM,
-		TRANSITION_PUSHUP,
-		TRANSITION_FADE,
-	};
+// Popups!
+struct Popup {
+  enum PopupTransition {
+    TRANSITION_NONE,
+    TRANSITION_SLIDEINBOTTOM,
+    TRANSITION_PUSHUP,
+    TRANSITION_FADE,
+  };
 
-	PopupTransition transition;
-	bool opened;
-	bool moving;
-	int height;
-	int width;
-	int ispeed;
-	double speed;
-	double speed2;
-	double alpha;
-	int x;
-	int y;
-	int displacementX;
-	int displacementY;
+  PopupTransition transition;
+  bool opened;
+  bool moving;
+  int height;
+  int width;
+  int ispeed;
+  double speed;
+  double speed2;
+  double alpha;
+  int x;
+  int y;
+  int displacementX;
+  int displacementY;
 
-	Popup();
-	void init();
-	void tick();
-	void open();
-	void close();
-	bool isDoneMoving();
-	int getXOffset();
-	int getYOffset();
-	double getAlpha(double maxAlpha=1.);
-	int getXDisplacement();
-	int getYDisplacement();
+  Popup();
+  void init();
+  void tick();
+  void open();
+  void close();
+  bool isDoneMoving();
+  int getXOffset();
+  int getYOffset();
+  double getAlpha(double maxAlpha = 1.);
+  int getXDisplacement();
+  int getYDisplacement();
 };
 
-struct SBarInfo
-{
-	enum MonospaceAlignment
-	{
-		ALIGN_LEFT,
-		ALIGN_CENTER,
-		ALIGN_RIGHT
-	};
+struct SBarInfo {
+  enum MonospaceAlignment { ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT };
 
-	TArray<FString> Images;
-	SBarInfoMainBlock *huds[NUMHUDS];
-	Popup popups[NUMPOPUPS];
-	bool automapbar;
-	bool interpolateHealth;
-	bool interpolateArmor;
-	bool completeBorder;
-	bool lowerHealthCap;
-	char spacingCharacter;
-	TArray<std::pair<double, int>> protrusions;
-	MonospaceAlignment spacingAlignment;
-	int interpolationSpeed;
-	int armorInterpolationSpeed;
-	int height;
-	int gameType;
+  TArray<FString> Images;
+  SBarInfoMainBlock *huds[NUMHUDS];
+  Popup popups[NUMPOPUPS];
+  bool automapbar;
+  bool interpolateHealth;
+  bool interpolateArmor;
+  bool completeBorder;
+  bool lowerHealthCap;
+  char spacingCharacter;
+  TArray<std::pair<double, int>> protrusions;
+  MonospaceAlignment spacingAlignment;
+  int interpolationSpeed;
+  int armorInterpolationSpeed;
+  int height;
+  int gameType;
 
-	int _resW;
-	int _resH;
+  int _resW;
+  int _resH;
 
-	int GetGameType() { return gameType; }
-	void ParseSBarInfo(int lump);
-	void ParseMugShotBlock(FScanner &sc, FMugShotState &state);
-	void ResetHuds();
-	int newImage(const char* patchname);
-	void Init();
-	SBarInfo();
-	SBarInfo(int lumpnum);
-	~SBarInfo();
+  int GetGameType() { return gameType; }
+  void ParseSBarInfo(int lump);
+  void ParseMugShotBlock(FScanner &sc, FMugShotState &state);
+  void ResetHuds();
+  int newImage(const char *patchname);
+  void Init();
+  SBarInfo();
+  SBarInfo(int lumpnum);
+  ~SBarInfo();
 
-	static void	Load();
+  static void Load();
 };
 
-#define SCRIPT_CUSTOM	0
-#define SCRIPT_DEFAULT	1
+#define SCRIPT_CUSTOM 0
+#define SCRIPT_DEFAULT 1
 extern SBarInfo *SBarInfoScript[2];
 
 #endif //__SBarInfo_SBAR_H__

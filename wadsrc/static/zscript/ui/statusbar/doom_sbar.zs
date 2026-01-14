@@ -74,7 +74,23 @@ class DoomStatusBar : BaseStatusBar
 		}
 		else
 		{
-			DrawTexture(GetMugShot(5), (143, 168), DI_ITEM_OFFSETS);
+			int w = GetMugShotWidth("STFST");
+			int h = GetMugShotHeight("STFST");
+			int x = GetMugShotX("STFST");
+			int y = GetMugShotY("STFST");
+			
+			// Use custom coordinates if available, otherwise use defaults
+			if (x <= 0) x = 143;
+			if (y <= 0) y = 168;
+			
+			if (w > 0 && h > 0)
+			{
+				DrawTexture(GetMugShot(5), (x, y), DI_ITEM_OFFSETS, 1.0, (w, h));
+			}
+			else
+			{
+				DrawTexture(GetMugShot(5), (x, y), DI_ITEM_OFFSETS);
+			}
 		}
 		if (isInventoryBarVisible())
 		{
