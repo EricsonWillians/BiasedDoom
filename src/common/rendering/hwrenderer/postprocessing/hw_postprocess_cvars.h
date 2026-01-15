@@ -2,21 +2,10 @@
 
 #include "c_cvars.h"
 
-class IFXAAShader
-{
+class IFXAAShader {
 public:
-	enum Quality
-	{
-		None,
-		Low,
-		Medium,
-		High,
-		Extreme,
-		Count
-	};
+  enum Quality { None, Low, Medium, High, Extreme, Count };
 };
-
-
 
 //==========================================================================
 //
@@ -30,6 +19,9 @@ EXTERN_CVAR(Float, gl_exposure_min)
 EXTERN_CVAR(Float, gl_exposure_base)
 EXTERN_CVAR(Float, gl_exposure_speed)
 EXTERN_CVAR(Int, gl_tonemap)
+EXTERN_CVAR(Int, gl_atmosphere)
+EXTERN_CVAR(Float, gl_atmosphere_intensity)
+EXTERN_CVAR(Float, gl_atmosphere_contrast)
 EXTERN_CVAR(Int, gl_bloom_kernel_size)
 EXTERN_CVAR(Bool, gl_lens)
 EXTERN_CVAR(Float, gl_lens_k)
@@ -51,4 +43,3 @@ EXTERN_CVAR(Float, vid_brightness)
 EXTERN_CVAR(Float, vid_contrast)
 EXTERN_CVAR(Float, vid_saturation)
 EXTERN_CVAR(Int, gl_satformula)
-

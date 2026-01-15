@@ -79,11 +79,16 @@ vec3 Tonemap(vec3 color)
 #error Tonemap mode define is missing
 #endif
 
+
+
+
 void main()
 {
 	vec3 color = texture(InputTexture, TexCoord).rgb;
 #ifndef PALETTE
 	color = Linear(color); // needed because gzdoom's scene texture is not linear at the moment
 #endif
-	FragColor = vec4(Tonemap(color), 1.0);
+	vec3 mapped = Tonemap(color);
+
+	FragColor = vec4(mapped, 1.0);
 }

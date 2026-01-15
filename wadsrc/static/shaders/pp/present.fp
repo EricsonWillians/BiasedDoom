@@ -51,5 +51,60 @@ vec4 ApplyHdrMode(vec4 c)
 
 void main()
 {
-	FragColor = Dither(ApplyHdrMode(ApplyGamma(texture(InputTexture, UVOffset + TexCoord * UVScale))));
+	vec4 res = ApplyHdrMode(ApplyGamma(texture(InputTexture, UVOffset + TexCoord * UVScale)));
+	vec3 original = res.rgb;
+
+	if (AtmosphereMode == 1) // Gothic
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		res.rgb = mix(vec3(gray), res.rgb, 0.2); // Highly desaturated
+		res.rgb = (res.rgb - 0.5) * 1.2 + 0.5; // Contrast
+		res.rgb *= vec3(0.9, 0.9, 1.0); // Slight blue tint
+	}
+	else if (AtmosphereMode == 2) // Blood
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		res.rgb = vec3(gray * 1.5, gray * 0.2, gray * 0.2); // Strong red
+		res.rgb = (res.rgb - 0.5) * 1.3 + 0.5; // High contrast
+	}
+	else if (AtmosphereMode == 3) // Sepia
+	{
+		vec3 sepia;
+		sepia.r = dot(res.rgb, vec3(0.393, 0.769, 0.189));
+		sepia.g = dot(res.rgb, vec3(0.349, 0.686, 0.168));
+		sepia.b = dot(res.rgb, vec3(0.272, 0.534, 0.131));
+		res.rgb = sepia;
+	}
+	else if (AtmosphereMode == 4) // Toxic
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 toxic = vec3(gray * 0.8, gray * 1.4, gray * 0.4); // Radioactive green/yellow
+		res.rgb = mix(res.rgb, toxic, 0.9);
+		res.rgb = (res.rgb - 0.5) * 1.3 + 0.5; // High contrast
+	}
+	else if (AtmosphereMode == 5) // Hellfire
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 fire = vec3(gray * 1.6, gray * 0.6, gray * 0.1); // Deep red/orange
+		res.rgb = mix(res.rgb, fire, 0.95);
+		res.rgb = (res.rgb - 0.5) * 1.4 + 0.5; // Very high contrast
+	}
+	else if (AtmosphereMode == 6) // Cyberpunk
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		res.rgb = mix(vec3(gray), res.rgb, 1.5); // Boost saturation
+		res.rgb *= vec3(1.1, 0.8, 1.4); // Shift towards purple/pink/blue
+		res.rgb = pow(res.rgb, vec3(0.9)); // Slight gamma shift for "glow" feel
+	}
+
+	// Apply configurable intensity (blend between original and effect)
+	if (AtmosphereMode > 0)
+	{
+		res.rgb = mix(original, res.rgb, AtmosphereIntensity);
+		
+		// Apply configurable contrast
+		res.rgb = (res.rgb - 0.5) * AtmosphereContrast + 0.5;
+	}
+
+	FragColor = Dither(res);
 }

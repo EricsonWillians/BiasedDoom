@@ -19,17 +19,18 @@
 **  3. This notice may not be removed or altered from any source distribution.
 */
 
-#include "gles_system.h"
-#include "m_png.h"
+#include "flatvertices.h"
+#include "gl_load/gl_load.h"
 #include "gles_buffers.h"
 #include "gles_framebuffer.h"
+#include "gles_postprocessstate.h"
 #include "gles_renderbuffers.h"
 #include "gles_renderer.h"
-#include "gles_postprocessstate.h"
 #include "gles_shaderprogram.h"
+#include "gles_system.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
-#include "flatvertices.h"
+#include "m_png.h"
 #include "r_videoscale.h"
 #include "v_video.h"
 
@@ -38,28 +39,26 @@
 
 extern bool vid_hdr_active;
 
-
-namespace OpenGLESRenderer
-{
+namespace OpenGLESRenderer {
 
 int gl_dither_bpc = -1;
 
-void FGLRenderer::RenderScreenQuad()
-{
-	auto buffer = static_cast<GLVertexBuffer *>(screen->mVertexData->GetBufferObjects().first);
-	buffer->Bind(nullptr);
-	glDrawArrays(GL_TRIANGLE_STRIP, FFlatVertexBuffer::PRESENT_INDEX, 3);
+void FGLRenderer::RenderScreenQuad() {
+  auto buffer = static_cast<GLVertexBuffer *>(
+      screen->mVertexData->GetBufferObjects().first);
+  buffer->Bind(nullptr);
+  glDrawArrays(GL_TRIANGLE_STRIP, FFlatVertexBuffer::PRESENT_INDEX, 3);
 }
 
-void FGLRenderer::PostProcessScene(int fixedcm, float flash, const std::function<void()> &afterBloomDrawEndScene2D)
-{
+void FGLRenderer::PostProcessScene(
+    int fixedcm, float flash,
+    const std::function<void()> &afterBloomDrawEndScene2D) {
 #ifndef NO_RENDER_BUFFER
-	mBuffers->BindCurrentFB();
+  mBuffers->BindCurrentFB();
 #endif
-	if (afterBloomDrawEndScene2D) afterBloomDrawEndScene2D();
+  if (afterBloomDrawEndScene2D)
+    afterBloomDrawEndScene2D();
 }
-
-
 
 //-----------------------------------------------------------------------------
 //
@@ -67,10 +66,7 @@ void FGLRenderer::PostProcessScene(int fixedcm, float flash, const std::function
 //
 //-----------------------------------------------------------------------------
 
-void FGLRenderer::Flush()
-{
-	CopyToBackbuffer(nullptr, true);
-}
+void FGLRenderer::Flush() { CopyToBackbuffer(nullptr, true); }
 
 //-----------------------------------------------------------------------------
 //
@@ -78,108 +74,106 @@ void FGLRenderer::Flush()
 //
 //-----------------------------------------------------------------------------
 
-void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
-{
+void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma) {
 #ifdef NO_RENDER_BUFFER
-	mBuffers->BindOutputFB();
+  mBuffers->BindOutputFB();
 #endif
-	screen->Draw2D();	// draw all pending 2D stuff before copying the buffer
-	twod->Clear();
+  screen->Draw2D(); // draw all pending 2D stuff before copying the buffer
+  twod->Clear();
 
-	FGLPostProcessState savedState;
-	savedState.SaveTextureBindings(2);
+  FGLPostProcessState savedState;
+  savedState.SaveTextureBindings(2);
 
-	mBuffers->BindOutputFB();
+  mBuffers->BindOutputFB();
 
-	IntRect box;
-	if (bounds)
-	{
-		box = *bounds;
-	}
-	else
-	{
-		ClearBorders();
-		box = screen->mOutputLetterbox;
-	}
+  IntRect box;
+  if (bounds) {
+    box = *bounds;
+  } else {
+    ClearBorders();
+    box = screen->mOutputLetterbox;
+  }
 
-	mBuffers->BindCurrentTexture(0);
+  mBuffers->BindCurrentTexture(0);
 #ifndef NO_RENDER_BUFFER
-	DrawPresentTexture(box, applyGamma);
+  DrawPresentTexture(box, applyGamma);
 #endif
 }
 
-void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma)
-{
-	glViewport(box.left, box.top, box.width, box.height);
+void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma) {
+  glViewport(box.left, box.top, box.width, box.height);
 
-	mBuffers->BindDitherTexture(1);
+  mBuffers->BindDitherTexture(1);
 
-	glActiveTexture(GL_TEXTURE0);
-	if (ViewportLinearScale())
-	{
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	}
-	else
-	{
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	}
+  glActiveTexture(GL_TEXTURE0);
+  if (ViewportLinearScale()) {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  } else {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  }
 
-	mPresentShader->Bind();
-	if (!applyGamma || framebuffer->IsHWGammaActive())
-	{
-		mPresentShader->Uniforms->InvGamma = 1.0f;
-		mPresentShader->Uniforms->Contrast = 1.0f;
-		mPresentShader->Uniforms->Brightness = 0.0f;
-		mPresentShader->Uniforms->Saturation = 1.0f;
-	}
-	else
-	{
-		mPresentShader->Uniforms->InvGamma = 1.0f / clamp<float>(vid_gamma, 0.1f, 4.f);
-		mPresentShader->Uniforms->Contrast = clamp<float>(vid_contrast, 0.1f, 3.f);
-		mPresentShader->Uniforms->Brightness = clamp<float>(vid_brightness, -0.8f, 0.8f);
-		mPresentShader->Uniforms->Saturation = clamp<float>(vid_saturation, -15.0f, 15.f);
-		mPresentShader->Uniforms->GrayFormula = static_cast<int>(gl_satformula);
-	}
-	if (vid_hdr_active && framebuffer->IsFullscreen())
-	{
-		// Full screen exclusive mode treats a rgba16f frame buffer as linear.
-		// It probably will eventually in desktop mode too, but the DWM doesn't seem to support that.
-		mPresentShader->Uniforms->HdrMode = 1;
-		mPresentShader->Uniforms->ColorScale = (gl_dither_bpc == -1) ? 1023.0f : (float)((1 << gl_dither_bpc) - 1);
-	}
-	else
-	{
-		mPresentShader->Uniforms->HdrMode = 0;
-		mPresentShader->Uniforms->ColorScale = (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);
-	}
-	mPresentShader->Uniforms->Scale = { screen->mScreenViewport.width / (float)mBuffers->GetWidth(), screen->mScreenViewport.height / (float)mBuffers->GetHeight() };
-	mPresentShader->Uniforms->Offset = { 0.0f, 0.0f };
-	mPresentShader->Uniforms.SetData();
+  mPresentShader->Bind();
+  if (!applyGamma || framebuffer->IsHWGammaActive()) {
+    mPresentShader->Uniforms->InvGamma = 1.0f;
+    mPresentShader->Uniforms->Contrast = 1.0f;
+    mPresentShader->Uniforms->Brightness = 0.0f;
+    mPresentShader->Uniforms->Saturation = 1.0f;
+  } else {
+    mPresentShader->Uniforms->InvGamma =
+        1.0f / clamp<float>(vid_gamma, 0.1f, 4.f);
+    mPresentShader->Uniforms->Contrast = clamp<float>(vid_contrast, 0.1f, 3.f);
+    mPresentShader->Uniforms->Brightness =
+        clamp<float>(vid_brightness, -0.8f, 0.8f);
+    mPresentShader->Uniforms->Saturation =
+        clamp<float>(vid_saturation, -15.0f, 15.f);
+    mPresentShader->Uniforms->GrayFormula = static_cast<int>(gl_satformula);
+    mPresentShader->Uniforms->AtmosphereMode = gl_atmosphere;
+    mPresentShader->Uniforms->AtmosphereIntensity = gl_atmosphere_intensity;
+    mPresentShader->Uniforms->AtmosphereContrast = gl_atmosphere_contrast;
+  }
+  if (vid_hdr_active && framebuffer->IsFullscreen()) {
+    // Full screen exclusive mode treats a rgba16f frame buffer as linear.
+    // It probably will eventually in desktop mode too, but the DWM doesn't seem
+    // to support that.
+    mPresentShader->Uniforms->HdrMode = 1;
+    mPresentShader->Uniforms->ColorScale =
+        (gl_dither_bpc == -1) ? 1023.0f : (float)((1 << gl_dither_bpc) - 1);
+  } else {
+    mPresentShader->Uniforms->HdrMode = 0;
+    mPresentShader->Uniforms->ColorScale =
+        (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);
+  }
+  mPresentShader->Uniforms->Scale = {
+      screen->mScreenViewport.width / (float)mBuffers->GetWidth(),
+      screen->mScreenViewport.height / (float)mBuffers->GetHeight()};
+  mPresentShader->Uniforms->Offset = {0.0f, 0.0f};
+  mPresentShader->Uniforms.SetData();
 
+  for (size_t n = 0; n < mPresentShader->Uniforms.mFields.size(); n++) {
+    UniformFieldDesc desc = mPresentShader->Uniforms.mFields[n];
+    int loc = mPresentShader->Uniforms.UniformLocation[n];
+    switch (desc.Type) {
+    case UniformType::Int:
+      glUniform1i(loc, *((GLint *)(((char *)(&mPresentShader->Uniforms)) +
+                                   desc.Offset)));
+      break;
+    case UniformType::Float:
+      glUniform1f(loc, *((GLfloat *)(((char *)(&mPresentShader->Uniforms)) +
+                                     desc.Offset)));
+      break;
+    case UniformType::Vec2:
+      glUniform2fv(
+          loc, 1,
+          ((GLfloat *)(((char *)(&mPresentShader->Uniforms)) + desc.Offset)));
+      break;
+    default:
+      break;
+    }
+  }
 
-	for (size_t n = 0; n < mPresentShader->Uniforms.mFields.size(); n++)
-	{
-		UniformFieldDesc desc = mPresentShader->Uniforms.mFields[n];
-		int loc = mPresentShader->Uniforms.UniformLocation[n];
-		switch (desc.Type)
-		{
-		case UniformType::Int:
-			glUniform1i(loc, *((GLint*)(((char*)(&mPresentShader->Uniforms)) + desc.Offset)));
-			break;
-		case UniformType::Float:
-			glUniform1f(loc, *((GLfloat*)(((char*)(&mPresentShader->Uniforms)) + desc.Offset)));
-			break;
-		case UniformType::Vec2:
-			glUniform2fv(loc,1 , ((GLfloat*)(((char*)(&mPresentShader->Uniforms)) + desc.Offset)));
-			break;
-		default:
-			break;
-		}
-	}
-
-	RenderScreenQuad();
+  RenderScreenQuad();
 }
 
 //-----------------------------------------------------------------------------
@@ -188,39 +182,36 @@ void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma)
 //
 //-----------------------------------------------------------------------------
 
-void FGLRenderer::ClearBorders()
-{
-	const auto &box = screen->mOutputLetterbox;
+void FGLRenderer::ClearBorders() {
+  const auto &box = screen->mOutputLetterbox;
 
-	int clientWidth = framebuffer->GetClientWidth();
-	int clientHeight = framebuffer->GetClientHeight();
-	if (clientWidth == 0 || clientHeight == 0)
-		return;
+  int clientWidth = framebuffer->GetClientWidth();
+  int clientHeight = framebuffer->GetClientHeight();
+  if (clientWidth == 0 || clientHeight == 0)
+    return;
 
-	glViewport(0, 0, clientWidth, clientHeight);
-	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-	glEnable(GL_SCISSOR_TEST);
-	if (box.top > 0)
-	{
-		glScissor(0, 0, clientWidth, box.top);
-		glClear(GL_COLOR_BUFFER_BIT);
-	}
-	if (clientHeight - box.top - box.height > 0)
-	{
-		glScissor(0, box.top + box.height, clientWidth, clientHeight - box.top - box.height);
-		glClear(GL_COLOR_BUFFER_BIT);
-	}
-	if (box.left > 0)
-	{
-		glScissor(0, box.top, box.left, box.height);
-		glClear(GL_COLOR_BUFFER_BIT);
-	}
-	if (clientWidth - box.left - box.width > 0)
-	{
-		glScissor(box.left + box.width, box.top, clientWidth - box.left - box.width, box.height);
-		glClear(GL_COLOR_BUFFER_BIT);
-	}
-	glDisable(GL_SCISSOR_TEST);
+  glViewport(0, 0, clientWidth, clientHeight);
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glEnable(GL_SCISSOR_TEST);
+  if (box.top > 0) {
+    glScissor(0, 0, clientWidth, box.top);
+    glClear(GL_COLOR_BUFFER_BIT);
+  }
+  if (clientHeight - box.top - box.height > 0) {
+    glScissor(0, box.top + box.height, clientWidth,
+              clientHeight - box.top - box.height);
+    glClear(GL_COLOR_BUFFER_BIT);
+  }
+  if (box.left > 0) {
+    glScissor(0, box.top, box.left, box.height);
+    glClear(GL_COLOR_BUFFER_BIT);
+  }
+  if (clientWidth - box.left - box.width > 0) {
+    glScissor(box.left + box.width, box.top, clientWidth - box.left - box.width,
+              box.height);
+    glClear(GL_COLOR_BUFFER_BIT);
+  }
+  glDisable(GL_SCISSOR_TEST);
 }
 
-}
+} // namespace OpenGLESRenderer
