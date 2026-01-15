@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# NeoDoom Safe Build Cleaner
+# BiasedDoom Safe Build Cleaner
 #
 # Removes the last build directory safely with guardrails and confirmations.
 # Defaults to removing the "build" directory under the repo root. You can

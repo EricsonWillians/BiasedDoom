@@ -1,6 +1,6 @@
-# NeoDoom glTF Tools
+# BiasedDoom glTF Tools
 
-This directory contains tools for working with glTF 2.0 models in NeoDoom.
+This directory contains tools for working with glTF 2.0 models in BiasedDoom.
 
 ## create-gltf-replacement.sh
 
@@ -38,7 +38,7 @@ This directory contains tools for working with glTF 2.0 models in NeoDoom.
 ### Usage
 
 ```bash
-cd /path/to/NeoDoom
+cd /path/to/BiasedDoom
 ./tools/create-gltf-replacement.sh
 ```
 
@@ -113,7 +113,7 @@ $ ./tools/create-gltf-replacement.sh
 
 ╔════════════════════════════════════════════════════════════════╗
 ║                                                                ║
-║           NeoDoom glTF Model Replacement Generator             ║
+║           BiasedDoom glTF Model Replacement Generator             ║
 ║                                                                ║
 ║    Create 3D model replacements for Doom sprites (v2.0)       ║
 ║                                                                ║
@@ -179,7 +179,7 @@ To complete your model replacement:
 3. Package your mod:
    cd wadsrc/static/models_gltf/gltfmarineguy && zip -r GLTFMarineGuy.pk3 *
 
-4. Test in NeoDoom:
+4. Test in BiasedDoom:
    neodoom -file GLTFMarineGuy.pk3
 
 Documentation:

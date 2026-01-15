@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# NeoDoom Supreme Build Script with glTF 2.0 Support
+# BiasedDoom Supreme Build Script with glTF 2.0 Support
 #
-# This script provides a comprehensive build system for NeoDoom with:
+# This script provides a comprehensive build system for BiasedDoom with:
 # - Automatic vcpkg dependency management
 # - glTF 2.0 support via fastgltf
 # - Configurable build types (Debug/Release/RelWithDebInfo)
@@ -85,7 +85,7 @@ check_command() {
 # ============================================================================
 
 show_configuration() {
-    print_header "NeoDoom Build Configuration"
+    print_header "BiasedDoom Build Configuration"
     echo "  Project Root:      ${PROJECT_ROOT}"
     echo "  Build Directory:   ${BUILD_DIR}"
     echo "  Build Type:        ${BUILD_TYPE}"
@@ -167,8 +167,8 @@ configure_cmake() {
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
         -DCMAKE_TOOLCHAIN_FILE="${VCPKG_DIR}/scripts/buildsystems/vcpkg.cmake"
-        -DNEODOOM_ENABLE_GLTF="${ENABLE_GLTF}"
-        -DNEODOOM_BUILD_GLTF="${BUILD_GLTF}"
+        -DBIASEDDOOM_ENABLE_GLTF="${ENABLE_GLTF}"
+        -DBIASEDDOOM_BUILD_GLTF="${BUILD_GLTF}"
         -DHAVE_VULKAN="${ENABLE_VULKAN}"
         -DOPENAL_SOFT_VCPKG="${ENABLE_OPENAL_VCPKG}"
     )
@@ -197,7 +197,7 @@ configure_cmake() {
 }
 
 build_project() {
-    print_step "Building NeoDoom..."
+    print_step "Building BiasedDoom..."
 
     cd "${BUILD_DIR}"
 
@@ -228,7 +228,7 @@ build_project() {
 verify_build() {
     print_step "Verifying build output..."
 
-    EXECUTABLE="${BUILD_DIR}/neodoom"
+    EXECUTABLE="${BUILD_DIR}/biaseddoom"
 
     if [ -f "${EXECUTABLE}" ]; then
         print_success "Executable found: ${EXECUTABLE}"
@@ -261,12 +261,12 @@ show_summary() {
 
     echo "  Status:            ${GREEN}SUCCESS${NC}"
     echo "  Build Type:        ${BUILD_TYPE}"
-    echo "  Executable:        ${BUILD_DIR}/neodoom"
+    echo "  Executable:        ${BUILD_DIR}/biaseddoom"
     echo "  Build Log:         ${LOG_FILE}"
     echo ""
-    echo "  To run NeoDoom:"
+    echo "  To run BiasedDoom:"
     echo "    cd ${BUILD_DIR}"
-    echo "    ./neodoom"
+    echo "    ./biaseddoom"
     echo ""
 }
 
@@ -276,9 +276,9 @@ show_summary() {
 
 main() {
     # Initialize log file
-    echo "NeoDoom Build Started: $(date)" > "${LOG_FILE}"
+    echo "BiasedDoom Build Started: $(date)" > "${LOG_FILE}"
 
-    print_header "NeoDoom Supreme Build Script"
+    print_header "BiasedDoom Supreme Build Script"
     echo ""
 
     show_configuration

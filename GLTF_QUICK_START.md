@@ -1,10 +1,10 @@
-# NeoDoom glTF Quick Start Guide
+# BiasedDoom glTF Quick Start Guide
 
 **Get started with 3D model replacements in under 10 minutes!**
 
 ## Prerequisites
 
-- NeoDoom with glTF support enabled
+- BiasedDoom with glTF support enabled
 - Blender 3.0+ (for creating/exporting models)
 - Basic familiarity with Doom modding (PK3 files, ZScript)
 
@@ -15,7 +15,7 @@
 Use the interactive script to generate all necessary files:
 
 ```bash
-cd /path/to/NeoDoom
+cd /path/to/BiasedDoom
 ./tools/create-gltf-replacement.sh
 ```
 
@@ -71,7 +71,7 @@ echo '#include "zscript/GLTFCoolImp.zs"' >> ../../zscript.txt
 # Package as PK3
 zip -r GLTFCoolImp.pk3 models/ zscript/
 
-# Test in NeoDoom
+# Test in BiasedDoom
 neodoom -file GLTFCoolImp.pk3
 ```
 
@@ -185,7 +185,7 @@ PulseEmissive(Color(255, 255, 0, 0), 1.5, 0.0, 3.0);
 - Apply scale before export: **Ctrl+A → Scale**
 
 ### Bone Naming Convention
-Use Blender's standard naming (NeoDoom's API recognizes these):
+Use Blender's standard naming (BiasedDoom's API recognizes these):
 ```
 Head
 Spine_01, Spine_02, Spine_03

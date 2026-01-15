@@ -1,8 +1,8 @@
-# NeoDoom glTF v2.0 Improvements Summary
+# BiasedDoom glTF v2.0 Improvements Summary
 
 ## Overview
 
-This document summarizes the comprehensive improvements made to NeoDoom's glTF 2.0 implementation in version 2.0, focusing on enhanced skeletal animation and Blender-friendly workflows.
+This document summarizes the comprehensive improvements made to BiasedDoom's glTF 2.0 implementation in version 2.0, focusing on enhanced skeletal animation and Blender-friendly workflows.
 
 ## Major Improvements
 
@@ -204,4 +204,4 @@ Future enhancements planned:
 
 ## Credits
 
-NeoDoom glTF v2.0 improvements designed for seamless Blender integration and maximum modder flexibility.
+BiasedDoom glTF v2.0 improvements designed for seamless Blender integration and maximum modder flexibility.

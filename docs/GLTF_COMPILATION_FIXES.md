@@ -15,7 +15,7 @@ This document provides the exact code changes needed to fix all compilation erro
 
 ### 1. Fix model_gltf_render.cpp (7 errors)
 
-**File**: `/home/ericsonwillians/workspace/NeoDoom/src/common/models/model_gltf_render.cpp`
+**File**: `/home/ericsonwillians/workspace/BiasedDoom/src/common/models/model_gltf_render.cpp`
 
 #### Change 1: Add TICRATE Definition (Lines 1-10)
 
@@ -116,7 +116,7 @@ if (scene.skins.Size() == 0) return;
 
 ### 2. Fix model_gltf.cpp (11 errors)
 
-**File**: `/home/ericsonwillians/workspace/NeoDoom/src/common/models/model_gltf.cpp`
+**File**: `/home/ericsonwillians/workspace/BiasedDoom/src/common/models/model_gltf.cpp`
 
 #### Change 1: Fix Line 290 - Missing mLumpNum
 
@@ -205,7 +205,7 @@ if (!ValidateAsset(lastError)) { return false; }
 
 **Error**: `'span' is not a member of 'std'`
 
-This is the most complex fix. The code tries to use C++20's std::span but NeoDoom uses C++17.
+This is the most complex fix. The code tries to use C++20's std::span but BiasedDoom uses C++17.
 
 ```cpp
 // BEFORE (Lines 426-427):
@@ -251,7 +251,7 @@ if (!LoadMeshPrimitive(prim, mesh, lastError))
 ### 1. Compile Test
 
 ```bash
-cd /home/ericsonwillians/workspace/NeoDoom
+cd /home/ericsonwillians/workspace/BiasedDoom
 cmake --build build --config Release -j16 2>&1 | tee build.log
 ```
 
@@ -288,8 +288,8 @@ The temporary identity matrix fix will prevent crashes but models won't animate.
 Check if TRS has a different method name:
 
 ```bash
-grep -r "struct TRS" /home/ericsonwillians/workspace/NeoDoom/src/common/models/
-grep -r "ToMatrix\|GetMatrix\|BuildMatrix" /home/ericsonwillians/workspace/NeoDoom/src/common/models/bonecomponents.h
+grep -r "struct TRS" /home/ericsonwillians/workspace/BiasedDoom/src/common/models/
+grep -r "ToMatrix\|GetMatrix\|BuildMatrix" /home/ericsonwillians/workspace/BiasedDoom/src/common/models/bonecomponents.h
 ```
 
 ### Option 2: Implement Manual Conversion

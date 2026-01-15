@@ -1,10 +1,14 @@
-# 🕹️ NeoDoom
+# 🕹️ BiasedDoom
 
-[![Build Status](https://github.com/YOURNAME/NeoDoom/actions/workflows/ci.yml/badge.svg)](https://github.com/YOURNAME/NeoDoom/actions/workflows/ci.yml)
+> [!IMPORTANT]
+> **Disclaimer regarding AI-Generated Code**
+> This project unashamedly leverages AI assistance for development. We prioritize results and functionality over the origin of the code. If you have a philosophical objection to AI-generated code, this project is not for you, and we kindly suggest you look elsewhere.
+
+[![Build Status](https://github.com/YOURNAME/BiasedDoom/actions/workflows/ci.yml/badge.svg)](https://github.com/YOURNAME/BiasedDoom/actions/workflows/ci.yml)
 
 ## Next-Generation Modding for the Classic DOOM Engine
 
-NeoDoom is a modern fork of **GZDoom** that expands the engine with **native glTF 2.0 support**, enabling skeletal animations, PBR materials, and seamless workflows with **Blender** and other 3D tools.  
+BiasedDoom is a modern fork of **GZDoom** that expands the engine with **native glTF 2.0 support**, enabling skeletal animations, PBR materials, and seamless workflows with **Blender** and other 3D tools.  
 Our mission: preserve the soul of DOOM while empowering modders with next-gen asset pipelines.
 
 ---
@@ -31,7 +35,7 @@ Our mission: preserve the soul of DOOM while empowering modders with next-gen as
 
 ---
 
-## 🔧 Blender → NeoDoom Workflow
+## 🔧 Blender → BiasedDoom Workflow
 
 1. **Create Your Model in Blender**  
    - Rig your mesh with armatures.  
@@ -45,7 +49,7 @@ Our mission: preserve the soul of DOOM while empowering modders with next-gen as
      - ✓ Export Materials  
      - ✓ Export Animations  
 
-3. **Use in NeoDoom**  
+3. **Use in BiasedDoom**  
    Define the model in your actor with ZScript/DECORATE:  
 
    ```cpp

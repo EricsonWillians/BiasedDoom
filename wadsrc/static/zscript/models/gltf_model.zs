@@ -6,7 +6,7 @@
 **
 **---------------------------------------------------------------------------
 **
-** Copyright 2025 NeoDoom Contributors
+** Copyright 2025 BiasedDoom Contributors
 ** All rights reserved.
 **
 */

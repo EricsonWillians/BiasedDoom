@@ -317,5 +317,5 @@ version "4.15.1"
 #include "zscript/scriptutil/scriptutil.zs"
 #include "zscript/actors/mbf21.zs"
 
-// NeoDoom glTF 2.0 Model Support
+// BiasedDoom glTF 2.0 Model Support
 #include "zscript/models/gltf_model.zs"

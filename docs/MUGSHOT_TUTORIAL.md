@@ -1,6 +1,6 @@
 # SBARINFO Mugshot Scaling Tutorial
 
-NeoDoom now supports extended mugshot definitions in `SBARINFO` that allow you to specify the target width and height of the mugshot. This enables using high-resolution face graphics that are automatically scaled down to fit the status bar.
+BiasedDoom now supports extended mugshot definitions in `SBARINFO` that allow you to specify the target width and height of the mugshot. This enables using high-resolution face graphics that are automatically scaled down to fit the status bar.
 
 ## Syntax
 

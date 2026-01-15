@@ -1,4 +1,4 @@
-## NeoDoom glTF ZScript API Reference
+## BiasedDoom glTF ZScript API Reference
 
 **Version 2.0 - Enhanced Blender Integration**
 

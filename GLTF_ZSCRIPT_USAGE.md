@@ -1,8 +1,8 @@
-# NeoDoom glTF ZScript Usage Guide
+# BiasedDoom glTF ZScript Usage Guide
 
 ## Summary
 
-✅ **Build Status**: NeoDoom now compiles with glTF support and ZScript bindings!
+✅ **Build Status**: BiasedDoom now compiles with glTF support and ZScript bindings!
 ✅ **C++ Implementation**: glTF model loading code is integrated
 ✅ **ZScript Mixin**: GLTFModel mixin is available in gzdoom.pk3
 
@@ -71,7 +71,7 @@ YourMod.pk3/
 │   #include "zscript/gltf_model.zs"   ← Include FIRST
 │   #include "zscript/your_actor.zs"
 └── zscript/
-    ├── gltf_model.zs  ← Copy from NeoDoom
+    ├── gltf_model.zs  ← Copy from BiasedDoom
     └── your_actor.zs
 ```
 
@@ -129,10 +129,10 @@ To make the ZScript bindings fully functional, the following work is needed:
 
 ## Testing the Build
 
-Your NeoDoom build has all the foundations in place:
+Your BiasedDoom build has all the foundations in place:
 
 ```bash
-cd /home/ericsonwillians/workspace/NeoDoom/build
+cd /home/ericsonwillians/workspace/BiasedDoom/build
 ./neodoom
 
 # The engine will:
@@ -144,11 +144,11 @@ cd /home/ericsonwillians/workspace/NeoDoom/build
 
 ## Build Details
 
-- **Executable**: `/home/ericsonwillians/workspace/NeoDoom/build/neodoom` (242M)
+- **Executable**: `/home/ericsonwillians/workspace/BiasedDoom/build/neodoom` (242M)
 - **glTF Files Compiled**: model_gltf.cpp, model_gltf_render.cpp, model_gltf_helpers.cpp, gltf_zscript.cpp
 - **fastgltf Version**: 0.5.0#1
 - **Build Type**: Debug with ENABLE_GLTF, NEODOOM_GLTF_SUPPORT
 
 ---
 
-For questions or to contribute to the full implementation, see the NeoDoom documentation.
+For questions or to contribute to the full implementation, see the BiasedDoom documentation.

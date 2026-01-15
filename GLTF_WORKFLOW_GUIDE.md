@@ -1,8 +1,8 @@
-# NeoDoom glTF 2.0 Professional Workflow Guide
+# BiasedDoom glTF 2.0 Professional Workflow Guide
 
 ## Executive Summary
 
-This comprehensive guide establishes professional workflows for integrating Blender-exported glTF 2.0 models with skeletal animations into NeoDoom. It covers complete asset replacement strategies for players, monsters, items, weapons, and environmental objects while maintaining compatibility with existing DOOM gameplay mechanics and mod frameworks.
+This comprehensive guide establishes professional workflows for integrating Blender-exported glTF 2.0 models with skeletal animations into BiasedDoom. It covers complete asset replacement strategies for players, monsters, items, weapons, and environmental objects while maintaining compatibility with existing DOOM gameplay mechanics and mod frameworks.
 
 ---
 
@@ -27,7 +27,7 @@ This comprehensive guide establishes professional workflows for integrating Blen
 
 #### Primary Tools
 - **Blender 4.0+** - Latest LTS recommended for glTF 2.0 export
-- **NeoDoom** - With glTF support enabled (`NEODOOM_ENABLE_GLTF=ON`)
+- **BiasedDoom** - With glTF support enabled (`NEODOOM_ENABLE_GLTF=ON`)
 - **Git** - For version control and asset management
 - **Text Editor** - VS Code, Sublime Text, or similar for ZScript editing
 
@@ -39,7 +39,7 @@ This comprehensive guide establishes professional workflows for integrating Blen
 
 #### Development Environment
 ```bash
-# Verify NeoDoom glTF support
+# Verify BiasedDoom glTF support
 ./neodoom --version | grep "glTF Support: Enabled"
 
 # Install asset pipeline tools
@@ -102,7 +102,7 @@ def validate_scene():
     # Validate armature hierarchy
     armatures = [obj for obj in bpy.context.scene.objects if obj.type == 'ARMATURE']
     for armature in armatures:
-        if len(armature.data.bones) > 128:  # NeoDoom bone limit
+        if len(armature.data.bones) > 128:  # BiasedDoom bone limit
             issues.append(f"Armature {armature.name} exceeds 128 bone limit")
 
     return issues
@@ -262,7 +262,7 @@ import json
 import os
 
 def validate_gltf_export(filepath):
-    """Validate exported glTF file meets NeoDoom requirements"""
+    """Validate exported glTF file meets BiasedDoom requirements"""
 
     # File size check
     file_size = os.path.getsize(filepath)
@@ -272,7 +272,7 @@ def validate_gltf_export(filepath):
     # Run official validator
     os.system(f"gltf_validator {filepath}")
 
-    # Custom NeoDoom checks
+    # Custom BiasedDoom checks
     with open(filepath, 'rb') as f:
         # Check for GLB magic number
         magic = f.read(4)

@@ -1,4 +1,4 @@
-# NeoDoom glTF 2.0 Implementation
+# BiasedDoom glTF 2.0 Implementation
 
 **Version 2.0 - Enhanced Skeletal Animation & Blender Integration**
 
@@ -220,7 +220,7 @@ class ModernDemon : Actor {
 1. Create model with armature in Blender
 2. Apply transforms (`Ctrl+A → Apply All Transforms`)
 3. Export as glTF 2.0 with recommended settings
-4. Place in NeoDoom mod directory
+4. Place in BiasedDoom mod directory
 5. Define in ZScript with glTF model path
 
-This implementation provides a solid foundation for modern 3D asset support in NeoDoom while maintaining full backward compatibility with existing DOOM content and workflows.
+This implementation provides a solid foundation for modern 3D asset support in BiasedDoom while maintaining full backward compatibility with existing DOOM content and workflows.

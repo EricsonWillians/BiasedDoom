@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# NeoDoom glTF Model Replacement Generator
+# BiasedDoom glTF Model Replacement Generator
 #
 # Interactive script to create the complete structure for replacing
 # Doom sprites with glTF 2.0 models (player, monsters, items, weapons, decorations)
@@ -29,7 +29,7 @@ print_banner() {
     echo -e "${CYAN}${BOLD}"
     echo "╔════════════════════════════════════════════════════════════════╗"
     echo "║                                                                ║"
-    echo "║           NeoDoom glTF Model Replacement Generator             ║"
+    echo "║           BiasedDoom glTF Model Replacement Generator             ║"
     echo "║                                                                ║"
     echo "║    Create 3D model replacements for Doom sprites (v2.0)       ║"
     echo "║                                                                ║"

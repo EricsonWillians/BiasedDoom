@@ -1,10 +1,10 @@
-# NeoDoom glTF 2.0 Beginner's Tutorial
+# BiasedDoom glTF 2.0 Beginner's Tutorial
 ## Complete Step-by-Step Guide for Creating Custom Models
 
 ### 🎯 What You'll Learn
-This tutorial will teach you how to create custom 3D models in Blender and use them in NeoDoom to replace players, weapons, items, and monsters. We'll go from absolute basics to complete working mods, organized by difficulty.
+This tutorial will teach you how to create custom 3D models in Blender and use them in BiasedDoom to replace players, weapons, items, and monsters. We'll go from absolute basics to complete working mods, organized by difficulty.
 
-**Important Note:** glTF support in NeoDoom is currently under development (Phase 1 complete). This tutorial prepares you for when the feature is fully implemented, and provides workflows that will work with the current engine architecture.
+**Important Note:** glTF support in BiasedDoom is currently under development (Phase 1 complete). This tutorial prepares you for when the feature is fully implemented, and provides workflows that will work with the current engine architecture.
 
 ---
 
@@ -33,7 +33,7 @@ glTF (GL Transmission Format) is a modern 3D file format that supports:
 - **Skeletal Rigs**: Bones that control complex animations
 
 ### Why glTF for DOOM?
-Traditional DOOM uses sprite-based graphics (2D images from different angles). NeoDoom's glTF support allows you to use modern 3D models with:
+Traditional DOOM uses sprite-based graphics (2D images from different angles). BiasedDoom's glTF support allows you to use modern 3D models with:
 - ✅ Smooth animations from any angle
 - ✅ Modern lighting (PBR - Physically Based Rendering)
 - ✅ Easy creation in Blender
@@ -56,10 +56,10 @@ Download from: https://www.blender.org/download/
 
 **Why this version?** Blender 4.0+ has the best glTF 2.0 exporter with all the features we need.
 
-#### 2. NeoDoom with glTF Support
+#### 2. BiasedDoom with glTF Support
 ```bash
-# Build NeoDoom with glTF enabled
-cd /path/to/NeoDoom
+# Build BiasedDoom with glTF enabled
+cd /path/to/BiasedDoom
 ENABLE_GLTF=ON ENABLE_LTO=OFF ./build-arch.sh build
 ```
 

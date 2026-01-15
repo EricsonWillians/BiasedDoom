@@ -1,9 +1,9 @@
-# NeoDoom GLTF Character Guide
-## Complete Tutorial: Blender to NeoDoom Workflow
+# BiasedDoom GLTF Character Guide
+## Complete Tutorial: Blender to BiasedDoom Workflow
 
 **Version**: 1.0  
 **Last Updated**: November 2025  
-**Author**: NeoDoom Team
+**Author**: BiasedDoom Team
 
 ---
 
@@ -24,7 +24,7 @@
 
 ## Introduction
 
-NeoDoom's GLTF support allows you to replace classic DOOM sprites with fully animated 3D models exported from Blender. This guide covers the complete workflow from character creation to in-game testing.
+BiasedDoom's GLTF support allows you to replace classic DOOM sprites with fully animated 3D models exported from Blender. This guide covers the complete workflow from character creation to in-game testing.
 
 ### What You'll Learn
 - How to rig a character for DOOM animations
@@ -35,7 +35,7 @@ NeoDoom's GLTF support allows you to replace classic DOOM sprites with fully ani
 ### Prerequisites
 - Blender 3.0+ (4.0+ recommended)
 - Basic Blender knowledge (modeling, rigging, animation)
-- NeoDoom with GLTF support enabled
+- BiasedDoom with GLTF support enabled
 - Text editor for MODELDEF files
 
 ---
@@ -207,7 +207,7 @@ Use NLA Editor to create animation strips:
 
 ### PBR Material Setup
 
-NeoDoom supports GLTF 2.0 PBR (Physically Based Rendering):
+BiasedDoom supports GLTF 2.0 PBR (Physically Based Rendering):
 
 #### Basic Material Setup
 
@@ -261,7 +261,7 @@ bsdf.inputs['Metallic'].default_value = 0.0
 bsdf.inputs['Roughness'].default_value = 0.9
 ```
 
-NeoDoom will automatically generate a solid color texture from `baseColorFactor`.
+BiasedDoom will automatically generate a solid color texture from `baseColorFactor`.
 
 ### Texture Packing
 

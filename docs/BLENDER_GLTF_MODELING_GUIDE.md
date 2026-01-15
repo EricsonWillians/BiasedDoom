@@ -1,10 +1,10 @@
-# Blender → glTF 2.0 Authoring Guide for NeoDoom
+# Blender → glTF 2.0 Authoring Guide for BiasedDoom
 
 **Version 2.0 - Enhanced Skeletal Animation Support**
 
-This guide describes, in depth, how to create 3D models and animations in Blender for use with NeoDoom's glTF 2.0 pipeline. It covers scene setup, modeling, materials, textures, armatures/skinning, animations, export settings, project layout, and troubleshooting.
+This guide describes, in depth, how to create 3D models and animations in Blender for use with BiasedDoom's glTF 2.0 pipeline. It covers scene setup, modeling, materials, textures, armatures/skinning, animations, export settings, project layout, and troubleshooting.
 
-**NEW in v2.0**: NeoDoom now includes comprehensive bone manipulation API that works seamlessly with Blender bone names and transform system. You can dynamically control bones via ZScript using Blender-friendly methods like `SetBoneRotation()`, `AddBoneLookAt()`, and more.
+**NEW in v2.0**: BiasedDoom now includes comprehensive bone manipulation API that works seamlessly with Blender bone names and transform system. You can dynamically control bones via ZScript using Blender-friendly methods like `SetBoneRotation()`, `AddBoneLookAt()`, and more.
 
 ## Summary of Engine Capabilities and Constraints
 
@@ -46,7 +46,7 @@ This guide describes, in depth, how to create 3D models and animations in Blende
 
 1) Units and Scale
 - Set Scene Units to Metric; Unit Scale = 1.0.
-- In NeoDoom, 1 unit ≈ 1 Doom map unit. Common props: 1 m = 1 unit scale keeps proportions reasonable.
+- In BiasedDoom, 1 unit ≈ 1 Doom map unit. Common props: 1 m = 1 unit scale keeps proportions reasonable.
 - Model to real‑world scale to avoid re‑scaling in the engine.
 
 2) Axes and Orientation
@@ -119,7 +119,7 @@ Exporter tip: In glTF exporter panel, enable “Animations → NLA Strips” if 
 
 File → Export → glTF 2.0 (.glb/.gltf). Recommended profile:
 
-- Format: glTF Separate (.gltf + .bin + textures) — REQUIRED for NeoDoom (external images only).
+- Format: glTF Separate (.gltf + .bin + textures) — REQUIRED for BiasedDoom (external images only).
 - Include
   - Selected Objects: ON (optional; export only what you selected)
   - Apply Modifiers: ON
@@ -155,9 +155,9 @@ File → Export → glTF 2.0 (.glb/.gltf). Recommended profile:
 Do NOT enable:
 - Draco mesh compression — unsupported.
 - KTX2 texture compression — unsupported for now.
-- “Embed Textures” (GLB) — NeoDoom currently expects external textures via URI.
+- “Embed Textures” (GLB) — BiasedDoom currently expects external textures via URI.
 
-## Project Layout and Loading in NeoDoom
+## Project Layout and Loading in BiasedDoom
 
 Recommended layout under the game root:
 
@@ -228,7 +228,7 @@ Symptoms → Causes → Fixes
 
 ## Version Notes
 
-- NeoDoom uses fastgltf 0.5.x internally. Some glTF extensions are not yet supported.
+- BiasedDoom uses fastgltf 0.5.x internally. Some glTF extensions are not yet supported.
 - Draco, KTX2, embedded images, and data URIs are currently not supported by the loader; use external textures via URI.
 
 ## Example Export Recipe (Quick Reference)

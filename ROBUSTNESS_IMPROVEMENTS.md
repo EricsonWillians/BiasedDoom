@@ -1,8 +1,8 @@
-# NeoDoom glTF Implementation - Robustness & Integration Improvements
+# BiasedDoom glTF Implementation - Robustness & Integration Improvements
 
 ## Overview
 
-This document details the comprehensive robustness and integration improvements made to the NeoDoom glTF 2.0 implementation, transforming it from a basic proof-of-concept into a production-ready, enterprise-grade system.
+This document details the comprehensive robustness and integration improvements made to the BiasedDoom glTF 2.0 implementation, transforming it from a basic proof-of-concept into a production-ready, enterprise-grade system.
 
 ## 🛡️ Robustness Improvements
 
@@ -261,4 +261,4 @@ Root:
 └── vcpkg.json                # Updated dependencies
 ```
 
-This comprehensive robustness and integration improvement transforms the NeoDoom glTF implementation into a production-ready system that meets enterprise-grade standards for reliability, maintainability, and performance.
+This comprehensive robustness and integration improvement transforms the BiasedDoom glTF implementation into a production-ready system that meets enterprise-grade standards for reliability, maintainability, and performance.

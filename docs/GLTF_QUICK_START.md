@@ -1,4 +1,4 @@
-# NeoDoom GLTF Quick Start Guide
+# BiasedDoom GLTF Quick Start Guide
 
 ## 60-Second Checklist
 

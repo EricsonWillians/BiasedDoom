@@ -56,9 +56,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Threads REQUIRED)
 
 # glTF 2.0 support
-option(NEODOOM_ENABLE_GLTF "Enable glTF 2.0 model support" ON)
-option(NEODOOM_BUILD_GLTF "Build experimental glTF implementation" ON)
-if (NEODOOM_ENABLE_GLTF)
+option(BIASEDDOOM_ENABLE_GLTF "Enable glTF 2.0 model support" ON)
+option(BIASEDDOOM_BUILD_GLTF "Build experimental glTF implementation" ON)
+if (BIASEDDOOM_ENABLE_GLTF)
     # Require fastgltf via CMake package config (provided by vcpkg or system)
     # Note: The vcpkg manifest feature "gltf-support" is added before project()
     find_package(fastgltf CONFIG REQUIRED)
@@ -171,7 +171,7 @@ IF( NOT CMAKE_BUILD_TYPE )
 ENDIF()
 
 set( ZDOOM_OUTPUT_DIR ${CMAKE_BINARY_DIR} CACHE PATH "Directory where zdoom.pk3 and the executable will be created." )
-set( ZDOOM_EXE_NAME "neodoom" CACHE FILEPATH "Name of the executable to create" )
+set( ZDOOM_EXE_NAME "biaseddoom" CACHE FILEPATH "Name of the executable to create" )
 if( MSVC )
 	# Allow the user to use ZDOOM_OUTPUT_DIR as a single release point.
 	# Use zdoom, zdoomd, zdoom64, and zdoomd64 for the binary names

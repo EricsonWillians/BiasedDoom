@@ -1,11 +1,11 @@
-# glTF Implementation Status for NeoDoom
+# glTF Implementation Status for BiasedDoom
 
 **Date**: October 26, 2025
 **Status**: 95% Complete - Needs Compilation Fixes
 
 ## Executive Summary
 
-The glTF 2.0 implementation in NeoDoom is **nearly complete** but currently non-functional due to:
+The glTF 2.0 implementation in BiasedDoom is **nearly complete** but currently non-functional due to:
 1. Build flag disabled by default (`NEODOOM_BUILD_GLTF=OFF`)
 2. Compilation errors from API changes and minor bugs
 3. ZScript native functions not registered
@@ -137,7 +137,7 @@ private:
 
 #### Error Group D: fastgltf API Version Mismatch
 
-**Problem**: Code written for fastgltf 0.5.x, but NeoDoom uses 0.8.x
+**Problem**: Code written for fastgltf 0.5.x, but BiasedDoom uses 0.8.x
 **Impact**: 8 compilation errors from API changes
 
 **fastgltf 0.8.x Breaking Changes**:

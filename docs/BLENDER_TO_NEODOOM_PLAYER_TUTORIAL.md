@@ -1,6 +1,6 @@
-# Blender to NeoDoom: Complete Player Replacement Tutorial
+# Blender to BiasedDoom: Complete Player Replacement Tutorial
 
-**A beginner-friendly guide to creating animated glTF player models for NeoDoom**
+**A beginner-friendly guide to creating animated glTF player models for BiasedDoom**
 
 ---
 
@@ -16,7 +16,7 @@
 8. [Part 6: Exporting to glTF](#part-6-exporting-to-gltf)
 9. [Part 7: Creating the MODELDEF](#part-7-creating-the-modeldef)
 10. [Part 8: Packaging Your Mod](#part-8-packaging-your-mod)
-11. [Part 9: Testing in NeoDoom](#part-9-testing-in-neodoom)
+11. [Part 9: Testing in BiasedDoom](#part-9-testing-in-neodoom)
 12. [Troubleshooting](#troubleshooting)
 13. [Advanced Topics](#advanced-topics)
 
@@ -24,14 +24,14 @@
 
 ## Introduction
 
-This tutorial will teach you how to create a complete, animated player character replacement for NeoDoom using Blender. By the end, you'll have a fully functional 3D character that replaces the Doom Guy sprite with a modern glTF model supporting skeletal animation.
+This tutorial will teach you how to create a complete, animated player character replacement for BiasedDoom using Blender. By the end, you'll have a fully functional 3D character that replaces the Doom Guy sprite with a modern glTF model supporting skeletal animation.
 
 **What you'll learn:**
 - Character modeling basics in Blender
 - Skeletal rigging and skinning
 - Creating game-ready animations
 - PBR texturing workflow
-- glTF export settings for NeoDoom
+- glTF export settings for BiasedDoom
 - MODELDEF configuration
 - Packaging mods as PK3 files
 
@@ -46,11 +46,11 @@ This tutorial will teach you how to create a complete, animated player character
 1. **Blender 3.6 or newer** (Download: https://www.blender.org/download/)
    - Why: Built-in glTF 2.0 export with full animation support
 
-2. **NeoDoom** (Latest build with glTF support)
-   - Located at: `/home/ericsonwillians/workspace/NeoDoom/build/neodoom`
+2. **BiasedDoom** (Latest build with glTF support)
+   - Located at: `/home/ericsonwillians/workspace/BiasedDoom/build/neodoom`
 
 3. **A Doom IWAD file** (doom.wad, doom2.wad, etc.)
-   - Required to run NeoDoom
+   - Required to run BiasedDoom
 
 ### Recommended Skills
 

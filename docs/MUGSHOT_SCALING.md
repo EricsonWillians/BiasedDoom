@@ -1,12 +1,12 @@
 # Technical Specification: Automatic High-Resolution Mugshot Scaling
 
-**System**: NeoDoom Engine (Fork of GZDoom)
+**System**: BiasedDoom Engine (Fork of GZDoom)
 **Component**: Status Bar (SBARINFO)
 **Status**: Draft
 
 ## 1. Executive Summary
 
-This document proposes a modification to the NeoDoom engine to enable **automatic downscaling** of high-resolution "mugshot" (status bar face) graphics. 
+This document proposes a modification to the BiasedDoom engine to enable **automatic downscaling** of high-resolution "mugshot" (status bar face) graphics. 
 
 Currently, the `DrawMugShot` command renders graphics at their intrinsic display resolution. This works well for classic low-resolution assets but fails for high-definition replacements, which render oversized and obscure the screen. The proposed change extends the `SBARINFO` scripting language to accept explicit target dimensions, allowing the engine to mathematically scale high-fidelity assets to fit legacy UI constraints without manual texture definition tweaks.
 

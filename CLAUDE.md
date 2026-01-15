@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-NeoDoom is a modern fork of GZDoom that extends the classic DOOM engine with native glTF 2.0 support, enabling skeletal animations, PBR materials, and seamless Blender workflows while maintaining backward compatibility with traditional DOOM assets.
+BiasedDoom is a modern fork of GZDoom that extends the classic DOOM engine with native glTF 2.0 support, enabling skeletal animations, PBR materials, and seamless Blender workflows while maintaining backward compatibility with traditional DOOM assets.
 
 ## Build System
 
@@ -264,7 +264,7 @@ FModel* LoadModel(const char* path) {
 #### 6. Blender Workflow Integration
 
 **Export Pipeline Optimization**:
-1. **Validation System**: Implement glTF validation to ensure Blender-exported files meet NeoDoom requirements
+1. **Validation System**: Implement glTF validation to ensure Blender-exported files meet BiasedDoom requirements
 2. **Asset Preprocessing**: Optional build-time optimization for glTF assets (mesh optimization, texture compression)
 3. **Error Reporting**: Comprehensive error messages for common Blender export issues
 
