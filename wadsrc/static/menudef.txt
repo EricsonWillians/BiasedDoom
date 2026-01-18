@@ -19,6 +19,20 @@ OptionValue "AtmosphereModes"
 	6, "Cyberpunk"
 }
 
+OptionValue "CrtModes"
+{
+	0, "Off"
+	1, "Standard (Scanlines)"
+	2, "Aperture Grille"
+	3, "Shadow Mask"
+}
+
+OptionValue "NtscModes"
+{
+	0, "Off"
+	1, "On"
+}
+
 //-------------------------------------------------------------------------------------------
 
 DEFAULTLISTMENU
@@ -2845,6 +2859,15 @@ OptionMenu "PostProcessMenu" protected
 	Option "Atmosphere",						gl_atmosphere,					"AtmosphereModes"
 	Slider "Atmosphere Intensity",				gl_atmosphere_intensity,		0.0, 2.0, 0.1, 1
 	Slider "Atmosphere Contrast",				gl_atmosphere_contrast,			0.0, 2.0, 0.1, 1
+	StaticText " "
+	Option "CRT Mode", gl_crt_mode, "CrtModes"
+	Slider "CRT Distortion", gl_crt_distortion, 0.0, 1.0, 0.05, 2
+	Slider "CRT Zoom", gl_crt_zoom, 0.5, 2.0, 0.05, 2
+	Slider "CRT Scanline Density", gl_crt_scanline_density, 0.1, 4.0, 0.1, 1
+	Slider "CRT Scanline Opacity", gl_crt_scanline, 0.0, 1.0, 0.05, 2
+	Slider "CRT Scanline Sharpness", gl_crt_scanline_sharpness, 0.5, 5.0, 0.1, 1
+	Slider "CRT Mask Intensity", gl_crt_mask_intensity, 0.0, 1.0, 0.05, 2
+	Option "NTSC Mode", gl_ntsc_mode, "NtscModes"
 	StaticText " "
 	Slider "$GLPREFMNU_PALTONEMAPPOWER",		gl_paltonemap_powtable,			0.2, 3.0, 0.1, 1
 	Option "$GLPREFMNU_PALTONEMAPORDER",		gl_paltonemap_reverselookup,	"LookupOrder"

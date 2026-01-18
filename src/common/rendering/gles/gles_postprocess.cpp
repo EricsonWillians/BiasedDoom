@@ -132,6 +132,14 @@ void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma) {
     mPresentShader->Uniforms->AtmosphereMode = gl_atmosphere;
     mPresentShader->Uniforms->AtmosphereIntensity = gl_atmosphere_intensity;
     mPresentShader->Uniforms->AtmosphereContrast = gl_atmosphere_contrast;
+    mPresentShader->Uniforms->CrtMode = gl_crt_mode;
+    mPresentShader->Uniforms->CrtDistortion = gl_crt_distortion;
+    mPresentShader->Uniforms->CrtZoom = gl_crt_zoom;
+    mPresentShader->Uniforms->CrtScanline = gl_crt_scanline;
+    mPresentShader->Uniforms->CrtScanlineDensity = gl_crt_scanline_density;
+    mPresentShader->Uniforms->CrtScanlineSharpness = gl_crt_scanline_sharpness;
+    mPresentShader->Uniforms->CrtMaskIntensity = gl_crt_mask_intensity;
+    mPresentShader->Uniforms->NtscMode = gl_ntsc_mode;
   }
   if (vid_hdr_active && framebuffer->IsFullscreen()) {
     // Full screen exclusive mode treats a rgba16f frame buffer as linear.

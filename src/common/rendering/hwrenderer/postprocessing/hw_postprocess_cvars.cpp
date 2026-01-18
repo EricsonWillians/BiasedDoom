@@ -113,3 +113,24 @@ CUSTOM_CVAR(Bool, gl_paltonemap_reverselookup, true,
 }
 
 CVAR(Float, gl_menu_blur, -1.0f, CVAR_ARCHIVE)
+
+CUSTOM_CVAR(Int, gl_crt_mode, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0)
+    self = 0;
+  if (self > 3)
+    self = 3;
+}
+
+CVAR(Float, gl_crt_distortion, 0.1f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, gl_crt_zoom, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, gl_crt_scanline, 0.5f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, gl_crt_scanline_density, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, gl_crt_scanline_sharpness, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, gl_crt_mask_intensity, 0.5f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+CUSTOM_CVAR(Int, gl_ntsc_mode, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0)
+    self = 0;
+  if (self > 1)
+    self = 1;
+}

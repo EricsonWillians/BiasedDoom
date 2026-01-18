@@ -51,21 +51,58 @@ vec4 ApplyHdrMode(vec4 c)
 
 void main()
 {
-	vec4 res = ApplyHdrMode(ApplyGamma(texture(InputTexture, UVOffset + TexCoord * UVScale)));
+	vec2 uv = UVOffset + TexCoord * UVScale;
+
+	// CRT Distortion (Pincushion)
+	if (CrtMode > 0)
+	{
+		vec2 center = UVOffset + 0.5 * UVScale; 
+		vec2 rel = TexCoord - 0.5;
+		float r2 = dot(rel, rel);
+		float dist = 1.0 + r2 * (CrtDistortion * 2.0); 
+
+		// Apply Zoom (Overscan) here
+		// If Zoom > 1.0, we divide the relative coordinate effectively "sampling" a smaller area
+		float zoomEffect = max(CrtZoom, 0.01); // Prevent div by zero
+		
+		vec2 distortedTexCoord = 0.5 + (rel * dist) / zoomEffect;
+		
+		// If we are outside valid range, mask it?
+		if (distortedTexCoord.x < 0.0 || distortedTexCoord.x > 1.0 || distortedTexCoord.y < 0.0 || distortedTexCoord.y > 1.0)
+		{
+			FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+			return;
+		}
+
+		uv = UVOffset + distortedTexCoord * UVScale;
+	}
+
+	vec4 res = ApplyHdrMode(ApplyGamma(texture(InputTexture, uv)));
 	vec3 original = res.rgb;
+
+	// NTSC / Signal Noise
+	if (NtscMode > 0)
+	{
+		float fringe = 0.003 * CrtDistortion; 
+		vec3 fringeColor;
+		fringeColor.r = texture(InputTexture, uv + vec2(fringe, 0.0)).r;
+		fringeColor.g = res.g;
+		fringeColor.b = texture(InputTexture, uv - vec2(fringe, 0.0)).b;
+		res.rgb = mix(res.rgb, fringeColor, 0.5);
+	}
 
 	if (AtmosphereMode == 1) // Gothic
 	{
 		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
-		res.rgb = mix(vec3(gray), res.rgb, 0.2); // Highly desaturated
-		res.rgb = (res.rgb - 0.5) * 1.2 + 0.5; // Contrast
-		res.rgb *= vec3(0.9, 0.9, 1.0); // Slight blue tint
+		res.rgb = mix(vec3(gray), res.rgb, 0.2); 
+		res.rgb = (res.rgb - 0.5) * 1.2 + 0.5; 
+		res.rgb *= vec3(0.9, 0.9, 1.0); 
 	}
 	else if (AtmosphereMode == 2) // Blood
 	{
 		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
-		res.rgb = vec3(gray * 1.5, gray * 0.2, gray * 0.2); // Strong red
-		res.rgb = (res.rgb - 0.5) * 1.3 + 0.5; // High contrast
+		res.rgb = vec3(gray * 1.5, gray * 0.2, gray * 0.2); 
+		res.rgb = (res.rgb - 0.5) * 1.3 + 0.5; 
 	}
 	else if (AtmosphereMode == 3) // Sepia
 	{
@@ -78,32 +115,76 @@ void main()
 	else if (AtmosphereMode == 4) // Toxic
 	{
 		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
-		vec3 toxic = vec3(gray * 0.8, gray * 1.4, gray * 0.4); // Radioactive green/yellow
+		vec3 toxic = vec3(gray * 0.8, gray * 1.4, gray * 0.4); 
 		res.rgb = mix(res.rgb, toxic, 0.9);
-		res.rgb = (res.rgb - 0.5) * 1.3 + 0.5; // High contrast
+		res.rgb = (res.rgb - 0.5) * 1.3 + 0.5; 
 	}
 	else if (AtmosphereMode == 5) // Hellfire
 	{
 		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
-		vec3 fire = vec3(gray * 1.6, gray * 0.6, gray * 0.1); // Deep red/orange
+		vec3 fire = vec3(gray * 1.6, gray * 0.6, gray * 0.1); 
 		res.rgb = mix(res.rgb, fire, 0.95);
-		res.rgb = (res.rgb - 0.5) * 1.4 + 0.5; // Very high contrast
+		res.rgb = (res.rgb - 0.5) * 1.4 + 0.5; 
 	}
 	else if (AtmosphereMode == 6) // Cyberpunk
 	{
 		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
-		res.rgb = mix(vec3(gray), res.rgb, 1.5); // Boost saturation
-		res.rgb *= vec3(1.1, 0.8, 1.4); // Shift towards purple/pink/blue
-		res.rgb = pow(res.rgb, vec3(0.9)); // Slight gamma shift for "glow" feel
+		res.rgb = mix(vec3(gray), res.rgb, 1.5); 
+		res.rgb *= vec3(1.1, 0.8, 1.4); 
+		res.rgb = pow(res.rgb, vec3(0.9)); 
 	}
 
 	// Apply configurable intensity (blend between original and effect)
 	if (AtmosphereMode > 0)
 	{
 		res.rgb = mix(original, res.rgb, AtmosphereIntensity);
-		
-		// Apply configurable contrast
 		res.rgb = (res.rgb - 0.5) * AtmosphereContrast + 0.5;
+	}
+
+	// CRT Scanlines and Masks
+	if (CrtMode > 0)
+	{
+		// Sharpness-tuned Scanlines
+		float scanlineCount = textureSize(InputTexture, 0).y * CrtScanlineDensity;
+		if (scanlineCount < 50.0) scanlineCount = 200.0 * CrtScanlineDensity;
+
+		float sc = uv.y * scanlineCount * 3.14159 * 2.0;
+		float scanline = sin(sc);
+		
+		// Apply Sharpness: Scale sine range and clamp
+		// Sharpness 1.0 (Standard) -> -1 to 1 sin wave
+		// Sharpness > 1.0 -> Squares off the wave
+		if (CrtScanlineSharpness > 1.0)
+		{
+			scanline = clamp(scanline * CrtScanlineSharpness, -1.0, 1.0);
+		}
+		
+		vec3 scanlineColor = vec3(0.5 + 0.5 * scanline);
+		res.rgb *= mix(vec3(1.0), scanlineColor, 0.5 * CrtScanline); // Intensity
+
+		// Phosphor / Shadow Masks based on Mode
+		// Mode 1: Standard (No Mask, just scanlines)
+		// Mode 2: Aperture Grille (Vertical stripes)
+		if (CrtMode == 2)
+		{
+			float pixelX = uv.x * textureSize(InputTexture, 0).x * 2.0; // Higher density horizontal
+			float mask = 0.5 + 0.5 * sin(pixelX * 3.14159);
+			// RGB subsampling?
+			vec3 maskColor = vec3(mask);
+			res.rgb *= mix(vec3(1.0), maskColor, CrtMaskIntensity);
+		}
+		// Mode 3: Shadow Mask (Dots)
+		else if (CrtMode >= 3)
+		{
+			float pixelX = uv.x * textureSize(InputTexture, 0).x * 3.0; // Dense dots
+			float pixelY = uv.y * textureSize(InputTexture, 0).y * 1.5;
+			
+			float maskX = sin(pixelX * 3.14159);
+			float maskY = sin(pixelY * 3.14159);
+			float mask = 0.5 + 0.5 * (maskX * maskY);
+			
+			res.rgb *= mix(vec3(1.0), vec3(mask), CrtMaskIntensity);
+		}
 	}
 
 	FragColor = Dither(res);

@@ -695,7 +695,14 @@ struct PresentUniforms {
   int AtmosphereMode;
   float AtmosphereIntensity;
   float AtmosphereContrast;
-  float Padding0;
+  int CrtMode;
+  float CrtDistortion;
+  float CrtZoom;
+  float CrtScanline;
+  float CrtScanlineDensity;
+  float CrtScanlineSharpness;
+  float CrtMaskIntensity;
+  int NtscMode;
 
   static std::vector<UniformFieldDesc> Desc() {
     return {
@@ -720,7 +727,19 @@ struct PresentUniforms {
          offsetof(PresentUniforms, AtmosphereIntensity)},
         {"AtmosphereContrast", UniformType::Float,
          offsetof(PresentUniforms, AtmosphereContrast)},
-        {"Padding0", UniformType::Float, offsetof(PresentUniforms, Padding0)}};
+        {"CrtMode", UniformType::Int, offsetof(PresentUniforms, CrtMode)},
+        {"CrtDistortion", UniformType::Float,
+         offsetof(PresentUniforms, CrtDistortion)},
+        {"CrtZoom", UniformType::Float, offsetof(PresentUniforms, CrtZoom)},
+        {"CrtScanline", UniformType::Float,
+         offsetof(PresentUniforms, CrtScanline)},
+        {"CrtScanlineDensity", UniformType::Float,
+         offsetof(PresentUniforms, CrtScanlineDensity)},
+        {"CrtScanlineSharpness", UniformType::Float,
+         offsetof(PresentUniforms, CrtScanlineSharpness)},
+        {"CrtMaskIntensity", UniformType::Float,
+         offsetof(PresentUniforms, CrtMaskIntensity)},
+        {"NtscMode", UniformType::Int, offsetof(PresentUniforms, NtscMode)}};
   }
 };
 

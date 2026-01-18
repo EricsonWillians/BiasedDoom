@@ -208,6 +208,14 @@ void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma,
     uniforms.AtmosphereMode = gl_atmosphere;
     uniforms.AtmosphereIntensity = gl_atmosphere_intensity;
     uniforms.AtmosphereContrast = gl_atmosphere_contrast;
+    uniforms.CrtMode = gl_crt_mode;
+    uniforms.CrtDistortion = gl_crt_distortion;
+    uniforms.CrtZoom = gl_crt_zoom;
+    uniforms.CrtScanline = gl_crt_scanline;
+    uniforms.CrtScanlineDensity = gl_crt_scanline_density;
+    uniforms.CrtScanlineSharpness = gl_crt_scanline_sharpness;
+    uniforms.CrtMaskIntensity = gl_crt_mask_intensity;
+    uniforms.NtscMode = gl_ntsc_mode;
   }
   uniforms.ColorScale =
       (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);
