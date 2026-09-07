@@ -1,0 +1,18 @@
+// Registers the fixture's UI-scope static event handler (the conversation
+// reply bridge - see ZSCRIPT) so the engine's `event convpick <node> <reply>`
+// console command reaches its ConsoleProcess override.
+gameinfo
+{
+	AddEventHandlers = "ConvoReplyBridge"
+}
+
+// Binds conversation IDs to actor classes for the Strife-namespace DIALOG01
+// lump: 920 -> QuestScribe (the talkative NPC; its ZScript class cannot use
+// the DECORATE-only `ConversationID` property) and 921 -> the stock Doom
+// Shell ammo (referenced as `giveitem = 921`). Both entries feed the same
+// StrifeTypes table Strife fills from its own conversationids.txt.
+conversationids
+{
+	920 = QuestScribe
+	921 = Shell
+}

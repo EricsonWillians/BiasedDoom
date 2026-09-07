@@ -1,0 +1,47 @@
+// Strife-namespace USDF dialogue (grammar: specs/usdf.txt).
+//
+// Registration: the map loader (MapLoader::LoadStrifeConversations) looks up
+// a DIALOGxx lump matching the loaded map's name - DIALOG01 for MAP01 - in
+// the global namespace, for ANY game, not just Strife. A root-level DIALOG01
+// file in this directory/PK3 is found by fileSystem.CheckNumForName exactly
+// like ZSCRIPT/MAPINFO are. Text lumps are parsed as USDF; binary lumps are
+// treated as original Strife SCRIPTxx data.
+//
+// The Strife namespace addresses actors by conversation ID (mobj), not class
+// name: `actor = 920` and `giveitem = 921` resolve through the
+// conversation-ID table populated by this example's MAPINFO `conversationids`
+// block. The ZDoom/GZDoom namespaces take class names instead, but only
+// Strife supports numeric `log = "LOG#"` entries - which is what
+// bd_quests.track_conversation_log matches on.
+//
+// THE CONFESSION BOOTH. The tree below is mechanically identical to the
+// original fixture (one page, two choices, log "LOG77", giveitem 921,
+// closedialog on both) - only the prose has gone into the dark.
+namespace = "Strife";
+
+conversation
+{
+	actor = 920;
+
+	page
+	{
+		name = "The Confessor";
+		dialog = "Kneel, penitent. The dark kept every secret you fed it - but I keep them better. Speak, and be unburdened... for a price.";
+
+		choice
+		{
+			text = "Bless me, Confessor, for I have sinned.";
+			yesmessage = "The Confessor presses a box of shells into your hands. 'Alms for the honest. Go - and sin no louder.'";
+			log = "LOG77";
+			giveitem = 921;
+			closedialog = true;
+		}
+
+		choice
+		{
+			text = "My sins are my own.";
+			yesmessage = "Then carry them, penitent. They only get heavier.";
+			closedialog = true;
+		}
+	}
+}

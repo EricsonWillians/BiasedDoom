@@ -46,6 +46,15 @@ in `xvfb-run` when no display is available). `BIASEDDOOM_EXE` and
 | [`23_damage_numbers`](23_damage_numbers/) | `actor_damaged` payloads, pooled rising combat text, crit styling |
 | [`24_wave_defense`](24_wave_defense/) | Endless horde mode: map-native spawn pools, champion/unique affixes, wave mutators, weapon-ladder loot, boss waves, persistent bests |
 | [`25_pickup_magnet`](25_pickup_magnet/) | `get_flag` pickup detection, item steering, ring-pool pull visualization |
+| [`26_imgui_overlays`](26_imgui_overlays/) | Dear ImGui overlay via `bd.imgui`, `imgui_frame` event, menu bar, widgets |
+| [`27_quest_journal`](27_quest_journal/) | **Whispers in the Walls**, occult investigation: chained `bd_quests` quests with `xp` reward hooks feeding a favor ledger (toasts + Grimoire footer), blackout/flicker rituals, grimoire UI (`bd_horror` theme + toasts) |
+| [`28_vtm_chronicle`](28_vtm_chronicle/) | **The Last Feeding**, `bd_vtm` chronicle: cowering mortals, hunger-driven dread heartbeat, darkness-aware feeding, breach ambushes, themed vitae HUD |
+| [`29_dnd_dungeon`](29_dnd_dungeon/) | **The Sunken Crypt**, `bd_dnd` crawl: `CreationWizard`/`CharacterClass` hero (level features, ASI), locked-door bash, traps, sanctuary/nightmare rests, world-bound companion, reliquary character sheet |
+| [`30_conversation_quests`](30_conversation_quests/) | **The Confessor** — native ZSDF dialogue fixture: `conversation_started`/`conversation_reply` hooks, quest objective from a reply, candle-lit rite panel |
+| [`31_elemental_combat`](31_elemental_combat/) | **Pyre & Rime** — `bd_rpg` rites: elemental focus, elite affixes, `actor_before_damage` wards, rarity loot omens, themed combat HUD |
+| [`32_dialogue_trees`](32_dialogue_trees/) | **The Interrogation**, `bd_dialogue` trees: persuasion/intimidation skill checks, faction gates, dread-revealed hidden choices, an attitude-tracked hostile greeting, portrait dialogue UI |
+| [`33_rpg_campaign`](33_rpg_campaign/) | **Ashvale Crossing**: capstone mini-RPG hub with `bd_dnd` character creation/classes, `bd_npcs` dispositions/shop/services, `bd_dialogue` trees, `bd_quests` reward hooks, a recruitable companion, and a checkpoint round-trip |
+| [`34_scripted_menus`](34_scripted_menus/) | **Overture Menu Kit**: keyboard-first ImGui menu suite (title/pause/settings/credits screens, help and confirm-quit popups, docked tool panel) on the expanded `bd.imgui` API: runtime fonts, UI scale, style themes, key chords, `pyui` bridge |
 | [`hello_world`](hello_world/) | Full lifecycle/savegame integration fixture used by CI-style testing |
 
 ## Build and run

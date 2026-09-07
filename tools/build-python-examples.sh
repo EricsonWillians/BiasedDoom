@@ -10,8 +10,8 @@ Usage:
 
 Without EXAMPLE names, every directory under examples/python containing a
 root PYTHON manifest is built. The default output is build/python-examples/.
-An optional root ZSCRIPT lump, FONTDEFS lump, and fonts/ directory are
-included when present.
+Optional root lumps (ZSCRIPT, FONTDEFS, MAPINFO, LANGUAGE, map-scoped
+DIALOGxx dialogue lumps) and a fonts/ directory are included when present.
 USAGE
 }
 
@@ -105,9 +105,16 @@ for name in "${requested[@]}"; do
     }
 
     package_entries=(PYTHON "${script_roots[@]}")
-    [[ -f "${source_dir}/ZSCRIPT" ]] && package_entries+=(ZSCRIPT)
-    [[ -f "${source_dir}/FONTDEFS" ]] && package_entries+=(FONTDEFS)
+    for optional_lump in ZSCRIPT FONTDEFS MAPINFO LANGUAGE; do
+        [[ -f "${source_dir}/${optional_lump}" ]] && package_entries+=("${optional_lump}")
+    done
     [[ -d "${source_dir}/fonts" ]] && package_entries+=(fonts)
+    # Map-scoped dialogue lumps (DIALOG01 for MAP01, etc.).
+    shopt -s nullglob
+    for dialog_lump in "${source_dir}"/DIALOG[0-9][0-9]; do
+        package_entries+=("$(basename "${dialog_lump}")")
+    done
+    shopt -u nullglob
     output="${output_dir}/${name}.pk3"
     (
         cd "${source_dir}"

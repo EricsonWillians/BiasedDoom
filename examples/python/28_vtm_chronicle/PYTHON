@@ -1,0 +1,7 @@
+# One UTF-8 VFS path per line. Paths are resolved inside this PK3 only.
+# Load order matters: the libraries are definition-only at import time and
+# main.py (last) imports them as siblings and wires every engine event.
+pyscripts/content.py
+pyscripts/systems.py
+pyscripts/ui.py
+pyscripts/main.py

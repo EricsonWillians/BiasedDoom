@@ -1,0 +1,22 @@
+version "4.15.0"
+
+// Whispers in the Walls — the desecrated pages.
+// A pale, always-picked-up inventory token; all quest logic lives in
+// pyscripts/, this lump only provides the pickupable thing itself.
+class RitualPage : Inventory
+{
+	Default
+	{
+		Inventory.PickupMessage "a desecrated page, warm as skin";
+		Inventory.MaxAmount 3;
+		+INVENTORY.ALWAYSPICKUP
+		// Bone-pale colorization of the bonus-vial sprite.
+		Translation "0:255=%[0.93,0.87,0.72]:[0.93,0.87,0.72]";
+	}
+	States
+	{
+	Spawn:
+		BON1 A -1;
+		Stop;
+	}
+}

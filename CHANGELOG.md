@@ -2,6 +2,107 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Python API v2 additions**: `line_activation_failed` now carries
+  failure reason codes (`reason`/`reason_code`, with ZScript parity via
+  `WorldLineActivationFailed` and `WorldEvent.ActivationFailReason`);
+  new events `item_dropped`, `weapon_changed`, `sector_entered`,
+  `sector_exited`, `conversation_started`, and `conversation_reply`;
+  engine-seeded deterministic `bd.random()`/`randrange()`/`randint()`/
+  `choice()` persisted in savegames; query push-down filters for
+  `bd.actor_refs` plus `bd.sector_at`/`bd.actors_in_sector`; vectorized
+  `bd.actor_field_batch` reads; read-only multiplayer/demo observer mode
+  (`bd.session_read_only()`); `bd.assert_true`/`bd.warn` with structured
+  `-pyerrorlog` JSON records; and `-scripttest <tics> [ff]`
+  fast-forward for CI-style script tests.
+- **Dear ImGui overlay**: vendored Dear ImGui 1.92.8
+  (`libraries/imgui/`, MIT) with an engine overlay layer
+  (`src/common/imgui/`) that renders ImGui draw lists through
+  `F2DDrawer` on all render backends, GUI input capture on all
+  platforms, the `py_imgui` CVar and `py_imgui_demo` CCMD, and the
+  `bd.imgui` Python submodule (~60 functions) driven by the new
+  `imgui_frame` event. Gated by the `BIASEDDOOM_ENABLE_IMGUI` CMake
+  option.
+- **Engine-shipped Python framework packages** under `src/python/lib/`,
+  staged beside the embedded stdlib at build time: `bd_quests`
+  (data-driven quests/objectives with event auto-wiring, savegame
+  persistence, and an ImGui journal UI), `bd_vtm` (VtM-inspired
+  chronicle rules: blood pool, hunger/frenzy, humanity, disciplines,
+  feeding, masquerade, factions, ImGui vitae HUD), and `bd_dnd`
+  (d20/5e-inspired rules: dice with advantage, ability/skill checks, XP
+  and leveling, locked-door bashes, trap zones, dialogue skill gates,
+  ImGui character sheet).
+- Added four new gameplay examples (`26_imgui_overlays` through
+  `29_dnd_dungeon`) demonstrating the ImGui overlay and each framework
+  package.
+- **Exact kill attribution**: `actor_died` now carries
+  `attacker_ref`/`attacker_class`/`attacker_player_index` (ZScript sees
+  the same via `WorldEvent.DamageSource` on `WorldThingDied`);
+  `bd_quests.track_kills` and `bd_dnd.track_xp_from_kills` credit
+  player kills exactly by default.
+- **`ui_command` event + `pyui` CCMD**: console aliases and key binds
+  can drive script UIs; one-line helpers `bd_quests.bind_journal_toggle`,
+  `bd_vtm.bind_hud_toggle`, and `bd_dnd.bind_sheet_toggle`.
+- **ImGui docking + richer images**: the vendored ImGui now tracks the
+  docking branch (`v1.92.8-docking`) with `dock_space_over_viewport()`/
+  `dock_space()`/`set_next_window_dock_id()` (multi-viewport
+  deliberately disabled), and `bd.imgui.image()` gained UV sub-rects,
+  tint, borders, sprite-name fallback, live Actor sprites, and
+  `image_size()`.
+- **Real dialogue fixture**: new example `30_conversation_quests` — a
+  talkative NPC driven by engine-native ZSDF dialogue whose reply
+  completes a `bd_quests` objective, exercising
+  `conversation_started`/`conversation_reply` under `-scripttest`.
+- **`bd_dnd` v1.2**: `DamageSaveRule` (saving throws wired to
+  `actor_damaged` with retroactive half/negate refunds), `Party` rosters
+  with shared XP + `PartyState` persistence + `PartySheet` UI, and
+  `Companion` world-bound follower actors with real combat targeting.
+- **Headless video driver**: `-headless` (or `BIASEDDOOM_HEADLESS=1`)
+  boots the engine with no display, no GL/Vulkan, and no window
+  (`src/common/rendering/nullvideo/`); `-scripttest` passes without an
+  X server — CI runners no longer need xvfb.
+- **Golden screenshot comparator**: `tools/compare_screenshots.py`
+  (stdlib-only) for pixel-tolerant golden-image regression tests in CI.
+- **Mutable pre-damage filter**: the `actor_before_damage` event fires
+  before armor/damage factors with a mutable event dict — scripts rewrite
+  `damage`, retype `damage_type`, or `cancel` the hit outright
+  (offline-only, zero cost when unregistered).
+- **Per-actor script storage**: `bd.actor_data(ref)` /
+  `bd.actor_data_drop(ref)` give every actor a persistent dict, purged
+  automatically on destruction or map change via the handle registry's
+  invalidation path.
+- **`bd_rpg` framework package**: genre-agnostic elemental combat —
+  damage-type registry, per-actor/class affinities, `resolve_attack`
+  pipeline (hit/crit/dice/affinity/soak), `StatusEngine` timed effects
+  (burning/poisoned/slowed/stunned/regenerating), weighted loot tables
+  with rarity feedback, kill-XP glue, savegame persistence.
+- **`bd_dialogue` framework package**: script-authored branching dialogue
+  trees with condition/skill-check/faction-gated choices, native
+  player-log integration, and an ImGui presentation layer with live NPC
+  portraits and keyboard navigation (`bd.imgui.set_nav_enabled`).
+- New examples `31_elemental_combat` and `32_dialogue_trees`
+  demonstrating both packs with full `-scripttest` autotests.
+- **`bd_horror` framework package**: a shared dark-UX layer —
+  `theme.py` (full ImGui horror skin with palette and themed window/
+  bar/portrait helpers), `toasts.py` (diegetic notifications), and
+  `atmosphere.py` (a `Dread` meter with heartbeat/vignette/whisper
+  effects, `LightProgram` flicker/blackout programs via writable
+  `Sector.light`, a `StalkerDirector`, and savegame persistence).
+- **Showcase re-architecture**: the six RPG examples (27–32) were
+  rebuilt on a uniform four-module layout (`main`/`content`/`systems`/
+  `ui`) and re-themed as a coherent horror set — *Whispers in the
+  Walls*, *The Last Feeding*, *The Sunken Crypt*, *The Confessor*,
+  *Pyre & Rime*, *The Interrogation* — with expanded autotest coverage
+  that all passes headless.
+
+### Fixed
+
+- `save_checkpoint`/savegame thumbnails no longer crash in `-headless`
+  mode (`PutSavePic` writes the placeholder PNG when no renderer exists).
+
 ## [4.15.12] - 2026-09-01
 
 ### Added

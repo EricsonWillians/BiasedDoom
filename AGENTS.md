@@ -4,7 +4,7 @@ This file provides essential guidance for AI coding agents working with the Bias
 
 ## Project Overview
 
-**BiasedDoom** is a modern fork of [GZDoom](https://zdoom.org/) (version 4.15pre) that extends the classic DOOM engine with native **glTF 2.0 support**, enabling skeletal animations, PBR materials, and seamless Blender workflows while maintaining full backward compatibility with traditional DOOM assets (MD2, MD3, voxels, DECORATE/ZScript).
+**BiasedDoom** is a modern fork of [GZDoom](https://zdoom.org/) (version 4.15pre) that extends the classic DOOM engine with native **glTF 2.0 support** and first-class **embedded CPython scripting**, enabling skeletal animations, PBR materials, seamless Blender workflows, and full game-logic modding in Python while maintaining full backward compatibility with traditional DOOM assets (MD2, MD3, voxels, DECORATE/ZScript).
 
 Key differentiators:
 - Native `.gltf` and `.glb` file loading via `fastgltf`
@@ -12,6 +12,9 @@ Key differentiators:
 - PBR metallic-roughness rendering under OpenGL/Vulkan
 - GPU-skinned animation for performance
 - Direct Blender export workflow support
+- Embedded CPython API (`src/python/`, opt-in via `-python`) with live actor/sector/line handles, an event bus, savegame persistence, and a `-scripttest` CI mode
+- Engine-shipped Python framework packs (`src/python/lib/`): `bd_quests`, `bd_vtm`, `bd_dnd`, `bd_rpg`, `bd_dialogue`, `bd_horror`, `bd_npcs`
+- Python-scripted Dear ImGui overlay (`bd.imgui`) rendered on all backends
 
 The project was previously named "NeoDoom" and was renamed to "BiasedDoom". The executable produced is `biaseddoom`.
 
@@ -27,7 +30,7 @@ The project was previously named "NeoDoom" and was renamed to "BiasedDoom". The 
 | **Graphics APIs** | OpenGL, Vulkan (via ZVulkan), GLES2 |
 | **Audio** | OpenAL (dynamic/static), ZMusic (internal) |
 | **Windowing** | SDL2 (Linux/Windows), Cocoa (macOS native) |
-| **Scripting** | ZScript (custom VM), DECORATE (legacy), ACS |
+| **Scripting** | ZScript (custom VM), DECORATE (legacy), ACS, embedded CPython |
 | **Model Formats** | MD2, MD3, IQM, OBJ, KVX (voxels), UE1, **glTF 2.0** |
 | **Compression** | bzip2, LZMA, miniz (zip) |
 | **Debugging** | cppdap (Debug Adapter Protocol) |
@@ -39,6 +42,7 @@ The project was previously named "NeoDoom" and was renamed to "BiasedDoom". The 
 - `ZWidget` — UI widget system
 - `asmjit` — JIT compilation for the script VM
 - `discordrpc` — Discord Rich Presence
+- `imgui` — Dear ImGui 1.92.8 **docking branch** (MIT) for the engine overlay layer (docking enabled, multi-viewport deliberately off)
 - `cppdap` — Debug Adapter Protocol client
 - `bzip2`, `lzma`, `miniz`, `webp` — Compression and image formats
 
@@ -102,6 +106,9 @@ cmake --build build
 | `DYN_OPENAL` | ON | Dynamically load OpenAL |
 | `OPENAL_SOFT_VCPKG` | OFF | Use OpenAL from vcpkg |
 | `LIBVPX_VCPKG` | OFF | Use libvpx from vcpkg |
+| `BIASEDDOOM_ENABLE_PYTHON` | ON | Build the embedded CPython scripting runtime when CPython development files are available |
+| `BIASEDDOOM_REQUIRE_PYTHON` | OFF | Fail configuration when the requested embedded Python runtime is unavailable |
+| `BIASEDDOOM_ENABLE_IMGUI` | ON | Enable the Dear ImGui overlay layer (requires embedded Python) |
 | `FORCE_INTERNAL_ZMUSIC` | ON | Use bundled ZMusic |
 | `FORCE_INTERNAL_ASMJIT` | ON | Use bundled asmjit |
 | `FORCE_INTERNAL_CPPDAP` | ON | Use bundled cppdap |
@@ -129,6 +136,7 @@ The project contains approximately **1,195 source files** (~596 `.cpp`, ~574 `.h
 | `src/rendering/` | DOOM-specific rendering code (hardware and software renderers) |
 | `src/playsim/` | Game simulation: actors, physics, AI, effects, ACS scripting |
 | `src/scripting/` | Scripting engine: ZScript compiler, DECORATE parser, VM backend, codegen |
+| `src/python/` | Embedded CPython runtime and game API (`python_runtime`, `python_game_api`, `python_displaylist`, `python_imgui`) plus `lib/` framework packages (`bd_quests`, `bd_vtm`, `bd_dnd`, `bd_rpg`, `bd_dialogue`, `bd_horror`, `bd_npcs`) |
 | `src/gamedata/` | Game data definitions: weapons, keys, map info, skills, DEHACKED, textures |
 | `src/sound/` | Sound system integration |
 | `src/menu/` | Menu system |
@@ -146,8 +154,10 @@ The project contains approximately **1,195 source files** (~596 `.cpp`, ~574 `.h
 
 | Directory | Purpose |
 |-----------|---------|
+| `common/imgui/` | **ImGui overlay layer** (`bd_imgui.cpp/h`, `namespace BdImGui`): per-frame Dear ImGui rendering translated into `F2DDrawer` commands (backend-agnostic), GUI input capture, `py_imgui` master cvar, `py_imgui_demo` CCMD smoke test; dispatches the `imgui_frame` Python event (`bd.on("imgui_frame")`) each visible frame; owns a runtime font registry (TTF/embedded-default fonts, name-addressed, layer-owned source bytes) with deferred atlas rebuilds that upload uniquely named atlas textures, the global UI scale (`set_ui_scale`, FontScaleMain + ScaleAllSizes by ratio), and the default-font push around every `imgui_frame` dispatch |
 | `common/models/` | **Model loading system** — MD2, MD3, IQM, OBJ, KVX, UE1, **glTF 2.0** (`model_gltf.cpp/h`, `model_gltf_render.cpp`, `model_gltf_debug.cpp/h`, `model_gltf_helpers.cpp`) |
-| `common/rendering/` | Rendering subsystem — OpenGL (`gl/`), GLES (`gles/`), Vulkan (`vulkan/`), hardware renderer (`hwrenderer/`) |
+| `common/rendering/nullvideo/` | **Headless video driver** — `NullVideo`/`NullFrameBuffer` (`null_video.cpp/h`). `-headless` or `BIASEDDOOM_HEADLESS=1` boots the engine with no display/GL/Vulkan (SDL `dummy` video driver); `D_Display` early-outs, `I_IsHeadless()` (declared in `i_video.h`) is the query point. Used for CI without X11/xvfb. |
+| `common/rendering/` | Rendering subsystem — OpenGL (`gl/`), GLES (`gles/`), Vulkan (`vulkan/`), hardware renderer (`hwrenderer/`), headless null video driver (`nullvideo/`, used by `-headless` / `BIASEDDOOM_HEADLESS=1` for display-less CI runs) |
 | `common/scripting/` | Scripting VM backend, JIT, frontend parser, DAP integration |
 | `common/audio/` | Audio abstractions (sound and music) |
 | `common/textures/` | Texture management, material system, PBR materials (`hw_material_pbr.cpp/h`) |
@@ -227,6 +237,8 @@ The project contains approximately **1,195 source files** (~596 `.cpp`, ~574 `.h
 
 3. **Build Verification** — The `supreme-build.sh` script verifies the executable is produced and checks for glTF symbols via `nm`.
 
+4. **Python Scripting CI Mode** — `tools/test-python-scripting.sh --iwad PATH` runs the engine with `-python` against the `examples/python/hello_world` fixture and asserts `PYTEST` log markers over lifecycle, events, and savegames. Scripts can also self-test with `bd.assert_true`/`bd.warn` under `-scripttest <tics> [ff]` (fast-forward via time scale), with structured JSON failures emitted by `-pyerrorlog <file>`. `tools/test-python-examples.sh` validates and smoke-runs the `examples/python/` suite.
+
 ## Deployment / Distribution
 
 - **Linux**: AppImage packages are generated in CI; manual installation via `cmake --install`
@@ -253,6 +265,20 @@ The project contains approximately **1,195 source files** (~596 `.cpp`, ~574 `.h
 | `src/common/scripting/vm/vm.h` | Script VM interface |
 | `src/playsim/actor.h` | Actor base class |
 | `src/gamedata/gi.h` | Game info definitions |
+| `docs/scripting/python.md` | Python scripting guide (API v2 contracts, persistence, performance budgets) |
+| `docs/scripting/biaseddoom.pyi` | Generated Python type stub (single-sourced via `dumppystub`; regenerable in-engine — do not hand-edit) |
+| `src/python/python_runtime.cpp` | Python runtime core: event dispatch, `bd` module, deterministic RNG, `bd.state`, scripttest, error log |
+| `src/python/lib/` | Engine-shipped Python framework packages (`bd_quests`, `bd_vtm`, `bd_dnd`, `bd_rpg`, `bd_dialogue`, `bd_horror`, `bd_npcs`), staged beside the embedded stdlib by the `stage_python_frameworks` CMake target |
+| `src/common/imgui/bd_imgui.cpp` | Dear ImGui overlay layer (`namespace BdImGui`): ImDrawList → `F2DDrawer` translation, GUI input capture, `py_imgui` CVar, runtime font registry + dynamic atlas rebuilds, UI scale, default-font push per `imgui_frame` |
+| `src/python/lib/bd_quests/` | Engine-shipped Python framework package (quest/journal system with reward-hook dispatch: a quest's `rewards["xp"]` fires the log's `on_xp_reward` callbacks and `rewards["disposition"]` fires `on_disposition_reward`), staged next to the embedded stdlib by the CMake block in `src/CMakeLists.txt` (search "engine-shipped Python packages") so mods can `import bd_quests` |
+| `src/python/lib/bd_dnd/` | Engine-shipped Python framework package (D&D-style d20 rules: dice, checks, `Character` XP/HP/resources, kill XP, world helpers, `Party`/`Companion`, plus the classes layer: `CharacterClass` definitions with per-level features and ASI points, `bind_class` progression, the `CreationWizard` character-creation model, and use-based skill mastery), staged the same way so mods can `import bd_dnd` |
+| `src/python/lib/bd_vtm/` | Engine-shipped Python framework package (VtM-inspired chronicle rules: blood pool, hunger/frenzy, humanity, disciplines, feeding, masquerade, factions, `VtMState` persistence, ImGui HUD), staged the same way so mods can `import bd_vtm`. All of `src/python/lib/` re-stages on every build via the always-run `stage_python_frameworks` custom target |
+| `src/python/lib/bd_dialogue/` | Engine-shipped Python framework package (branching NPC dialogue trees: `Dialogue`/`Node`/`Choice` with build-time target validation, condition/faction-gate/skill-check choice gating, native player-log writes, real-time `DialogueSession`s, ImGui dialogue window in `ui.py`), staged the same way so mods can `import bd_dialogue` |
+| `src/python/lib/bd_horror/` | Engine-shipped Python framework package (horror UX layer: `theme.py` ImGui skin + widget helpers, `toasts.py` diegetic notification queue, `atmosphere.py` with `Dread` meter, tag-based `LightManager` candle/fluorescent/blackout programs, `StalkerDirector`, and `HorrorState` bd.state persistence), staged the same way so mods can `import bd_horror` |
+| `src/python/lib/bd_rpg/` | Engine-shipped Python framework package (elemental combat: `DamageTypes` registry, per-actor/class affinities in `bd.actor_data`, `resolve_attack` pipeline layered under the `actor_before_damage` filter, `StatusEngine` timed effects on one consolidated task, `LootTable`/`LootRules` with rarity feedback, kill-XP glue, `RpgState` persistence), staged the same way so mods can `import bd_rpg` |
+| `src/python/lib/bd_npcs/` | Engine-shipped Python framework package (NPC hub layer: `NPCDefinition`/`NPCManager` registered world NPCs with savegame TID rebind, per-NPC `Disposition` standings persisted via `bd.state`, nearest-NPC talk targeting through `bd_dialogue` sessions with disposition ctx injection, `Service`/`HealerService`/`TrainerService` offers, and a `Shop` with restock timers plus a guarded ImGui `ShopUI`), staged the same way so mods can `import bd_npcs` |
+| `examples/python/33_rpg_campaign/` | Capstone Python example ("Ashvale Crossing"): a four-module mini-RPG hub demonstrating every shipped framework pack: `bd_dnd` `CreationWizard`/`CharacterClass` creation, `bd_npcs` dispositions/shop/services, `bd_dialogue` trees, `bd_quests` xp/disposition reward hooks, a recruitable companion, and a checkpoint round-trip, all under a headless autotest |
+| `examples/python/34_scripted_menus/` | ImGui capstone example ("Overture Menu Kit"): a keyboard-first menu suite (title/pause menus, settings, credits, popups, docked tool panel) scripted entirely in Python on the extended `bd.imgui` API: runtime fonts from `bd.read_bytes`, `set_ui_scale`/`style_theme`/`set_style_color`, `is_key_pressed`/`shortcut` hotkeys, popup/focus management, and `bd.state` settings persistence, all under a headless autotest |
 | `supreme-build.sh` | Automated build script with vcpkg bootstrapping |
 | `CLAUDE.md` | Additional AI assistant guidance (includes glTF implementation architecture) |
 

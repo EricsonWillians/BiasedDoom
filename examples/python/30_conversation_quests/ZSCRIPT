@@ -1,0 +1,83 @@
+version "4.15.0"
+
+// A talkative NPC for the conversation/quest fixture.
+//
+// NOTE: the `ConversationID` actor property is a CAT_INFO property, which the
+// ZScript compiler only dispatches for DECORATE - using it in a ZScript
+// Default block fails with "unknown actor property". This example therefore
+// binds conversation ID 920 to this class through its MAPINFO
+// `conversationids` block, exactly like Strife itself does in
+// wadsrc/static/mapinfo/conversationids.txt. The Strife-namespace DIALOG01
+// lump's `actor = 920` line then attaches its dialogue to every spawned
+// QuestScribe. SHOOTABLE + SOLID make the actor aimable so the classic
+// USE-to-talk path (P_TalkFacing) can find it; with ALF_CHECKCONVERSATION
+// any actor that owns a conversation is talkable.
+class QuestScribe : Actor
+{
+	Default
+	{
+		Health 100;
+		Radius 20;
+		Height 56;
+		+SOLID
+		+SHOOTABLE
+		+FRIENDLY
+	}
+
+	States
+	{
+	Spawn:
+		POSS A 10;
+		POSS B 10;
+		loop;
+	// Optional conversation gestures (Greetings/Yes/No states would be picked
+	// up automatically by AActor::ConversationAnimation if defined).
+	Death:
+		POSS H 5;
+		POSS I 5 A_Scream;
+		POSS J 5 A_NoBlocking;
+		POSS K 5;
+		POSS L -1;
+		stop;
+	}
+
+	// The engine's INCONVERSATION flag is an *internal* flag (thingdef_data.cpp
+	// InternalActorFlagDefs: not exposed to the mod-facing flag table, so bd's
+	// Actor.get_flag("INCONVERSATION") cannot see it), but ZScript reads it as
+	// the bINCONVERSATION member. Python observes "the conversation menu is
+	// open" through this accessor via Actor.call_zscript.
+	int InConversation()
+	{
+		return bINCONVERSATION;
+	}
+}
+
+// Python-callable reply bridge.
+//
+// ConversationMenu.SendConversationReply - the function the conversation menu
+// itself calls when the player presses ENTER - is a native *static* method on
+// a UI-scope class, and bd's Actor.call_zscript refuses static methods anyway,
+// so play-scoped code cannot reach it. StaticEventHandler is UI scope, so its
+// ConsoleProcess override may call it. The engine's `event <name> [args]`
+// console command dispatches here, and bd.execute("event convpick <node>
+// <reply>") is a console command Python *can* issue - so this queues a
+// DEM_CONVREPLY net command byte-identical to a menu pick, and the netcode
+// dispatcher (P_ConversationCommand -> HandleReply) commits it on the next
+// gametic, which is also where the `conversation_reply` Python event fires.
+//
+// The Close() call mirrors the menu's own MKEY_Enter path
+// (conversationmenu.zs): without it the open menu's Ticker would force
+// menuactive = On 20 gametics after opening (the dialogue-freeze feature,
+// suppressed by the MAPINFO no_dlg_freeze level option), pausing the world.
+class ConvoReplyBridge : StaticEventHandler
+{
+	override void ConsoleProcess(ConsoleEvent e)
+	{
+		if (e.Name ~== "convpick")
+		{
+			ConversationMenu.SendConversationReply(e.Args[0], e.Args[1]);
+			let menu = Menu.GetCurrentMenu();
+			if (menu != null && menu is "ConversationMenu") menu.Close();
+		}
+	}
+}

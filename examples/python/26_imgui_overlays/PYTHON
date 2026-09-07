@@ -1,0 +1,2 @@
+# One UTF-8 VFS path per line. Paths are resolved inside this PK3 only.
+pyscripts/main.py

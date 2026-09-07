@@ -236,6 +236,7 @@ These module-level names are recognized:
 | `on_actor_spawned` | `actor_spawned` |
 | `on_actor_died` | `actor_died` |
 | `on_actor_damaged` | `actor_damaged` |
+| `on_actor_before_damage` | `actor_before_damage` |
 | `on_actor_destroyed` | `actor_destroyed` |
 | `on_actor_revived` | `actor_revived` |
 | `on_line_activated` | `line_activated` |
@@ -248,6 +249,7 @@ These module-level names are recognized:
 | `on_save` | `save` |
 | `on_load` | `load` |
 | `on_engine_shutdown` | `engine_shutdown` |
+| `on_ui_command` | `ui_command` |
 
 Each must be callable and accept one event dictionary.
 
@@ -298,7 +300,9 @@ Every event dictionary contains:
 
 Treat the dictionary and nested snapshots as read-only input. Mutating them
 does not mutate the engine and could affect later callbacks that receive the
-same event object.
+same event object. The single exception is
+[`actor_before_damage`](#actor_before_damage-mutable-pre-damage-filter), whose
+dictionary is a deliberate write-back channel.
 
 ## Event Reference
 
@@ -386,31 +390,262 @@ Extra fields:
 | `inflictor` | `dict \| None` | Snapshot of the inflicting actor when available. |
 | `actor_ref` | `Actor` | Live handle to the dying actor while it remains valid. |
 | `inflictor_ref` | `Actor \| None` | Live inflictor handle when available. |
+| `attacker_ref` | `Actor \| None` | Live handle to the killer (`Die`'s `source`), or `None`. |
+| `attacker_class` | `str \| None` | Killer's class name, or `None` when there is no attacker. |
+| `attacker_player_index` | `int \| None` | Killer's player index when the attacker is a player pawn, else `None`. |
 
-Python's `damage_actor` supplies no source or inflictor, so `inflictor` may be
-`None` for a death caused by that API.
+The `attacker_*` fields report `AActor.Die`'s `source`. For projectile kills
+this is the **shooter** — `P_DamageMobj` receives the missile's `target` as
+the source, while the missile itself stays in `inflictor`/`inflictor_ref`.
+For hitscan and melee kills it is the attacker itself; for explosions the
+bomb owner. It is `None` for environmental deaths (crushers, falling damage,
+damaging terrain) and for kills through `bd.damage_actor`/`Actor.damage`
+that pass no `source`.
+
+The same value is exposed to ZScript as `WorldEvent.DamageSource` on
+`WorldThingDied`.
+
+### `actor_before_damage` (mutable pre-damage filter)
+
+Extra fields:
+
+| Key | Type | Mutable | Meaning |
+|-----|------|---------|---------|
+| `actor_ref` | `Actor` | no | Live handle to the actor about to take damage. |
+| `inflictor_ref` | `Actor \| None` | no | Live handle to the inflicting actor (missile, puff, ...). |
+| `attacker_ref` | `Actor \| None` | no | Live handle to the damage source, or `None`. |
+| `attacker_class` | `str \| None` | no | Source's class name, or `None` when there is no source. |
+| `attacker_player_index` | `int \| None` | no | Source's player index when it is a player pawn, else `None`. |
+| `damage` | `int` | **yes** | Incoming damage, before armor and damage factors. |
+| `damage_type` | `str` | **yes** | Damage type name (`"None"`, `"Fire"`, ...). |
+| `flags` | `int` | no | Damage flags (`DMG_*`). |
+| `angle` | `float` | no | Attack angle in degrees. |
+| `cancel` | `bool` | **yes** | Set truthy to swallow the hit entirely. |
+
+This is the one event whose dictionary is a **mutable contract**: the engine
+reads three keys back after every handler has run. Mutate the event dict in
+place to rewrite the incoming hit:
+
+```python
+@bd.on("actor_before_damage", class_name="ZombieMan")
+def nerf_zombies(event):
+    event["damage"] = event["damage"] // 2        # halve incoming damage
+
+@bd.on("actor_before_damage", tid=7001)
+def invulnerable_boss(event):
+    event["cancel"] = True                        # no damage, no actor_damaged
+
+@bd.on("actor_before_damage")
+def everything_burns(event):
+    event["damage_type"] = "Fire"                 # rewrite the damage type
+```
+
+Read-back rules are defensive: `damage` must be a number (ints and floats are
+accepted) and is clamped to `[0, 2**31 - 1]`; `damage_type` must be a
+non-empty string (an invalid or empty value keeps the original type and logs
+a rate-limited script warning); `cancel` is a plain truthiness check. A
+handler that raises mid-write is disabled as usual and whatever it wrote
+before raising survives.
+
+Setting `cancel` stops the hit completely: the damage pipeline returns 0, the
+target keeps its health, and **no `actor_damaged` event fires** — consistent
+with the rule that `actor_damaged` only reports resultant damage.
+
+Scoping rules:
+
+- Fires at the top of the native damage pipeline, **before** armor,
+  damage factors, pain, and death processing.
+- **Offline-only**: dispatch is skipped in multiplayer and demo
+  playback/recording sessions, to protect synchronization determinism.
+- ZScript `DamageMobj` overrides that never call `Super.DamageMobj()` bypass
+  this filter entirely (they route around the native pipeline).
+- When no handler is registered, the hook costs a single array read per
+  damage event; keep handlers small regardless — this is the hottest gameplay
+  path in the engine.
 
 ### Other real-time gameplay events
 
 | Event | Extra fields |
 |-------|--------------|
 | `actor_damaged` | `actor_ref`, `inflictor_ref`, `source_ref`, `damage`, `damage_type`, `flags`, `angle` |
+| `actor_before_damage` | mutable pre-damage filter — see [`actor_before_damage`](#actor_before_damage-mutable-pre-damage-filter) |
 | `actor_destroyed` | `actor_ref`, final `actor` snapshot |
 | `actor_revived` | `actor_ref` |
 | `line_activated` | `line_index`, `actor_ref`, `activation_type` |
-| `line_activation_failed` | `line_index`, `special`, `args` (5 ints), `actor_ref`, `activation_type` |
+| `line_activation_failed` | `line_index`, `special`, `args` (5 ints), `actor_ref`, `activation_type`, `reason`, `reason_code` |
 | `player_entered`, `player_spawned`, `player_respawned`, `player_died`, `player_disconnected` | `player_index`, `from_hub`, `actor_ref` |
 | `item_picked` | `class_name`, `name`, `amount`, `player` |
 | `secret_found` | `player`, `found_secrets`, `total_secrets` |
+| `item_dropped` | `actor_ref`, `dropper_ref`, `player_index`, `class_name`, `amount` |
+| `weapon_changed` | `player_index`, `weapon`, `actor_ref`, `player_ref` |
+| `sector_entered`, `sector_exited` | `sector`, `tags`, `player_index`, `actor_ref` |
+| `conversation_started` | `npc_ref`, `pc_ref`, `player_index`, `npc_class` |
+| `conversation_reply` | `player_index`, `npc_ref`, `node`, `reply_index`, `log_number`, `log_string`, `next_node`, `item_changed` |
+| `ui_command` | `command` |
 
 `item_picked` and `secret_found` are part of the
 [gameplay director API](#gameplay-director-api).
+
+#### `item_dropped`
+
+Fires once per successful inventory drop, for both the player/console
+`DropInventory` path and death drops (`DropItem` lists, `A_DropItem`), after
+the tossed item exists in the world.
+
+Extra fields:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `actor_ref` | `Actor` | Live handle to the dropped item. |
+| `dropper_ref` | `Actor \| None` | Live handle to the actor that dropped it. |
+| `player_index` | `int \| None` | Dropper's player index, or `None` when the dropper is not a player. |
+| `class_name` | `str` | Dropped item's class name. |
+| `amount` | `int` | Number of units dropped. |
+
+#### `weapon_changed`
+
+Fires when a player's ready weapon actually changes during weapon bring-up
+(`PlayerPawn.BringUpWeapon` reassigning `ReadyWeapon` from the pending
+weapon). Mods that fully override `BringUpWeapon` without calling the base
+implementation bypass this event.
+
+Extra fields:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `player_index` | `int` | Index of the player who switched weapons. |
+| `weapon` | `str \| None` | New weapon's class name, or `None` when the player ends up empty-handed. |
+| `actor_ref` | `Actor \| None` | Live handle to the new weapon actor, or `None`. |
+| `player_ref` | `Player \| None` | Handle to the player. |
+
+#### `sector_entered` / `sector_exited`
+
+Per-player sector transitions, checked every post-tick. `sector_exited` fires
+for the previous sector (when known) before `sector_entered` fires for the new
+one. After map load the player's starting sector is reported as a
+`sector_entered` without a matching `sector_exited`.
+
+Extra fields:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `sector` | `int` | Sector array index being entered or exited. |
+| `tags` | `list[int]` | All tags of that sector (same source as the `Sector` handle's `tags`). |
+| `player_index` | `int` | Index of the player who crossed the boundary. |
+| `actor_ref` | `Actor \| None` | Live handle to the player's pawn. |
+
+#### `conversation_started`
+
+Fires when a Strife conversation is successfully entered
+(`P_StartConversation`, after all early-out checks): from the USE-talk path,
+`AActor.StartConversation`, `bd.start_conversation`, and continuation nodes
+shown when a reply keeps the dialogue open. Fires for every player, not just
+the console player.
+
+Extra fields:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `npc_ref` | `Actor \| None` | Live handle to the NPC being talked to. |
+| `pc_ref` | `Actor \| None` | Live handle to the talking player's pawn. |
+| `player_index` | `int \| None` | Talking player's index, or `None` when not a player. |
+| `npc_class` | `str \| None` | NPC's class name. |
+
+#### `conversation_reply`
+
+Fires exactly once per committed conversation reply, from the netcode reply
+handler (`HandleReply`, reachable only via `P_ConversationCommand`), on every
+machine. Replies that are rejected (the default/empty reply, or missing
+requisite items) do not fire it.
+
+Extra fields:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `player_index` | `int \| None` | Index of the replying player. |
+| `npc_ref` | `Actor \| None` | Live handle to the conversation NPC. |
+| `node` | `int` | Dialogue node number (index into the map's Strife dialogue tree). |
+| `reply_index` | `int` | Index of the chosen reply within the node. |
+| `log_number` | `int` | Reply's quest-log number, or `-1` when none. |
+| `log_string` | `str \| None` | Reply's raw quest-log text (may be a `$LABEL` string-table reference), or `None`. |
+| `next_node` | `int` | Node the reply moves the NPC to, or `-1` when unchanged. |
+| `item_changed` | `bool` | Whether the reply gave or took inventory items. |
+
+A complete runnable fixture — a talkative NPC driven by engine-native ZSDF
+dialogue data whose reply completes a `bd_quests` objective — ships as
+[`examples/python/30_conversation_quests`](../../examples/python/30_conversation_quests/).
+
+Notes revealed by that fixture:
+
+- There is no `bd.*` function that picks a reply, and menu input cannot be
+  injected from Python. The working programmatic path is the same one the
+  menu uses: `ConversationMenu.SendConversationReply(node, reply)` (a
+  UI-scope native static, so unreachable from `Actor.call_zscript`) invoked
+  from a UI-scope `StaticEventHandler.ConsoleProcess` override registered via
+  MAPINFO `gameinfo` `AddEventHandlers`, triggered by the `event <name>
+  [args]` console command through `bd.execute`. The reply then travels the
+  real `DEM_CONVREPLY` netcode into `HandleReply`.
+- A conversation menu left open pauses the world in single player 20 gametics
+  after opening (the menu's `Ticker` forces `menuactive = On`) unless the map
+  sets `no_dlg_freeze`; driving code should close the menu after committing a
+  reply, like the menu's own ENTER handler does.
+- For numeric Strife logs (`log = "LOG#"`), `bd.player_log()` returns the
+  `$TXT_LOGTEXT<n>` string-table *label*, not the resolved text — the engine
+  stores the label so a language change re-translates it.
+
+#### `ui_command`
+
+Fires when the `pyui <name>` console command runs. This is the bridge that
+lets console aliases and key bindings drive script UI — the problem being
+that aliases can only run console commands, not Python.
+
+Extra field:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `command` | `str` | The `<name>` argument passed to `pyui`. |
+
+Canonical recipe — bind a journal toggle to a key:
+
+```python
+import biaseddoom as bd
+
+journal_visible = False
+
+
+def on_engine_start(event):
+    bd.execute('alias toggle_journal "pyui journal"')
+    # The player can now run: bind j toggle_journal
+
+
+@bd.on("ui_command")
+def ui_command(event):
+    global journal_visible
+    if event["command"] == "journal":
+        journal_visible = not journal_visible
+```
+
+`pyui` is a plain console command (like `py_status`): it never mutates world
+state, and it is a no-op when no script subscribed to `ui_command` or when
+Python is not active.
 
 `line_activated` only fires when the line's special **succeeds** — a marker
 special like `ACS_Execute` with no backing script fails silently. Subscribe
 to `line_activation_failed` to debug dead triggers: it fires for any line
 with a nonzero special whose execution failed, and reports the special
 number and arguments so you can see exactly what the map asked for.
+
+`line_activation_failed` also carries a machine-readable failure cause:
+`reason_code` (int) and its stable string form `reason`:
+
+| `reason_code` | `reason` | Meaning |
+|---------------|----------|---------|
+| 0 | `"none"` | No specific reason recorded. |
+| 1 | `"unknown_special"` | Special number has no implementation. |
+| 2 | `"script_not_found"` | ACS script number has no backing script. |
+| 3 | `"locked"` | Activator lacks the required key. |
+| 4 | `"activation_filtered"` | Rejected before execution (wrong side/type, monster on player-only line, handler veto). |
+| 5 | `"insufficient_resources"` | Activator lacks required resources (reserved). |
 
 `Actor` values can become invalid during or after destruction/unload. Check
 `.valid` when retaining a handle and expect `ReferenceError` from operations
@@ -491,6 +726,35 @@ The stub's actor-constant block is generated. With the game running,
 registry (or writes a full skeleton when the file does not exist) and
 warns if any public API is missing from the stub.
 
+### Images
+
+`image()` accepts two texture forms. A **name string** is resolved with the
+same `MiscPatch` + `TryAny` lookup as the display list's `draw_texture`,
+with a **sprite-namespace fallback** so sprite frame names like `"PLAYA1"`
+also work (precedence: MiscPatch lookup first, sprite fallback only when
+the plain name misses). An **Actor handle** draws the actor's current
+sprite frame texture (rotation 0, the front view). `w`/`h` default to 0,
+meaning the texture's natural display size (its scale factors applied);
+`uv0`/`uv1` select a sub-rectangle in normalized texture coordinates,
+`tint` is an RGBA float multiplier, and a `border` tuple with alpha > 0
+draws a 1px border of that color. `image_size(texture)` returns the natural
+`(w, h)` without drawing and is legal outside `imgui_frame`.
+
+### Docking
+
+The vendored ImGui is the **docking branch** with
+`ImGuiConfigFlags_DockingEnable` set. Call `dock_space_over_viewport()`
+once per frame to cover the screen with a dockspace (flags are
+`ImGuiDockNodeFlags_*`, e.g. `2` = PassthruCentralNode), or `dock_space(id)`
+inside a window; windows can then be dragged by their title bar onto the
+dockspace edges or onto each other, producing split panes and tab bars.
+Use `set_next_window_dock_id(dock_id)` before `begin()` to dock a window
+programmatically instead of by dragging (windows sharing one node become
+tabs). **Multi-viewport is not supported**: `ImGuiConfigFlags_ViewportsEnable` is
+deliberately left off because the overlay renders through the single
+`F2DDrawer` canvas and cannot create platform windows, so windows never
+leave the screen edge.
+
 ### Constants and attributes
 
 | Name | Type | Value/meaning |
@@ -534,14 +798,23 @@ shutdown. Prefer `bd.log` when severity matters.
 
 Two command-line options make scripts testable without a human:
 
-- `-scripttest <tics>` — after the level loads, the engine runs it for the
+- `-scripttest <tics> [ff]` — after the level loads, the engine runs it for the
   given number of tics, prints `SCRIPT TEST: PASS` or
   `SCRIPT TEST: FAIL (N Python error(s) in M tics)`, and exits with status
   0 (pass), 1 (errors), or 2 (no level loaded). Every reported Python
-  error counts, including deduplicated repeats.
-- `-pyerrorlog <file>` — appends each reported Python error as a JSON line
-  (`time_ms`, `map`, `context`, `source`, `repeats_suppressed`,
-  `heartbeat`, `traceback`) for editors and CI tooling.
+  error counts, including deduplicated repeats. The optional second value
+  `ff` (default 1) is a fast-forward factor: the engine time scale is raised
+  so `ff` times as many tics elapse per wall-clock second, and only every
+  8th loop iteration is rendered (window events are still pumped every
+  iteration). Tic counting is unchanged — the summary always reports the
+  requested tic count — and the time scale drops back to `1.0` for the last
+  `ff` tics so the run does not overshoot.
+- `-pyerrorlog <file>` — appends each reported Python error, warning, or
+  failed assertion as a JSON line (`time_ms`, `map`, `context`, `source`,
+  `severity` — `"error"`/`"warning"`/`"assert"`, `repeats_suppressed`,
+  `heartbeat`, `exc_type`, `exc_file`, `exc_line`, `exc_func`, `traceback`)
+  for editors and CI tooling. The `exc_*` fields describe the innermost
+  user-script traceback frame and are empty when unavailable.
 
 ```bash
 biaseddoom -iwad doom2.wad -file mymap.wad mymap.scripts -python \
@@ -551,6 +824,74 @@ biaseddoom -iwad doom2.wad -file mymap.wad mymap.scripts -python \
 Pair with a drive script that injects input through `bd.execute` (for
 example `bd.execute("+forward")`) or `Player.set_input` to exercise
 triggers unattended.
+
+#### Headless runs (no X server)
+
+`-headless` (or the `BIASEDDOOM_HEADLESS=1` environment variable) boots the
+engine on a **null video driver**: SDL runs on its dummy video backend, no
+window, GL context, or Vulkan device is ever created, and the frame render
+is skipped entirely (game logic, the tic loop, netcode, GC, and Python
+events are unaffected). This is the CI mode for runners without X11 — no
+`xvfb-run` required:
+
+```bash
+biaseddoom -headless -iwad doom2.wad -file mymod -python \
+    -warp 1 -scripttest 700 -pyerrorlog /tmp/pyerrors.jsonl
+```
+
+Headless caveats: screenshots print `Screenshot unavailable in headless
+mode.` instead of writing a file (so golden-image tests still need a real
+display), and the `imgui_frame` event never fires because nothing renders —
+scripts that auto-warp from an `imgui_frame` handler should pass `+map`
+explicitly in headless runs. Video-mode commands (`vid_setsize`, fullscreen
+toggles) no-op with a notice. `bd.headless()` returns `True` in this mode so
+test scripts can skip rendering-dependent assertions (the shipped examples'
+autotests gate their ImGui draw checks on it).
+
+#### Golden screenshots
+
+Pixel-comparison regression testing lives **in the test harness, not the
+engine**. The recipe:
+
+1. **Capture goldens interactively.** Run the mod by hand and, at the frame
+   you want to pin down, grab the frame from a script with
+   `bd.execute("screenshot /absolute/path/to/golden")` (writes PNG; the
+   `.png` extension is appended when missing). Alternatively use the
+   `screenshot` console command or the `-shotdir` option.
+2. **Check the golden PNGs into the mod repo**, next to the test scripts.
+3. **In CI**, re-capture the same frame under `-scripttest` (same map, same
+   tic — have the script request the screenshot at a fixed `bd.level_time()`)
+   and compare:
+
+```bash
+# Run the engine with -scripttest as usual; the script captures /tmp/actual.png.
+biaseddoom -iwad doom2.wad -file mymod -python -warp 1 -scripttest 700
+python3 tools/compare_screenshots.py tests/golden.png /tmp/actual.png \
+    --threshold 8 --max-diff-pct 0.5 --diff-out /tmp/diff.png
+```
+
+`tools/compare_screenshots.py` is **stdlib-only by design** (no Pillow): it
+decodes PNGs with `zlib` + `struct` so it runs on bare CI runners. It
+accepts 8-bit RGB/RGBA non-interlaced PNGs (all scanline filter types),
+which is exactly what the engine's screenshot writer produces today — the
+custom writer `M_CreatePNG`/`M_SaveBitmap` in
+`src/common/textures/m_png.cpp` emits bit depth 8, color type 2 (RGB),
+interlace 0. If the engine writer ever changes that format, this tool must
+be updated.
+
+Flags and exit codes:
+
+| Flag / outcome | Meaning |
+|---|---|
+| `--threshold FLOAT` | Per-channel absolute tolerance, 0-255 (default **8**), absorbing nondeterministic dither/gamma noise. |
+| `--max-diff-pct FLOAT` | Percent of pixels allowed to exceed `--threshold` (default **0.5**), absorbing moving particles/HUD flicker. |
+| `--diff-out PATH` | Writes a grayscale PNG diff map (white = diff beyond threshold, black = same) for debugging. |
+| exit `0` | PASS — images match within tolerance. |
+| exit `1` | FAIL — tolerance exceeded, or dimension/format mismatch (the report includes dimensions, mismatched pixel count, mean absolute channel error, and worst channel delta). |
+| exit `2` | Usage error or undecodable/unsupported input. |
+
+All report lines are prefixed `GOLDEN TEST:` so harness logs can grep for
+them cleanly.
 
 ### Where output goes, and copying it out
 
@@ -574,6 +915,23 @@ Pending `print()` output is flushed first, so it appears before the error.
 Identical consecutive errors are printed once and then summarized
 (`... repeated N times; duplicates suppressed`), so a failing `tick`
 handler cannot flood the console at 35 tracebacks per second.
+
+### `bd.assert_true(cond, msg="") -> None`
+
+Scripted test assertion. When `cond` is falsy it prints a red
+`SCRIPT ASSERT FAILED: <msg> (<file>:<line>)` line with the caller's
+location, feeds `-pyerrorlog` with `severity: "assert"`, and counts toward
+the `-scripttest` failure total — but returns `None` instead of raising, so
+one test run can report several failures. When `cond` is truthy it is a
+no-op.
+
+### `bd.warn(msg) -> None`
+
+Prints a yellow `SCRIPT WARNING: <msg>` console line and feeds `-pyerrorlog`
+with `severity: "warning"`, without counting as an error. Identical
+consecutive warnings are deduplicated with the same repeat-summary cadence
+as errors, tracked separately so warnings and errors never suppress each
+other.
 
 ## Map And Time Queries
 
@@ -614,175 +972,12 @@ for player in bd.players():
         bd.log(f"{player['name']} has {pawn['health']} health")
 ```
 
-## Actor Snapshots
+## Live Actor Handles (API v2)
 
-The legacy `actors`, `actor`, `spawn_actor`, and TID mutation functions return
-plain dictionaries. They are snapshots, not live objects. API v2 also exposes
-the `Actor` handle described below for real-time work.
-
-| Key | Type | Meaning |
-|-----|------|---------|
-| `class_name` | `str` | Runtime actor class after replacement. |
-| `tid` | `int` | Thing ID; `0` means it cannot be targeted by TID APIs. |
-| `health` | `int` | Health at snapshot time. |
-| `x`, `y`, `z` | `float` | World position in map units. |
-| `angle` | `float` | Yaw in degrees. |
-| `pitch` | `float` | Pitch in degrees. |
-| `velocity_x`, `velocity_y`, `velocity_z` | `float` | Current velocity components. |
-| `alive` | `bool` | Whether health was greater than zero. |
-| `is_monster` | `bool` | Actor has the engine monster flag. |
-| `is_player` | `bool` | Actor is a player pawn. |
-| `player_index` | `int` | Player slot or `-1`. |
-
-Never retain a snapshot and assume the engine actor is unchanged. Query again
-by TID when you need current data.
-
-## Actor Queries
-
-### `bd.actors(class_name=None, tid=0, limit=1024) -> list[dict]`
-
-Returns actor snapshots from the primary level.
-
-```python
-all_zombies = bd.actors(class_name="ZombieMan")
-objective = bd.actors(tid=7001, limit=1)
-boss_zombies = bd.actors(class_name="ZombieMan", tid=7001)
-```
-
-Details:
-
-- `class_name` uses engine class lookup and accepts derived classes through
-  the normal `IsKindOf` relationship.
-- `tid=0` means no TID filter; it does not mean “find actors whose TID is 0.”
-- `limit` must be from `1` through `100000`, otherwise `ValueError` is raised.
-- An unknown class raises `ValueError`.
-- Outside a level, the function returns an empty list.
-
-### `bd.actor(tid) -> dict | None`
-
-Returns the first actor with a nonzero TID or `None`.
-
-```python
-door_guard = bd.actor(500)
-if door_guard is not None and door_guard["alive"]:
-    bd.log("The guard still lives")
-```
-
-Maps often contain actors with TID `0`. Assign important targets a TID in the
-map, ACS, ZScript, or Python spawn call.
-
-## Actor Mutation
-
-All actor mutation functions require an active primary level and a
-single-player, non-demo session. Violations raise `RuntimeError`.
-
-### `bd.spawn_actor(class_name, x, y, z, angle=0.0, tid=0, force=False) -> dict`
-
-Spawns an actor with normal class replacement enabled.
-
-```python
-spawned = bd.spawn_actor(
-    "ZombieMan",
-    128.0,
-    -64.0,
-    0.0,
-    angle=180.0,
-    tid=9001,
-)
-```
-
-Details:
-
-- An unknown class raises `ValueError`.
-- With `force=False`, an actor that does not fit is destroyed and
-  `RuntimeError` is raised.
-- `force=True` skips the fit rejection; use it carefully.
-- With `tid=0`, the engine allocates an unused TID starting in the
-  `10000..99999` search range.
-- If no TID can be allocated, the actor is destroyed and `RuntimeError` is
-  raised.
-- The returned snapshot's `class_name` may reflect actor replacement.
-
-## Actor Class Registry (`bd.actors`)
-
-`bd.actors` doubles as a registry of every actor class the engine knows
-about — including classes defined by loaded mods, ZScript, DECORATE, and
-MAPINFO `doomednums`. Calling it still queries live actors (see above);
-accessing attributes on it gives you named constants so you never have to
-hardcode class strings:
-
-```python
-bd.spawn_actor(bd.actors.DOOM_IMP, SPOT_X, SPOT_Y, 0.0)
-```
-
-Constants are `UPPER_SNAKE` versions of the engine class names
-(`DOOM_IMP` → `"DoomImp"`, `MBF_HELPER_DOG` → `"MBFHelperDog"`). An
-unknown constant raises `AttributeError` with a hint. Use
-`dir(bd.actors)` or `bd.actors.constants()` to list every constant, and
-`bd.actors.names()` for the class-name strings.
-
-Discovery helpers:
-
-```python
-bd.actors.names()              # all actor class names, sorted
-bd.actors.constants()          # all CONST names, sorted
-bd.actors.resolve("DOOM_IMP")   # "DoomImp" (accepts either form, None if unknown)
-bd.actors.children_of("Weapon")  # ["BFG9000", "Chaingun", "Pistol", ...]
-bd.actors.monsters()           # shootable, kill-counted actors
-bd.actors.projectiles()        # missile actors
-bd.actors.weapons()            # Weapon descendants
-bd.actors.items()              # Inventory descendants
-bd.actors.players()            # PlayerPawn descendants
-```
-
-Random selection and spawning:
-
-```python
-bd.actors.random()                    # any actor class
-bd.actors.random("monsters")          # category: monsters, projectiles,
-                                      # weapons, items, players
-bd.actors.random("DOOM_IMP")          # among a class and its descendants
-bd.actors.spawn_random(x, y, z)       # random monster at (x, y, z)
-bd.actors.spawn_random(x, y, z, kind="items", angle=90.0)
-```
-
-`random()` raises `ValueError` for an unknown category or class.
-`spawn_random()` forwards extra keyword arguments (`angle`, `tid`,
-`force`) to `bd.spawn_actor`.
-
-### `bd.damage_actor(tid, damage, damage_type="None") -> int`
-
-Damages the first actor with the TID and returns the engine damage result.
-
-```python
-applied = bd.damage_actor(9001, 25, damage_type="Fire")
-```
-
-No Python actor is supplied as source or inflictor. A missing TID raises
-`LookupError`.
-
-### `bd.set_actor_velocity(tid, x, y, z) -> dict`
-
-Sets velocity components and returns the new snapshot:
-
-```python
-after = bd.set_actor_velocity(9001, 4.0, 0.0, 6.0)
-```
-
-A missing TID raises `LookupError`.
-
-### `bd.destroy_actor(tid) -> bool`
-
-Destroys the first actor with the TID, clears its kill/item counters, and
-returns `True`. Returns `False` when no actor exists.
-
-Use damage when gameplay credit, death states, or death events matter. Direct
-destruction is removal, not a normal kill.
-
-## Live Real-Time API (API v2)
-
-The snapshot/TID functions above remain for compatibility and serialization.
-New real-time code should normally use native handles:
+This is the default API for real-time querying and mutation. The legacy
+snapshot/TID functions survive only for compatibility and JSON persistence —
+see [Legacy Snapshot API](#legacy-snapshot-api-json-persistence) below. New
+code should use native handles:
 
 ```python
 pawn = bd.player().actor
@@ -797,18 +992,19 @@ monster.set_velocity(4, 0, 2)
 `Actor`, `Player`, `Sector`, and `Line` are small C++-backed Python objects;
 property reads and writes cross directly into the playsim instead of rebuilding
 dictionaries. They may only be used on the engine callback thread. Mutating
-operations have the same active-map and single-player/non-demo guard as the
-legacy mutation API.
+operations require an active map and a single-player, non-demo session.
 
 ### Handle lookup and lifetime
 
 | Function | Result |
 |----------|--------|
 | `bd.actor_ref(tid)` | First live `Actor` for a nonzero TID, or `None`. |
-| `bd.actor_refs(class_name=None, tid=0, limit=4096)` | Filtered live actors; `limit` is `0..1000000`. |
+| `bd.actor_refs(class_name=None, tid=0, limit=4096, subclasses=True, sphere=None, z=None)` | Filtered live actors; `limit` is `0..1000000`. |
 | `bd.spawn(class_name, x, y, z, angle=0, tid=0, force=False)` | Newly spawned `Actor`. |
 | `bd.player(index=consoleplayer)` / `bd.player_refs()` | One/all in-game `Player` handles. |
 | `bd.sector(index)` / `bd.sectors(tag=None)` | Sector by array index or all/by tag. |
+| `bd.sector_at(x, y)` | `Sector` containing the point, or `None`. |
+| `bd.actors_in_sector(sector)` | Live `Actor` handles inside a `Sector` handle or sector index. |
 | `bd.line(index)` / `bd.lines(line_id=None)` | Line by array index or all/by line ID. |
 
 Actor handles are GC-aware and safe to retain across tics. `.valid` becomes
@@ -817,6 +1013,46 @@ false after native destruction or map unload; using stale actors raises
 Sector/line handles are generation-checked and raise `ReferenceError` after
 their map unloads. Do not place handles in `bd.state`; save snapshots, TIDs,
 player indices, tags, or line IDs instead.
+
+`actor_refs` filters are pushed down into the native thinker scan and combine
+(AND) without per-actor Python crossings: `class_name` is case-insensitive
+and matches derived classes unless `subclasses=False` (exact class match);
+`sphere=(x, y, r)` keeps actors within 2D distance `r` of `(x, y)`, and the
+optional `z` adds a vertical band `|actor.z - z| <= r`.
+
+```python
+bosses = bd.actor_refs(class_name="BaronOfHell", subclasses=False)
+nearby = bd.actor_refs(sphere=(pawn.x, pawn.y, 512), z=pawn.z)
+floor_sector = bd.sector_at(pawn.x, pawn.y)
+occupants = bd.actors_in_sector(floor_sector) if floor_sector else []
+```
+
+### Per-actor data: `bd.actor_data(ref)` / `bd.actor_data_drop(ref)`
+
+`bd.actor_data(ref)` returns the actor's persistent per-actor data `dict`,
+creating it on demand; two calls with handles to the same actor return the
+same dictionary, so scripts can attach arbitrary Python state to a live actor:
+
+```python
+data = bd.actor_data(zombie)
+data["enraged"] = True
+data["ticks_left"] = 140
+```
+
+Lifetime and purge semantics:
+
+- The dict is keyed by the actor's handle slot **and generation**, so a
+  recycled slot can never resurrect a previous actor's data.
+- It is purged automatically when the actor is destroyed (detected at handle
+  resolution/GC time) and when the map changes or unloads.
+- It is **not saved in savegames**. To persist per-actor state, store it in
+  `bd.state` keyed by TID and rebind handles after load — see
+  [Rebinding actor handles after load](#rebinding-actor-handles-after-load).
+- A stale handle raises `ReferenceError`, exactly like any other handle use.
+
+`bd.actor_data_drop(ref)` drops the dict if one exists and returns `True`
+when one existed. Drop is idempotent: a stale handle returns `False` instead
+of raising.
 
 ### `Actor` properties and methods
 
@@ -859,6 +1095,10 @@ Direct scalar assignment is deliberately raw. Prefer `damage`, `heal`,
 `set_position`, and inventory methods when engine side effects, event dispatch,
 collision, or gameplay credit matter.
 
+`snapshot()` exists for the same reason as the legacy snapshot API:
+serialization. Call it from a `save` handler and store the returned dict in
+`bd.state`; do not treat it as a live view of the actor.
+
 ### `Player`, `Sector`, and `Line`
 
 `Player` exposes `valid`, `index`, `name`, `actor`, input fields
@@ -891,6 +1131,9 @@ special when a persistent mover thinker is desired.
 | `change_level(map_name, position=0, flags=0, next_skill=-1)` | Explicit map transition. |
 | `center_message(message, bold=False)` | Immediate center-screen message. |
 | `set_music(name, order=0, looping=True, force=False)` | Change music and return success. |
+| `player_log(player_index=0)` | Return the player's conversation log text (the Strife journal line), or `None` when unset/invalid. For numeric `LOG#` replies this is the `$TXT_LOGTEXT<n>` string-table label, not the resolved text. Read-only; allowed in observer mode. |
+| `set_player_log(text, player_index=0)` | Set the player's conversation log text (the Strife journal line). Mutation-guarded. |
+| `start_conversation(npc)` | Start a Strife conversation between the local player and the given actor (USE-path arguments). Returns `False` when the actor cannot talk. Mutation-guarded. |
 
 `CHANGELEVEL_KEEPFACING`, `CHANGELEVEL_RESETINVENTORY`,
 `CHANGELEVEL_NOMONSTERS`, `CHANGELEVEL_NOINTERMISSION`, and
@@ -903,15 +1146,215 @@ Python/C crossings. Supported tuples are `("velocity", actor, x, y, z)`,
 `("speed", actor, value)`, `("alpha", actor, value)`,
 `("scale", actor, value)` (uniform x/y), `("damage_factor", actor, value)`,
 `("damage_multiply", actor, value)`, and `("tint", actor, r, g, b)` —
-the same sprite tint as `actor.tint`. It returns the number
-applied and stops at the first invalid operation; validate generated batches
+the same sprite tint as `actor.tint`. It returns the number applied.
+Operations whose `Actor` handle went stale since the batch was built are
+skipped (a rate-limited warning reports how many); any other invalid
+operation stops the batch at the first failure — validate generated batches
 before submitting them.
+
+The read-side counterpart is `bd.actor_field_batch(refs, fields)`: it reads
+the whitelisted fields `health`, `x`, `y`, `z`, `angle`, `pitch`, `roll`,
+`speed`, `alpha`, `tid`, `class_name`, `alive`, `is_player`, `is_monster`,
+`special`, and `damage_factor` for many actors in one C API crossing and
+returns a list of tuples in the same order as `refs`. Stale or invalid
+handles yield a tuple of `None` values instead of raising; an unknown field
+name raises `ValueError` listing the valid names.
+
+```python
+rows = bd.actor_field_batch(nearby, ["health", "x", "y", "alive"])
+for ref, (health, x, y, alive) in zip(nearby, rows):
+    if alive:
+        bd.log(f"{ref.class_name} at {x},{y} hp={health}")
+```
+
+## Actor Class Registry (`bd.actors`)
+
+`bd.actors` doubles as a registry of every actor class the engine knows
+about — including classes defined by loaded mods, ZScript, DECORATE, and
+MAPINFO `doomednums`. Calling it still queries snapshots (see the legacy
+section below); accessing attributes on it gives you named constants so you
+never have to hardcode class strings:
+
+```python
+bd.spawn(bd.actors.DOOM_IMP, SPOT_X, SPOT_Y, 0.0)
+```
+
+Constants are `UPPER_SNAKE` versions of the engine class names
+(`DOOM_IMP` → `"DoomImp"`, `MBF_HELPER_DOG` → `"MBFHelperDog"`). An
+unknown constant raises `AttributeError` with a hint. Use
+`dir(bd.actors)` or `bd.actors.constants()` to list every constant, and
+`bd.actors.names()` for the class-name strings.
+
+Discovery helpers:
+
+```python
+bd.actors.names()              # all actor class names, sorted
+bd.actors.constants()          # all CONST names, sorted
+bd.actors.resolve("DOOM_IMP")   # "DoomImp" (accepts either form, None if unknown)
+bd.actors.children_of("Weapon")  # ["BFG9000", "Chaingun", "Pistol", ...]
+bd.actors.monsters()           # shootable, kill-counted actors
+bd.actors.projectiles()        # missile actors
+bd.actors.weapons()            # Weapon descendants
+bd.actors.items()              # Inventory descendants
+bd.actors.players()            # PlayerPawn descendants
+```
+
+Random selection and spawning:
+
+```python
+bd.actors.random()                    # any actor class
+bd.actors.random("monsters")          # category: monsters, projectiles,
+                                      # weapons, items, players
+bd.actors.random("DOOM_IMP")          # among a class and its descendants
+bd.actors.spawn_random(x, y, z)       # random monster at (x, y, z)
+bd.actors.spawn_random(x, y, z, kind="items", angle=90.0)
+```
+
+`random()` raises `ValueError` for an unknown category or class.
+`spawn_random()` forwards extra keyword arguments (`angle`, `tid`,
+`force`) to `bd.spawn_actor`. Both draw from the deterministic
+`bd.random()` stream, so selections are reproducible across save/load.
+
+## Legacy Snapshot API (JSON persistence)
+
+The functions in this section return plain dictionaries captured at call
+time. They are stale the moment they are made — health, position, and even
+existence can change on the next tic, and nothing ever updates the dict.
+Their remaining legitimate use case is serialization: building
+JSON-compatible data for `bd.state` in a `save` handler. For anything else,
+use the live handles documented above. All mutation functions here require
+an active primary level and a single-player, non-demo session; violations
+raise `RuntimeError`.
+
+### Snapshot dictionary fields
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `class_name` | `str` | Runtime actor class after replacement. |
+| `tid` | `int` | Thing ID; `0` means it cannot be targeted by TID APIs. |
+| `health` | `int` | Health at snapshot time. |
+| `x`, `y`, `z` | `float` | World position in map units. |
+| `angle` | `float` | Yaw in degrees. |
+| `pitch` | `float` | Pitch in degrees. |
+| `velocity_x`, `velocity_y`, `velocity_z` | `float` | Current velocity components. |
+| `alive` | `bool` | Whether health was greater than zero. |
+| `is_monster` | `bool` | Actor has the engine monster flag. |
+| `is_player` | `bool` | Actor is a player pawn. |
+| `player_index` | `int` | Player slot or `-1`. |
+
+Never retain a snapshot and assume the engine actor is unchanged. Query again
+by TID when you need current data — or, better, keep a live `Actor` handle and
+check `.valid`.
+
+### `bd.actors(class_name=None, tid=0, limit=1024) -> list[dict]`
+
+Returns actor snapshots from the primary level. In new code this belongs in a
+`save` handler:
+
+```python
+def on_save(event):
+    mine["zombie_tids"] = [
+        a["tid"] for a in bd.actors(class_name="ZombieMan") if a["alive"]
+    ]
+```
+
+Details:
+
+- `class_name` uses engine class lookup and accepts derived classes through
+  the normal `IsKindOf` relationship.
+- `tid=0` means no TID filter; it does not mean “find actors whose TID is 0.”
+- `limit` must be from `1` through `100000`, otherwise `ValueError` is raised.
+- An unknown class raises `ValueError`.
+- Outside a level, the function returns an empty list.
+
+### `bd.actor(tid) -> dict | None`
+
+Returns a snapshot of the first actor with a nonzero TID or `None`.
+`bd.actor_ref(tid)` is the handle-returning equivalent for live work.
+
+```python
+door_guard = bd.actor(500)
+if door_guard is not None:
+    mine["guard"] = {"health": door_guard["health"], "tid": 500}
+```
+
+Maps often contain actors with TID `0`. Assign important targets a TID in the
+map, ACS, ZScript, or Python spawn call.
+
+### `bd.spawn_actor(class_name, x, y, z, angle=0.0, tid=0, force=False) -> dict`
+
+Spawns an actor with normal class replacement enabled and returns a snapshot.
+`bd.spawn` is the handle-returning equivalent for live work.
+
+```python
+spawned = bd.spawn_actor(
+    "ZombieMan",
+    128.0,
+    -64.0,
+    0.0,
+    angle=180.0,
+    tid=9001,
+)
+```
+
+Details:
+
+- An unknown class raises `ValueError`.
+- With `force=False`, an actor that does not fit is destroyed and
+  `RuntimeError` is raised.
+- `force=True` skips the fit rejection; use it carefully.
+- With `tid=0`, the engine allocates an unused TID starting in the
+  `10000..99999` search range.
+- If no TID can be allocated, the actor is destroyed and `RuntimeError` is
+  raised.
+- The returned snapshot's `class_name` may reflect actor replacement.
+
+### `bd.damage_actor(tid, damage, damage_type="None") -> int`
+
+Damages the first actor with the TID and returns the engine damage result.
+
+```python
+applied = bd.damage_actor(9001, 25, damage_type="Fire")
+```
+
+No Python actor is supplied as source or inflictor. A missing TID raises
+`LookupError`.
+
+### `bd.set_actor_velocity(tid, x, y, z) -> dict`
+
+Sets velocity components and returns the new snapshot:
+
+```python
+after = bd.set_actor_velocity(9001, 4.0, 0.0, 6.0)
+```
+
+A missing TID raises `LookupError`.
+
+### `bd.destroy_actor(tid) -> bool`
+
+Destroys the first actor with the TID, clears its kill/item counters, and
+returns `True`. Returns `False` when no actor exists.
+
+Use damage when gameplay credit, death states, or death events matter. Direct
+destruction is removal, not a normal kill.
 
 ## Gameplay Director API
 
 These functions let a mod direct presentation and run structure — time
 flow, HUD messaging, screen effects, UI audio, seeded randomness, and
 named checkpoints — without touching actor internals.
+
+### `bd.random()` / `bd.randrange()` / `bd.randint()` / `bd.choice()`
+
+Module-level deterministic randomness backed by one engine RNG stream:
+`bd.random()` returns a float in `[0, 1)`, `bd.randrange(lo, hi)` an int in
+`[lo, hi)` (`bd.randrange(hi)` uses `[0, hi)`), `bd.randint(lo, hi)` an int
+in `[lo, hi]` inclusive, and `bd.choice(seq)` an element of a non-empty
+sequence. The stream is seeded once per map load from the run's RNG seed
+and level number, and its full state is serialized with `bd.state` into
+savegames — sequences replay exactly across save/load within a playthrough.
+`bd.actors.random()`/`spawn_random()` draw from this same stream. Usable
+before any level loads.
 
 ### `bd.rng(seed=0) -> RngStream`
 
@@ -1021,6 +1464,34 @@ def celebrate(event):
 
 def on_item_picked(event):  # conventional-name style
     bd.log(f"picked {event['amount']}x {event['name']}")
+```
+
+### New events: `item_dropped`, `weapon_changed`, `sector_entered`, `sector_exited`
+
+| Event | Extra fields |
+|-------|--------------|
+| `item_dropped` | `actor_ref`, `dropper_ref`, `player_index`, `class_name`, `amount` |
+| `weapon_changed` | `player_index`, `weapon`, `actor_ref`, `player_ref` |
+| `sector_entered`, `sector_exited` | `sector`, `tags`, `player_index`, `actor_ref` |
+
+All four work with decorator registration and conventional top-level names
+(`on_item_dropped`, `on_weapon_changed`, `on_sector_entered`,
+`on_sector_exited`), and suit loot-tracking mutators, weapon-switch HUD
+helpers, and zone-based triggers:
+
+```python
+def on_item_dropped(event):  # conventional-name style
+    bd.log(f"dropped {event['amount']}x {event['class_name']}")
+
+@bd.on("weapon_changed")
+def announce(event):
+    if event["weapon"] is not None:
+        bd.log(f"player {event['player_index']} raised {event['weapon']}")
+
+@bd.on("sector_entered")
+def zone_check(event):
+    if 9 in event["tags"]:
+        bd.log(f"player {event['player_index']} entered tagged sector {event['sector']}")
 ```
 
 ### Future directions
@@ -1392,6 +1863,296 @@ name strings like `"gold"`), the toolkit's `toast()`/`announce()` colors
 and every theme field accept **only `(r, g, b)` / `(r, g, b, a)` tuples**
 — named color strings are not accepted there.
 
+## Dear ImGui UI (`bd.imgui`)
+
+`bd.imgui` binds the vendored **Dear ImGui 1.92.8** (docking branch) into
+an engine overlay for rich, interactive debug and mod UI: draggable
+windows, docking, sliders, input fields, tables, plots, menus, tooltips.
+Unlike the canvas display list (persistent primitives re-rendered every
+frame), ImGui is **immediate mode**: your script submits the whole UI every
+frame and keeps all state itself.
+
+### The `imgui_frame` event
+
+Every `bd.imgui` call is only legal inside an **`imgui_frame`** handler,
+which fires once per rendered frame between ImGui's `NewFrame` and
+`Render`. Calling from anywhere else raises `RuntimeError("bd.imgui calls
+are only valid inside an imgui_frame handler")`. The any-event exceptions
+are `set_master_visible()` / `master_visible()` and
+`set_nav_enabled()` / `nav_enabled()` (engine-state passthroughs),
+`image_size()`, the font registry (`add_font_ttf()` through
+`get_default_font()`), and `set_ui_scale()` / `get_ui_scale()` plus the
+persistent style accessors (`get_style_color()` through `style_theme()`,
+which require one rendered frame before they work). See the API summary
+below for the per-call gating. `imgui_frame` also fires at the title screen,
+before any level exists; guard gameplay access accordingly
+(`bd.player(0)` raises `RuntimeError` without an active level).
+
+### Performance rules
+
+- One CPython crossing per widget call — a panel of 30 widgets is 30
+  crossings per frame. Keep per-frame widget counts modest; hide collapsed
+  sections instead of submitting them.
+- When no script registers `imgui_frame`, the entire feature costs a single
+  `HasCallbacks` check per frame.
+- When `py_imgui` is off, frames still run `NewFrame`/`Render` (window
+  state persists) but dispatch nothing and draw nothing.
+
+### Master switch, input capture, demo window
+
+- **`py_imgui` CVar** (archived, default `true`): master visibility gate.
+  `bd.imgui.set_master_visible(False)` / `bd.imgui.master_visible()` are
+  script passthroughs.
+- **Keyboard navigation**: `ImGuiConfigFlags_NavEnableKeyboard` is enabled
+  by default, so menus and windows are drivable with the keyboard (Tab/
+  arrows/Enter). `bd.imgui.set_nav_enabled(False)` / `bd.imgui.nav_enabled()`
+  toggle and read it from any event.
+- **`py_imgui_demo` console command**: toggles the stock ImGui demo window
+  (also available per-script via `show_demo_window(open)`). On the docking
+  branch the demo includes a DockSpace section.
+- **Input capture**: while the overlay wants the mouse or keyboard, the
+  engine routes GUI events to it instead of the game, so dragging a slider
+  does not turn the player. `want_capture_mouse()` /
+  `want_capture_keyboard()` expose that state.
+
+### Quick start
+
+```python
+import biaseddoom as bd
+imgui = bd.imgui
+
+panel_open = True
+speed = 1.0
+
+@bd.on("imgui_frame")
+def draw(event):
+    global panel_open, speed
+    if not panel_open:
+        return
+    imgui.set_next_window_pos(24, 40, imgui.Cond.FirstUseEver)
+    # open= gives the window a close button; returns (expanded, open).
+    expanded, panel_open = imgui.begin("My Panel", panel_open)
+    if expanded:
+        imgui.text("Immediate-mode UI from Python")
+        changed, speed = imgui.slider_float("Speed", speed, 0.1, 4.0)
+        if imgui.button("Reset"):
+            speed = 1.0
+    imgui.end()
+```
+
+State flows **through your variables**: widgets that edit a value return
+`(changed, new_value)` tuples; you keep the value and pass it back next
+frame. `begin()` is the exception with two return forms: `open=None`
+(default) returns just the `expanded` bool, any other `open` value returns
+`(expanded, open)`. Always call `end()` even when `begin()` returned False.
+
+### API summary
+
+| Function | Description |
+|---|---|
+| `begin(name, open=None, flags=0)` | Push a window; returns `expanded` or `(expanded, open)` |
+| `end()` | Pop the current window (always required) |
+| `begin_child(id, size=(0,0), border=False, flags=0)` / `end_child()` | Scrolling child region |
+| `set_next_window_pos(x, y, cond=0)` / `set_next_window_size(w, h, cond=0)` | Place/size the next window |
+| `set_next_window_collapsed(collapsed, cond=0)` / `set_next_window_bg_alpha(a)` | Collapse state / background alpha of the next window |
+| `is_window_focused()` / `is_window_hovered()` | Current-window state |
+| `get_window_pos()` / `get_window_size()` | Current window rect, `(x, y)` tuples |
+| `text(s)` / `text_colored(r,g,b,a,s)` / `text_disabled(s)` / `text_wrapped(s)` | Text variants |
+| `label_text(label, s)` / `bullet_text(s)` | Value-label and bulleted text |
+| `button(label, w=0, h=0)` / `small_button(label)` | True on click |
+| `checkbox(label, checked)` | `(changed, new_value)` |
+| `radio_button(label, active)` | True when pressed |
+| `slider_int(label, v, min, max)` / `slider_float(..., format="%.3f")` | `(changed, value)` |
+| `drag_int(label, v, speed=1.0, min=0, max=0)` / `drag_float(...)` | Unbounded when `min >= max` |
+| `input_text(label, text, max_length=256, flags=0)` | `(changed, new_text)`; `flags=32` = EnterReturnsTrue |
+| `input_int(label, v, step=1, step_fast=100)` / `input_float(...)` | `(changed, value)` |
+| `combo(label, current_index, items)` | Drop-down over a str sequence; `(changed, new_index)` |
+| `list_box(label, current_index, items, height_items=-1)` | Scrolling list; `(changed, new_index)` |
+| `selectable(label, selected, flags=0)` | True when pressed |
+| `tree_node(label)` / `tree_pop()` / `collapsing_header(label, flags=0)` | Tree sections |
+| `separator()` / `same_line(offset=0.0, spacing=-1.0)` / `spacing()` / `newline()` | Layout |
+| `indent(width=0.0)` / `unindent(width=0.0)` / `align_text_to_frame_padding()` | Layout |
+| `begin_table(id, columns, flags=0)` / `end_table()` | Tables (end only when True) |
+| `table_next_row(flags=0, min_height=0.0)` / `table_next_column()` | Row/column advance |
+| `table_setup_column(label, flags=0, init_width=0.0)` / `table_headers_row()` | Column declaration / header row |
+| `progress_bar(fraction, w=-1, h=0, overlay=None)` | Horizontal bar; `w < 0` fills the row |
+| `color_edit3(label, r, g, b)` / `color_edit4(label, r, g, b, a)` | `(changed, ...)` color editors |
+| `plot_lines(label, values, overlay=None, scale_min=FLT_MAX, scale_max=FLT_MAX, w=0, h=0)` | Line plot; FLT_MAX = auto-scale |
+| `image(texture, w=0, h=0, uv0=(0,0), uv1=(1,1), tint=(1,1,1,1), border=(0,0,0,0))` | Game texture or Actor's current sprite; `w`/`h` 0 = natural display size; unknown name raises ValueError |
+| `image_size(texture) -> (w, h)` | Natural display size of a texture accepted by `image()`; callable from any event |
+| `dock_space_over_viewport(flags=0)` / `dock_space(id, w=0, h=0, flags=0)` | Docking (see below); return the dockspace id |
+| `set_next_window_dock_id(id, cond=0)` | Dock the next `begin()` window into a dockspace node programmatically |
+| `begin_main_menu_bar()` / `end_main_menu_bar()` | Screen-top menu bar |
+| `begin_menu(label)` / `end_menu()` / `menu_item(label, shortcut=None, selected=False, enabled=True)` | Menus |
+| `begin_tooltip()` / `end_tooltip()` / `set_tooltip(s)` | Tooltips |
+| `set_keyboard_focus_here(offset=0.0)` | Focus the next widget (positive `offset` addresses a sub component, -1 the previous widget) |
+| `is_item_hovered()` / `is_item_clicked(button=0)` / `is_item_active()` / `is_any_item_active()` | Last-item state |
+| `push_style_color(idx, r, g, b, a)` / `pop_style_color(count=1)` | Style colors; `idx` from `imgui.Col` |
+| `push_style_var(idx, x, y=None)` / `pop_style_var(count=1)` | Style vars; `y=None` = scalar |
+| `get_font_size()` | Font height in pixels |
+| `show_demo_window(open)` / `show_metrics_window(open)` | Stock debug windows; return still-open |
+| `want_capture_mouse()` / `want_capture_keyboard()` | ImGui input capture state |
+| `set_master_visible(visible)` / `master_visible()` | `py_imgui` CVar passthrough (any event) |
+| `set_nav_enabled(enabled)` / `nav_enabled()` | Keyboard navigation flag, on by default (any event) |
+| `add_font_ttf(name, data, size)` | Register a TTF/OTF font from a `bytes` object (e.g. `bd.read_bytes()`) under `name` at pixel size 4..96 (any event) |
+| `add_font_default(name, size, bitmap=False)` | Register ImGui's embedded default face, `bitmap=True` picks the classic pixel font (any event) |
+| `remove_font(name)` / `clear_fonts()` | Drop a script font / all script fonts; the built-in `Default` font survives (any event) |
+| `list_fonts()` | Registry snapshot, `[(name, size, bitmap, builtin), ...]` (any event) |
+| `set_default_font(name)` / `get_default_font()` | The font every `imgui_frame` starts on (the overlay pushes it around the event); unknown name returns False (any event) |
+| `push_font(name)` / `pop_font()` | Switch font inside the frame; raises `ValueError` for an unknown name |
+| `set_ui_scale(factor)` / `get_ui_scale()` | Global UI scale, clamped 0.5..4.0, composed via `ScaleAllSizes()` by the ratio between old and new factor (any event) |
+| `set_window_font_scale(scale)` | Per-window font scale for the current window; prefer `set_ui_scale()` for global scaling |
+| `get_style_color(idx)` / `set_style_color(idx, r, g, b, a)` | Read/write a persistent style color, `idx` from `imgui.Col` (any event, needs one rendered frame) |
+| `get_style_var(idx)` / `set_style_var(idx, x, y=None)` | Read/write a persistent style var, `idx` from `imgui.StyleVar`; ImVec2-backed vars require `y` (any event, needs one rendered frame) |
+| `style_theme(name)` | Reset all colors to `'dark'`, `'classic'` or `'light'`; UI scale factors are preserved (any event, needs one rendered frame) |
+| `is_key_down(key)` | True while the `imgui.Key` value is held |
+| `is_key_pressed(key, repeat=False)` | True on the frame the key went down; `repeat=True` also reports held-key repeats |
+| `is_key_chord_pressed(key, mods=0)` | True on the frame the `imgui.Mod`-OR'd chord went down; no focus routing, prefer `shortcut()` |
+| `shortcut(key, mods=0)` | Chord with ImGui focus routing; the deepest focused window wins |
+| `set_item_default_focus()` | Make the last submitted item the Enter-activated default of a newly appearing window |
+| `open_popup(str_id)` / `begin_popup(str_id)` / `end_popup()` / `close_current_popup()` / `is_popup_open(str_id)` | Popup lifecycle; call `open_popup()` from an event-ish context (e.g. a button press), not every frame; `end_popup()` only when `begin_popup()` returned True |
+| `calc_text_size(s)` | `(w, h)` of a string in the current font, in pixels |
+| `set_cursor_pos(x, y)` / `get_cursor_pos()` / `get_cursor_screen_pos()` | Cursor in window-local / absolute screen coordinates |
+
+### Fonts
+
+Fonts live in a runtime registry keyed by name. `add_font_ttf(name,
+data, size)` registers a TTF/OTF face from a `bytes` object (load it
+with `bd.read_bytes()`) at a requested pixel size of 4..96;
+`add_font_default(name, size, bitmap=False)` registers ImGui's embedded
+face instead (`bitmap=True` selects the classic ProggyClean pixel font,
+the default `False` the scalable ProggyForever vector face). Duplicate
+or empty names are rejected with a console warning and a `False` return;
+drop entries with `remove_font(name)` / `clear_fonts()`.
+
+The TTF bytes are copied and owned by the overlay for the process
+lifetime, so the Python buffer can be dropped immediately and later
+atlas rebuilds can re-add the font without dangling. Every mutation
+rebuilds the atlas outside the frame and uploads it under a new uniquely
+named texture; draw data produced before a rebuild keeps referencing the
+old atlas texture, which stays valid for the process lifetime. A
+mutation requested during `imgui_frame` is applied after the frame
+renders, so the font becomes usable on the next frame.
+
+The built-in `"Default"` font registers when the overlay first
+initializes and cannot be removed, so `list_fonts()` called before the
+first frame only shows script-added fonts. `set_default_font(name)`
+selects the font every `imgui_frame` starts on: the overlay pushes it
+around the event (and pops it afterwards), so script-side
+`push_font()` / `pop_font()` pairs always start balanced.
+
+### Scaling and themes
+
+`set_ui_scale(factor)` is the global knob, clamped to [0.5, 4.0]. It
+sets `style.FontScaleMain` and rescales all spacing/padding sizes via
+`ScaleAllSizes()` by the ratio between the new and the previous factor,
+so repeated calls compose: 2.0 then 2.0 yields 4x spacing, not 8x.
+`style_theme("dark" | "classic" | "light")` resets every style color to
+a stock theme and preserves the UI scale factors across the reset.
+
+Both are any-event calls, as are `get_style_color()` /
+`set_style_color()` and `get_style_var()` / `set_style_var()`; the style
+accessors require the overlay to have rendered at least one frame
+(first use before that raises the "no frame has run yet"
+`RuntimeError`). `set_window_font_scale(scale)` is different: it is
+per-window, frame-gated, and the tool for one-off emphasis inside a
+single window (prefer `set_ui_scale()` for global scaling).
+
+### Keyboard interaction
+
+`imgui.Key` holds the named key table (`Tab`, `Left`, `Right`, `Up`,
+`Down`, `PageUp`, `PageDown`, `Home`, `End`, `Insert`, `Delete`,
+`Backspace`, `Space`, `Enter`, `KeyPadEnter`, `Escape`, `A` through `Z`,
+`F1` through `F12`, and the digits `0`-`9`, which are not valid
+identifiers so they are reached with `getattr(imgui.Key, "7")`).
+`imgui.Mod` holds `Ctrl`, `Shift`, `Alt` and `Super`; OR them together
+for the `mods` argument. Keyboard navigation (Tab/arrows/Enter between
+widgets) is on by default, toggleable with `set_nav_enabled()`.
+
+`is_key_pressed(key, repeat=False)` reports the frame a key went down,
+with `repeat=True` also reporting held-key repeats; it is a raw poll
+with no focus routing, which is what menu digit and arrow hotkeys want.
+`is_key_chord_pressed(key, mods)` adds modifiers but still does no
+routing, while `shortcut(key, mods)` routes through ImGui so the deepest
+focused window wins and the chord does not fire while an unrelated
+window owns the keyboard (use it for commands like Ctrl+M).
+
+For Esc-style dismissal, poll `is_key_pressed(imgui.Key.Escape)` inside
+the frame and close a popup first (`close_current_popup()`) before
+popping whatever screen is on top. `set_item_default_focus()` after a
+widget makes it the Enter-activated default of a newly appearing window
+(pin "No" on a quit confirmation), and `set_keyboard_focus_here()` moves
+focus to the next widget (e.g. an input field when its window appears).
+
+### Popups
+
+`open_popup(str_id)` marks a popup open and must be called from an
+event-ish context (a button press inside the frame), not unconditionally
+every frame. `begin_popup(str_id)` returns True while the popup is open:
+submit its contents and call `end_popup()` only in that case.
+`is_popup_open(str_id)` queries without submitting, and
+`close_current_popup()` closes the popup open in the current scope. The
+usual Esc handler checks a popup first and closes it before unwinding
+the screen stack.
+
+### Constants
+
+`imgui.Col` covers the full `ImGuiCol_*` set: `Text`, `TextDisabled`,
+`WindowBg`, `ChildBg`, `PopupBg`, `Border`, `BorderShadow`, `FrameBg`,
+`FrameBgHovered`, `FrameBgActive`, `TitleBg`, `TitleBgActive`,
+`TitleBgCollapsed`, `MenuBarBg`, `ScrollbarBg`, `ScrollbarGrab`,
+`ScrollbarGrabHovered`, `ScrollbarGrabActive`, `CheckMark`,
+`CheckboxSelectedBg`, `SliderGrab`, `SliderGrabActive`, `Button`,
+`ButtonHovered`, `ButtonActive`, `Header`, `HeaderHovered`,
+`HeaderActive`, `Separator`, `SeparatorHovered`, `SeparatorActive`,
+`ResizeGrip`, `ResizeGripHovered`, `ResizeGripActive`,
+`InputTextCursor`, `TabHovered`, `Tab`, `TabSelected`,
+`TabSelectedOverline`, `TabDimmed`, `TabDimmedSelected`,
+`TabDimmedSelectedOverline`, `DockingPreview`, `DockingEmptyBg`,
+`PlotLines`, `PlotLinesHovered`, `PlotHistogram`,
+`PlotHistogramHovered`, `TableHeaderBg`, `TableBorderStrong`,
+`TableBorderLight`, `TableRowBg`, `TableRowBgAlt`, `TextLink`,
+`TextSelectedBg`, `TreeLines`, `DragDropTarget`, `DragDropTargetBg`,
+`UnsavedMarker`, `NavCursor`, `NavWindowingHighlight`,
+`NavWindowingDimBg`, `ModalWindowDimBg`.
+
+`imgui.StyleVar` holds every `ImGuiStyleVar_*` index (`Alpha`,
+`DisabledAlpha`, `WindowPadding`, `WindowRounding`, `WindowBorderSize`,
+`WindowMinSize`, `WindowTitleAlign`, `ChildRounding`, `ChildBorderSize`,
+`PopupRounding`, `PopupBorderSize`, `FramePadding`, `FrameRounding`,
+`FrameBorderSize`, `ItemSpacing`, `ItemInnerSpacing`, `IndentSpacing`,
+`CellPadding`, `ScrollbarSize`, `ScrollbarRounding`, `ScrollbarPadding`,
+`GrabMinSize`, `GrabRounding`, `ImageRounding`, `ImageBorderSize`,
+`TabRounding`, `TabBorderSize`, `TabMinWidthBase`, `TabMinWidthShrink`,
+`TabBarBorderSize`, `TabBarOverlineSize`, `TableAngledHeadersAngle`,
+`TableAngledHeadersTextAlign`, `TreeLinesSize`, `TreeLinesRounding`,
+`DragDropTargetRounding`, `ButtonTextAlign`, `SelectableTextAlign`,
+`SeparatorSize`, `SeparatorTextBorderSize`, `SeparatorTextAlign`,
+`SeparatorTextPadding`, `DockingSeparatorSize`). The vec2-backed vars
+(`WindowPadding`, `WindowMinSize`, `WindowTitleAlign`, `FramePadding`,
+`ItemSpacing`, `ItemInnerSpacing`, `CellPadding`,
+`TableAngledHeadersTextAlign`, `ButtonTextAlign`, `SelectableTextAlign`,
+`SeparatorTextAlign`, `SeparatorTextPadding`) read and write as `(x, y)`
+tuples, the rest as scalars.
+
+`imgui.Key` holds the named keys listed above under
+[Keyboard interaction](#keyboard-interaction); `imgui.Mod` has `Ctrl`,
+`Shift`, `Alt`, `Super`. `imgui.InputTextFlags` has `EnterReturnsTrue`
+(32; report changes only on Enter), `ReadOnly`, `Password`,
+`CharsDecimal`, `CharsHexadecimal`, `CharsUppercase`, `CharsNoBlank`,
+`AutoSelectAll`. `imgui.WindowFlags` has `NoTitleBar`, `NoResize`,
+`NoMove`, `NoCollapse`, `NoBackground`, `NoScrollbar`, `MenuBar`,
+`AlwaysAutoResize`. `imgui.Cond` has `Always`, `Once`, `FirstUseEver`,
+`Appearing` (0 means Always).
+
+See [`examples/python/26_imgui_overlays/`](../../examples/python/26_imgui_overlays/)
+for a complete widget reference panel (menu bar, texture images, progress
+bar, slider, spawn button, kill counter, health plot), and
+[`examples/python/34_scripted_menus/`](../../examples/python/34_scripted_menus/)
+("Overture Menu Kit") for a full keyboard-first menu suite built on the
+extended API: runtime fonts, UI scaling and themes, key queries and
+chords, popups, focus management, docking, and settings persistence.
+
 ## CVars
 
 ### `bd.get_cvar(name) -> bool | int | float | str`
@@ -1502,6 +2263,21 @@ invalid paths raise `FileNotFoundError`. Invalid UTF-8 raises
 It can only be called while a manifest module or one of that module's callbacks
 is executing. Calling it without current-mod context raises `RuntimeError`.
 
+### `bd.read_bytes(path) -> bytes`
+
+Binary companion of `bd.read_text()`. Same container scoping (relative paths,
+forward slashes, no `..`), same `FileNotFoundError` contract for missing or
+invalid paths, but returns a `bytes` object without decoding. Payloads larger
+than 32 MiB raise `ValueError`. Useful for loading binary assets such as font
+files:
+
+```python
+font_data = bd.read_bytes("fonts/NotoSans-Regular.ttf")
+```
+
+It can only be called while a manifest module or one of that module's callbacks
+is executing. Calling it without current-mod context raises `RuntimeError`.
+
 ### `bd.import_script(path, module_name=None) -> module`
 
 Executes another `.py` resource from the same container and returns its module:
@@ -1532,6 +2308,33 @@ Important differences from normal `import`:
 Normal imports such as `import json`, `import collections`, and `import os` use the
 bundled CPython standard library. PK3 source directories are deliberately not
 added to `sys.path`; use `import_script` for packaged helpers.
+
+### Engine-shipped packages (`src/python/lib/`)
+
+The build stages every package found in the source tree's
+`src/python/lib/` directory into the same folder as the embedded standard
+library (`python/lib/python3.x/` on Linux, `python/Lib/` on Windows), both
+in the build tree and in installs. Because that folder is already on the
+interpreter's `sys.path`, mods import these frameworks directly:
+
+```python
+import bd_quests
+```
+
+Shipped packages are ordinary, dependency-free Python (only `biaseddoom`
+is guaranteed to exist). Currently shipped:
+
+| Package | Purpose |
+|---------|---------|
+| `bd_quests` | Data-driven quest framework: `Quest`/`Objective` definitions, engine-event auto-wiring (`track_kills` with exact player-credit kill attribution by default: `killer="player"`, `killer_class=`, `killer="any"` for the legacy any-death policy, plus `track_pickup`, `track_sector`, `track_conversation_log`), automatic `bd.state` persistence, and an optional Dear ImGui journal (`bd_quests.journal_ui.JournalUI`) with `bind_journal_toggle(key=...)` wiring a console alias/key bind through `pyui`/`ui_command`. Beyond items and messages, a quest's `rewards` dict may carry an `"xp"` amount and `"disposition"` deltas (`(npc_id, delta)` pairs), dispatched on completion to the owning log's `on_xp_reward` / `on_disposition_reward` callback lists (wire them to a rules engine such as `bd_dnd` and a `bd_npcs` `Disposition` store; callback failures only warn and never block completion). See the package docstrings and [`examples/python/27_quest_journal/`](../../examples/python/27_quest_journal/) for a complete campaign. |
+| `bd_vtm` | Vampire-the-masquerade-inspired chronicle rules: generation-sized `BloodPool` with nightly upkeep, `Hunger` accrual and deterministic frenzy checks, `Humanity` degeneration rolls, blood-powered `Discipline`s with cooldowns (built-in `celerity`/`obfuscate`/`potence`/`dominate`), `feed()` with witness-driven `Masquerade` violations, `Factions` reputation gating `bd_quests` quests (`requires_faction`), and a `VtMState` container that persists everything through `bd.state`. `bd_vtm.hud.VtMHud` renders the state as a Dear ImGui window, with `bind_hud_toggle(hud, key=...)` for a console alias/key-bind toggle. See the package docstrings and [`examples/python/28_vtm_chronicle/`](../../examples/python/28_vtm_chronicle/) for a complete chronicle. |
+| `bd_dnd` | D&D-inspired d20 rules: `roll("2d6+3")` dice notation and `d20()` advantage/criticals, 5e ability scores/modifiers, skill/ability/save checks with proficiency, `Character` XP levels with hit-die level-ups and per-rest resources, `track_xp_from_kills` monster XP with exact player-credit attribution (`player_index=0` default; `None` for the legacy any-death policy), `Party`/`PartyState` multi-character rosters with shared XP and `bd.state` persistence, world helpers (`LockedDoorCheck` bash/pick a locked door, `TrapZone` sector damage saves, `DamageSaveRule` retroactive heal-back saves against incoming damage, `DialogueSkillGate` conversation checks), and a `CharacterState` container that persists everything through `bd.state` (mutually exclusive with `PartyState`: use one per character). `bd_dnd.sheet.CharacterSheet` renders the character (stats, HP/XP bars, color-coded roll log) as a Dear ImGui window, `PartySheet` adds a selectable roster column, and `bind_sheet_toggle(sheet, key=...)` wires a console alias/key-bind toggle. `bd_dnd.Companion` (lazily re-exported from `bd_dnd.companions`) binds a party member to a world actor: a friendly follower (FRIENDLY set, COUNTKILL cleared) that shadows the player on a scheduled follow loop with teleport catch-up, fights the player's recent attackers by assigning its (writable) `target` and nudging the native chase AI, and two-way-syncs its actor health with the member's RPG hp via the new `Character.on_hp_changed` hook (`set_hp`/`rest`/`level_up` fire it). Companion death incapacitates the member (`hp` 0) and `revive()` respawns the actor at half max hp with a fresh TID; descriptors registered through `PartyState.add_companion` ride along in saves and re-bind by TID after a checkpoint load. The `bd_dnd.classes` layer adds class-based progression: `CharacterClass` definitions (hit die, primary abilities, save proficiencies, class skills, per-level feature dicts with optional `apply` callables, per-rest resource pools, starting equipment) attach with `bind_class`, which applies the level-1 feature package immediately and later levels through the character's `on_level_up` hook (levels in `CLASS_LEVELS_ASI` queue two points on `character.pending_asi`). `CreationWizard` is a pure, engine-free creation model (standard array, point buy, or rolled scores, plus the class-skill picks) with a validating `finish()` that raises `ValueError`, and `track_skill_use`/`advancement_check`/`skill_bonus` grow a flat use-based mastery bonus; class definitions are never persisted (only the `class_id` name and the use/mastery counters ride along in `CharacterState`). See the package docstrings and [`examples/python/29_dnd_dungeon/`](../../examples/python/29_dnd_dungeon/) for a complete dungeon crawl. |
+| `bd_rpg` | Elemental combat RPG layer: a `DamageTypes` registry (physical/fire/ice/poison/acid/shock/holy/dark pre-registered, plus custom types), per-actor and class-level damage affinities (`set_affinity`/`affinity_of`/`set_class_affinity` — 1.0 neutral, 0.0 immune, 2.0 weak; per-actor overrides class, class defaults match lazily by class name), and `resolve_attack(attacker, defender, attack)` running the full pipeline — optional d20-style hit check, crit roll, `NdM+K` dice (a deliberately small local parser keeping the pack independent of `bd_dnd`), affinity multiplier, flat soak (`min(soak, dmg-1)` so at least 1 gets through unless immune) — applied through `Actor.damage`, so the `actor_before_damage` mutable filter has the last word. The `StatusEngine` singleton `status` applies timed `refresh`/`stack`/`independent` effects from ONE consolidated repeating task (built-ins `burning`/`poisoned`/`slowed`/`stunned`/`regenerating`), with state in `bd.actor_data`. `LootTable` weighted drops plus `LootRules` wiring `actor_died` with exact player-credit attribution and common/uncommon/rare/legendary flash+sound feedback, and genre-neutral kill-XP glue (`award_kill_xp`/`track_kill_xp`). `RpgState` persists player affinities/soak and TID-tagged status timers through `bd.state` (definitions are script-side constants, never persisted). See the package docstrings and [`examples/python/31_elemental_combat/`](../../examples/python/31_elemental_combat/) for a complete scenario. |
+| `bd_dialogue` | Branching NPC dialogue trees: data-driven `Dialogue`/`Node`/`Choice` definitions with build-time validation of every `next`/`fail_next` reference, gated choices (`condition(ctx)` hiding, `faction_gate=(name, min_standing)` locking behind `bd_vtm` reputation, `skill_check=(skill, dc)` routing success/failure through `bd_dnd` `Character.skill_check` with an `rng=` escape hatch for scripted test doubles), per-choice `effect(ctx)` hooks and native Strife journal writes via `log=(text, number)`, and real-time `DialogueSession`s (NPC velocity zeroed, one session at a time, stale-NPC auto-end; sessions are transient — nothing is saved mid-dialogue). `bd_dialogue.ui.DialogueUI` renders the active session as a Dear ImGui window — live NPC sprite portrait via `imgui.image(npc_ref)`, faction-colored speaker name, wrapped text, a ~3 s skill-check result flash, and numbered selectable choices (mouse, ImGui keyboard navigation, or per-key digit hotkeys via `bd.imgui.is_key_pressed`). Coexists with the native Strife conversation system. See the package docstrings and [`examples/python/32_dialogue_trees/`](../../examples/python/32_dialogue_trees/) for a complete fixture. |
+| `bd_horror` | Horror UX layer: `bd_horror.theme` pushes a full horror skin over `bd.imgui` (near-black windows, dried-blood accents, bone text, square frames; `apply()`/`clear()` track exact push counts) with widget helpers (`begin_window`, `section`, per-tone pulsing `bar`, `omen_text`, `kv_row`, bordered `frame_image` portrait plates) — all legal only inside `imgui_frame`. `bd_horror.toasts` queues diegetic notifications (`info`/`quest`/`loot`/`omen`/`harm`, per-kind palette color, ASCII symbol prefix, stock-Doom UI sound) rendered top-right with fade-in/hold/fade-out timing, plus a history ring for headless autotests. `bd_horror.atmosphere` is the dread machine: `Dread` (a 0-100 meter rising in darkness and near monsters, spiked by player damage, with 25/50/75/100 threshold callbacks, a dread-scaled heartbeat, a display-list vignette, and whisper stings), `LightManager` sector-light programs (`candle`/`fluorescent`/`blackout`, tag-based and restore-on-stop), and `StalkerDirector` (spawns a monster behind the player at high dread). `HorrorState` persists dread and program descriptors through `bd.state` like `bd_vtm.VtMState`. See the package docstrings for usage. |
+| `bd_npcs` | NPC hub layer: `NPCDefinition`/`NPCManager` register world NPCs (actor class, relative-to-player or absolute spawn, packed `tint`, dialogue source, `tid_base` stable TIDs) and spawn them friendly/still on `map_load`, adopting savegame-restored actors by TID instead of duplicating them. `Disposition` keeps per-NPC values in [-100, 100] with `hostile`/`cold`/`neutral`/`warm`/`trusted` standings, persisted through `bd.state` (a definition's `start_disposition` seeds only NPCs never met). `manager.nearest`/`prompt`/`begin_talk` give nearest-NPC talk targeting: `begin_talk` opens a `bd_dialogue` session whose ctx adds `disposition`, `standing`, `npc_id`, and `dispositions` (one conversation at a time), with a restylable `PROMPT_FORMAT`. `Service`/`HealerService` (currency fee behind a standing floor, heals the pawn and a `bd_dnd` character's RPG hp) and `TrainerService` (`bd_dnd.classes.advancement_check` rolls) implement offers; `Shop` is a currency store with stock counts, restock timers, refund-on-failure buys, and count-only persistence, plus a guarded ImGui `ShopUI`. See the package docstrings for usage. |
+
+`bd_horror` is the horror UX layer: it bundles presentation (the ImGui skin and the toast queue) with atmosphere simulation (dread, light programs, stalkers) so a mod can stand up a coherent survival-horror feel with a few calls. Everything world-facing runs on `bd.schedule` tasks of at least 35 tics and pushes actor filters into `bd.actor_refs` keyword arguments, per the [performance guide](../development/python-performance.md); all randomness flows through the deterministic script RNG, so candle flicker and stalker rolls resume exactly after a checkpoint load. Light programs bind to sector tags rather than TIDs, which is what lets them rebind naturally across map transitions and savegames.
 
 ## Persistent State And Savegames
 
@@ -1595,6 +2398,34 @@ When reading valid nonempty `pythonstate`:
 
 Use stable identifiers—TIDs, class names, and your own IDs—in persistent data.
 Never attempt to serialize a pointer or treat an old snapshot as a live actor.
+
+### Rebinding actor handles after load
+
+Handles never survive a savegame: store **TIDs** (not handles) in `bd.state`,
+then re-resolve live handles in the `load` event with `bd.actor_ref`. Check
+`.valid` to detect actors that no longer exist after the load:
+
+```python
+watchers = []  # live handles; rebuilt on load, never persisted
+
+
+def on_save(event):
+    mine["watcher_tids"] = [w.tid for w in watchers if w.valid]
+
+
+def on_load(event):
+    watchers.clear()
+    for tid in mine.get("watcher_tids", []):
+        actor = bd.actor_ref(tid)
+        if actor is not None and actor.valid:
+            watchers.append(actor)
+        else:
+            bd.warn(f"watcher TID {tid} no longer exists after load")
+```
+
+Give every actor you intend to track a nonzero TID at spawn time; actors with
+TID `0` cannot be re-resolved this way. The same recipe applies to
+`map_unload`/`map_load` transitions, where handles are also invalidated.
 
 ### Reload behavior
 
@@ -1738,6 +2569,9 @@ removal. `py_tick_budget_ms=0` disables budget enforcement and warnings.
 `bd.profile()` returns per-callback/task call counts, total/max microseconds,
 budget skips/overruns, failure/disable state, and current budget settings.
 `bd.reset_profile()` clears measurements but does not re-enable callbacks.
+See the
+[Python performance guide](../development/python-performance.md) for the
+crossing cost model, profiling walkthrough, and batching recipes.
 
 ### Synchronous task scheduling
 
@@ -1760,7 +2594,7 @@ def on_tick(event):
 
 Guidelines:
 
-- Do not scan `bd.actors(limit=100000)` every tic.
+- Do not scan `bd.actor_refs(limit=1000000)` every tic.
 - Filter by class or TID and cache only stable IDs.
 - Move rare work to map/spawn/death callbacks.
 - Break long work across tics with explicit state.
@@ -1771,8 +2605,9 @@ Guidelines:
 ### Multiplayer and demos
 
 API version 2 does not define a deterministic Python networking protocol.
-All live-handle gameplay mutation and these legacy functions reject calls
-while `netgame`, `multiplayer`, demo playback, or demo recording is active:
+While `netgame`, `multiplayer`, demo playback, or demo recording is active,
+the session is *read-only* for world state. All live-handle gameplay
+mutation and these legacy functions reject calls with `RuntimeError`:
 
 - `spawn_actor`
 - `damage_actor`
@@ -1782,7 +2617,28 @@ while `netgame`, `multiplayer`, demo playback, or demo recording is active:
 - `execute`
 - `execute_acs`
 
-Queries, logging, and VFS reads can still run. Do not use Python to implement
+The same applies to `spawn`, `execute_special`, `radius_damage`,
+`apply_actor_batch`, `spawn_missile`, `line_attack`, `exit_level`,
+`change_level`, `set_timescale`, `save_checkpoint`, and `load_checkpoint`.
+Each blocked call also emits a deduplicated yellow
+`SCRIPT WARNING: mutation blocked during multiplayer/demo session` line,
+which is not counted as a `-scripttest` error.
+
+Observer mode: queries, logging, VFS reads — and purely local
+presentation — keep working. `center_message`, `set_music`, `hud_text`,
+`hud_clear`, `screen_flash`, `screen_fade`, `play_ui_sound`, and the
+`bd.draw_*` display list only affect the local console player's screen and
+audio, so they are allowed whenever a level is active, even in multiplayer
+and demo sessions. Use `bd.session_read_only()` to tell the modes apart:
+
+```python
+if bd.session_read_only():
+    bd.hud_text("observer", id=99)   # local presentation: fine in-level
+else:
+    bd.spawn("DoomImp", x, y, z)     # world mutation: solo sessions only
+```
+
+Do not use Python to implement
 multiplayer-authoritative gameplay in this API version.
 
 ## Console And Configuration Reference
@@ -1813,6 +2669,7 @@ Python-bearing PK3 will then execute it unless `-nopython` is supplied.
 |---------|---------|
 | `py_status` | Show compiled/active/requested state, manifests, modules, and callback count. |
 | `py_reload` | Rebuild the interpreter and scripts while preserving JSON-compatible state. |
+| `pyui <name>` | Dispatch a `ui_command` event to Python scripts (for console aliases and key binds). |
 
 `py_reload` is an unsafe console command under the engine's normal command
 security classification.

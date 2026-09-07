@@ -1,0 +1,8 @@
+# One UTF-8 VFS path per line. Paths are resolved inside this PK3 only.
+# Modules execute in manifest order; each sibling self-registers a stable
+# sys.modules alias so later entries can reach it with a plain `import`
+# (the same sibling-import mechanics hello_world gets via bd.import_script).
+pyscripts/content.py
+pyscripts/systems.py
+pyscripts/ui.py
+pyscripts/main.py

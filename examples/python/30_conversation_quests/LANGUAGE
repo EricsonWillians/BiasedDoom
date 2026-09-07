@@ -1,0 +1,7 @@
+[enu default]
+
+// Text for the DIALOG01 reply's `log = "LOG77"` entry. player_t::SetLogNumber
+// resolves LOG<n> to $TXT_LOGTEXT<n>; the player's log then stores the label
+// (so language switches re-translate it), which is what bd.player_log()
+// returns.
+TXT_LOGTEXT77 = "You knelt in the candle-dark and told the Confessor what you did. He wrote it down. He writes everything down.";
