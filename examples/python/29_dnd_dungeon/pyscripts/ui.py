@@ -1,10 +1,13 @@
 """The Sunken Crypt — bd_horror-themed ImGui interface.
 
 The character sheet is rendered as a *reliquary*: a near-black ossuary
-window over dried-blood accents, in three sections — "Vessel" (the
-ability scores as key/value reliquary plates), "Vitality" (blood and
-ember bars for HP and XP, plus the party's resolve and the crypt's
-dread), and "Omens" (the roll log as colored portents: sickly green for
+window over dried-blood accents, in four sections — "Vessel" (the
+ability scores as key/value reliquary plates, with the modifier rule
+spelled out under them), "Vocation" (the bound class when one exists:
+hit die, save proficiencies, class skills, and the level features with
+their descriptions), "Vitality" (blood and
+ember bars for HP and XP, plus the party's resource pools), and
+"Omens" (the roll log as colored portents: sickly green for
 successes, dried blood for failures, ember for criticals). The party
 sheet is styled the same way, with a selectable roster of the dead and
 the walking.
@@ -84,9 +87,9 @@ def _xp_overlay(character: "bd_dnd.Character") -> str:
 
 
 def _draw_reliquary_body(character: "bd_dnd.Character", epithet: str = "",
-                         horror: Any = None, show_omens: bool = True,
+                         show_omens: bool = True,
                          key_width: float = 130.0) -> None:
-    """Draw the three reliquary sections for one character.
+    """Draw the reliquary sections for one character.
 
     Only legal between ``imgui.begin`` and ``imgui.end`` with the horror
     theme applied. ``key_width`` narrows the key column for the party
@@ -105,6 +108,29 @@ def _draw_reliquary_body(character: "bd_dnd.Character", epithet: str = "",
         mod = character.abilities.mod(name)
         theme.kv_row(name.upper(), f"{score}  ({mod:+d})",
                      key_width=key_width)
+    theme.faded_text("Modifier = (score - 10) / 2, rounded down. A check "
+                     "rolls d20 + modifier (+2 when trained) against the DC.")
+
+    cls = getattr(character, "cls", None)
+    if cls is not None:
+        theme.section("Vocation")
+        theme.kv_row("Class", cls.name, key_width=key_width)
+        theme.kv_row("Hit Die", f"d{cls.hit_die}", key_width=key_width)
+        if cls.proficient_saves:
+            theme.kv_row("Saves",
+                         ", ".join(a.upper() for a in cls.proficient_saves),
+                         key_width=key_width)
+        if cls.class_skills:
+            theme.kv_row("Skills",
+                         ", ".join(s.replace("_", " ").title()
+                                   for s in cls.class_skills),
+                         key_width=key_width)
+        for level in sorted(cls.features):
+            for feature in cls.features[level]:
+                theme.kv_row(f"Lv{level}", str(feature["name"]),
+                             key_width=key_width)
+                if feature.get("description"):
+                    theme.faded_text(feature["description"])
 
     theme.section("Vitality")
     hp_frac = (character.hp / character.max_hp) if character.max_hp else 0.0
@@ -112,10 +138,6 @@ def _draw_reliquary_body(character: "bd_dnd.Character", epithet: str = "",
               tone="blood", pulse=hp_frac <= 0.25)
     theme.bar("Experience", _xp_fraction(character),
               overlay=_xp_overlay(character), tone="ember")
-    if horror is not None:
-        dread = horror.dread.level
-        theme.bar("Dread", dread / 100.0, overlay=f"{dread:.0f}%",
-                  tone="bruise", pulse=dread >= 75)
     for pool in sorted(character.resource_max):
         current = character.resources.get(pool, 0)
         theme.kv_row(pool.capitalize(),
@@ -147,11 +169,10 @@ class ReliquarySheet:
     """
 
     def __init__(self, character: "bd_dnd.Character", state: Any = None,
-                 title: str = "Reliquary", horror: Any = None) -> None:
+                 title: str = "Reliquary") -> None:
         self.character: "bd_dnd.Character" = character
         self.state: Any = state
         self.title: str = str(title)
-        self.horror: Any = horror
         self.visible: bool = True
 
     def toggle(self) -> bool:
@@ -172,8 +193,7 @@ class ReliquarySheet:
             try:
                 if expanded:
                     _draw_reliquary_body(self.character,
-                                         epithet=content.HERO_EPITHET,
-                                         horror=self.horror)
+                                         epithet=content.HERO_EPITHET)
             finally:
                 imgui.end()
         except Exception as exc:
@@ -261,7 +281,7 @@ class PartyReliquary:
             if active is not None:
                 _draw_reliquary_body(
                     active, epithet=self.EPITHETS.get(active.name, ""),
-                    horror=None, show_omens=False, key_width=96.0)
+                    show_omens=False, key_width=96.0)
         finally:
             imgui.end_table()
 

@@ -1,18 +1,31 @@
-"""The Sunken Crypt — a D&D dungeon crawl on Doom II MAP02.
+"""The Sunken Crypt — a D&D delve across the whole WAD.
 
-A grave-dark dungeon-crawl mini-scenario built on the engine-shipped
+A grave-dark dungeon-crawl rules layer built on the engine-shipped
 ``bd_dnd`` rules framework and the ``bd_horror`` presentation pack
-(theme / toasts / atmosphere). You are Morrow, a grave-hardened fighter;
-The Hollow Warden and its bound crypt hound descend with you.
+(theme / toasts / light programs — deliberately NOT the Dread meter,
+whose heartbeat loop and whisper stings were retired from this example).
+You are Morrow, a grave-hardened fighter; The Hollow Warden and its bound
+crypt hound descend with you.
+
+The rules ride every map of the game: kill XP from the full
+Doom/Heretic/Hexen bestiary, level-toughened blows (+damage per level
+through the ``actor_before_damage`` filter), light-ruled rests that mend
+the pawn as well as the sheet, an active Second Wind heal on Custom
+Action 3, a DEX reflex save that refunds half of incoming hits, and any
+locked door in the game bashable with Athletics (systems.DoorBashRules).
+MAP02 keeps the probed set pieces that make it the crypt proper: the
+line-111 red door (the bash's reference fixture), the entrance dart trap
+(sector 7, tag 13), and the candle/corpse-light programs on tags 13/7/12.
 
 Module map (all four are listed in the PYTHON manifest):
 
 - ``content.py``: pure data and factories: the delvers (Morrow, built
   by a driven ``CreationWizard`` bound to the Fighter class), the crypt's
-  probed map constants, light-program parameters, rest rules, prose.
-- ``systems.py`` — behavior: light-program arming, the dread-spiking
-  trap subclass, sanctuary/nightmare rests, level-up and death-knell
-  feedback, checkpoint quiescence.
+  probed map constants, progression tuning, rest rules, prose.
+- ``systems.py`` — behavior: light-program arming, the door-bash
+  dispatcher, level damage, Second Wind, sanctuary/nightmare rests, the
+  progression strip, level-up and death-knell feedback, checkpoint
+  quiescence.
 - ``ui.py`` — the bd_horror-themed ImGui reliquary (character sheet,
   party roster, toasts). Inert headless.
 - ``main.py`` (this file) — bootstrap, event wiring, and the autotest
@@ -21,30 +34,29 @@ Module map (all four are listed in the PYTHON manifest):
 Autotest: ``BD_EXAMPLE_AUTOTEST=1`` drives the rules engine headlessly
 and deterministically: dice math and determinism, the classes layer
 (wizard validation, the wizard-built Fighter sheet reproducing Morrow's
-stats, the Grave-Hardened resolve grant, ASI queueing at level 4), the
-modifier and proficiency tables, scripted-roller checks for success/failure/crit
-branches, XP thresholds and level-up effects, rests and resources, kill
-XP with exact player credit (the monsters are killed through the player
-pawn; synthetic-event cases prove monster/environmental kills do not
-count), a DamageSaveRule refunding half of a scripted hit (plus
-cooldown and natural-20 negation branches), a two-member Party with
-shared and solo XP awards, a Companion binding the Hollow Warden to a
-friendly crypt hound in the world (spawn flags, damage sync both ways,
-teleport catch-up, death/revive with a fresh TID), the *real* door-bash
-path on line 111 (an unreachable DC first, then a trivial one),
-controlled trap springs (full vs. halved damage) that also spike the
-dread meter, the sanctuary/nightmare rest branches under forced light
-levels, then a checkpoint round-trip asserting the script RNG stream,
-the whole CharacterState, the PartyState (companions included), the
-``toggle_sheet`` console alias, and the synthetic Custom Action presses
-(sheet toggle round-trip, then a controlled sanctuary rest through
-Custom Action 2 with the outcome read back). Because the candle/fluorescent light
-programs draw from the script RNG on every step and their post-load
-task phase cannot reproduce the saved stream position (probe-verified),
-the autotest quiesces them just before the save and re-arms them after
-the stream assertion; the interactive path lets them ride HorrorState
-persistence normally. The run ends via ``-scripttest``'s own PASS/FAIL
-accounting (no explicit quit).
+stats, the Grave-Hardened resolve grant and Second Wind charge, ASI
+queueing at level 4), the modifier and proficiency tables,
+scripted-roller checks for success/failure/crit branches, XP thresholds
+and level-up effects, rests and resources, kill XP with exact player
+credit (the monsters are killed through the player pawn; synthetic-event
+cases prove monster/environmental kills do not count), the extended
+bestiary XP table, level-toughened blows (synthetic before-damage
+events), the *real* door-bash path on line 111 (an unreachable DC first,
+then a trivial one) plus the generic bash dispatcher (per-line check
+creation, refusal memory), controlled trap springs (full vs. halved
+damage), the sanctuary/nightmare rest branches under forced light levels
+(healing asserted on sheet and pawn alike), a Second Wind press through
+Custom Action 3, then a checkpoint round-trip asserting the script RNG
+stream, the whole CharacterState, the PartyState (companions included),
+the ``toggle_sheet`` console alias, and the synthetic Custom Action
+presses (sheet toggle round-trip, then a controlled sanctuary rest
+through Custom Action 2 with the outcome read back). Because the
+candle/fluorescent light programs draw from the script RNG on every step
+and their post-load task phase cannot reproduce the saved stream position
+(probe-verified), the autotest quiesces them just before the save and
+re-arms them after the stream assertion; the interactive path lets them
+ride HorrorState persistence normally. The run ends via ``-scripttest``'s
+own PASS/FAIL accounting (no explicit quit).
 
 ``BD_EXAMPLE_SCREENSHOT=1`` schedules a screenshot a few seconds in, for
 documentation captures.
@@ -87,13 +99,15 @@ character = content.make_hero_via_wizard()
 state = bd_dnd.CharacterState(character)
 horror = bd_horror.HorrorState()
 sheet = ui.ReliquarySheet(
-    character, state, horror=horror,
+    character, state,
     title=f"{content.HERO_NAME} {content.HERO_EPITHET} - Fighter 1")
 
-door_check = None       # LockedDoorCheck on the sealed red door
-entrance_trap = None    # interactive-only DreadTrapZone in the entrance
+door_bash = None        # DoorBashRules dispatcher: any locked door, any map
+door_check = None       # the MAP02 line-111 check (autotest pre-registers it)
+entrance_trap = None    # interactive-only TrapZone in the entrance (MAP02)
 dialogue_gate = None    # DialogueSkillGate demo (unit-tested headlessly)
-fireball_save = None    # interactive-only DamageSaveRule demo
+reflex_save = None      # interactive-only DamageSaveRule (any hit, DEX)
+level_damage_handler = None  # wire_level_damage's actor_before_damage hook
 party = None            # the hero plus the Hollow Warden
 party_state = None      # PartyState persistence for the party
 companion = None        # the Warden's bound crypt hound in the world
@@ -101,6 +115,7 @@ companion_died_log = [] # on_companion_died member names, in order
 
 autowarp_done = False
 sheet_drawn_ok = False
+strip_armed = False     # the progression strip's repeating refresh task
 door_drive_until = -1   # pre_tick +use pulses while level_time < this
 rng_pair = None         # (a1, a2) drawn after the checkpoint save
 expected_snapshot = None  # character.serialize() captured before reload
@@ -143,6 +158,10 @@ action_log = []
 #: `crypt_rest` alias) ran; the autotest reads it back.
 last_rest_outcome = None
 
+#: The outcome dict of the last Second Wind (Custom Action 3 or the
+#: `second_wind` alias); the autotest reads it back.
+last_wind_outcome = None
+
 
 def ensure_custom_action_binding(n, default_key):
     """Bind ``default_key`` to ``+pyactionN`` when the player has not.
@@ -164,23 +183,26 @@ def ensure_custom_action_binding(n, default_key):
 
 @bd.on("engine_start")
 def setup_dungeon(event):
-    global door_check, entrance_trap, dialogue_gate, fireball_save
+    global door_bash, entrance_trap, dialogue_gate, reflex_save
+    global level_damage_handler
     bd.imgui.set_master_visible(True)
     bd.log(f"bd_dnd shipped from: {bd_dnd.__file__}")
     bd.log(f"bd_horror shipped from: {bd_horror.theme.__file__}")
 
     state.arm_persistence()
-    horror.arm_persistence()
+    horror.arm_persistence()  # light programs only; dread never starts
 
-    # Morrow's resolve pool is class-granted: the level-1 Grave-Hardened
-    # feature seeds it when the CreationWizard binds the Fighter.
+    # Morrow's resolve and second_wind pools are class-granted: the level-1
+    # Grave-Hardened and Second Wind features seed them when the
+    # CreationWizard binds the Fighter.
 
-    # Bash the sealed door with Athletics instead of finding the red key.
-    # key_class="RedCard": the engine checks the lock *inside* the door
-    # special, so the check lends the key for one native activation.
-    door_check = bd_dnd.LockedDoorCheck(
-        content.DOOR_LINE, character, mode="str", dc=content.DOOR_DC,
-        key_class=content.DOOR_KEY_CLASS)
+    # Bash any locked door in the game with Athletics: the dispatcher
+    # lazily builds a card-lending check per locked line the player uses.
+    door_bash = systems.DoorBashRules(character, dc=content.DOOR_DC)
+
+    # Levels toughen the blows: +1 damage per level past the first (capped)
+    # on every monster the local player hits.
+    level_damage_handler = systems.wire_level_damage(character)
 
     # A gate demo: MAP02 has no Strife NPCs, so this never fires
     # interactively; the autotest exercises it with a synthetic event.
@@ -190,23 +212,27 @@ def setup_dungeon(event):
         on_fail=lambda c, r: bd.center_message("They see through you."))
 
     if not AUTOTEST:
-        # Dart trap in the entrance chamber; sector_entered fires for the
-        # spawn sector at t=0, so it greets the player immediately and
-        # then respects its cooldown on re-entry. Every spring spikes the
-        # dread meter — the crypt notices pain.
-        entrance_trap = systems.DreadTrapZone(
+        # Dart trap in the entrance chamber, a MAP02 set piece: created
+        # disarmed so no other map's tag 13 can spring it; on_map arms it
+        # on the crypt map and disarms it elsewhere. sector_entered fires
+        # for the spawn sector at t=0, so it greets the player immediately
+        # and then respects its cooldown on re-entry.
+        entrance_trap = bd_dnd.TrapZone(
             content.TRAP_TAG, character, dc=content.TRAP_DC,
             damage=content.TRAP_DAMAGE, once=False,
-            cooldown_tics=content.TRAP_COOLDOWN_TICS, dread=horror.dread)
-        # DEX save vs. incoming damage, refunding half on a success.
-        # DoomImpBall declares no DamageType (verified in
+            cooldown_tics=content.TRAP_COOLDOWN_TICS)
+        entrance_trap.disarm()
+        # Reflexes: a DEX save vs. any incoming damage refunds half on a
+        # success (the framework center-messages the dodge). Works on
+        # every map: fireballs, floors, and fists alike. DoomImpBall
+        # declares no DamageType (verified in
         # wadsrc/static/zscript/actors/doom/doomimp.zs), so imp fireballs
         # report damage_type "None" — damage_type=None (no filter) is
         # what catches them here; a real mod would filter, e.g.
         # damage_type="Fire" for explicitly fire-typed mod damage.
-        fireball_save = bd_dnd.DamageSaveRule(
-            character, dc=12, ability="dex", damage_type=None,
-            cooldown_tics=17)
+        reflex_save = bd_dnd.DamageSaveRule(
+            character, dc=content.SAVE_DC, ability="dex", damage_type=None,
+            cooldown_tics=content.SAVE_COOLDOWN_TICS)
 
     # Exact kill credit: only kills by the local player (player_index=0)
     # award XP — missile kills credit the shooter; monster infighting,
@@ -215,14 +241,16 @@ def setup_dungeon(event):
     bd_dnd.track_xp_from_kills(character, player_index=0)
 
     # Console aliases through the pyui/ui_command bridge: `toggle_sheet`
-    # flips the reliquary, `crypt_rest` attempts a sanctuary rest. The
-    # keys live on Custom Actions 1 (sheet) and 2 (rest), auto-bound
-    # below and rebindable in Options -> Customize Controls, Custom
-    # Actions.
+    # flips the reliquary, `crypt_rest` attempts a sanctuary rest,
+    # `second_wind` spends the heal charge. The keys live on Custom
+    # Actions 1 (sheet), 2 (rest), and 3 (second wind), auto-bound below
+    # and rebindable in Options -> Customize Controls, Custom Actions.
     bind_sheet_toggle(sheet)
     bd.execute('alias crypt_rest "pyui crypt_rest"')
+    bd.execute('alias second_wind "pyui second_wind"')
     ensure_custom_action_binding(1, "q")
     ensure_custom_action_binding(2, "v")
+    ensure_custom_action_binding(3, "c")
 
     systems.wire_level_up(character)
     ui.ctx.update(sheet=sheet, sheet_drawn_ok=False)
@@ -230,16 +258,33 @@ def setup_dungeon(event):
 
 @bd.on("map_load")
 def on_map(event):
+    global strip_armed
     pawn = player_pawn()
     if pawn is None:
         return
+    # The persistent progression strip: one repeating task for the whole
+    # session (map_local=False, it redraws the same display-list id).
+    if not strip_armed:
+        strip_armed = True
+        try:
+            bd.schedule(lambda: systems.refresh_progress_strip(character),
+                        delay=content.HUD_REFRESH_TICS,
+                        repeat=content.HUD_REFRESH_TICS, map_local=False)
+        except Exception as exc:
+            bd.warn(f"sunken crypt: could not arm the progress strip: "
+                    f"{exc!r}")
+
     if event.get("from_savegame"):
         # The checkpoint restored the world and the bd_dnd/bd_horror load
-        # handlers restored character, party, and horror state; only
-        # post-load test steps remain. The autotest deliberately does NOT
-        # re-arm the RNG-drawing light programs here — their task phase
-        # would desync the exact-stream assertion; autotest_post_load
-        # re-arms them after it.
+        # handlers restored character, party, and light-program state. Off
+        # the crypt map no programs may bind, so drop them instead.
+        if not systems.is_crypt_map():
+            horror.lights.clear()
+        if entrance_trap is not None:
+            entrance_trap.armed = systems.is_crypt_map()
+        # The autotest deliberately does NOT re-arm the RNG-drawing light
+        # programs here — their task phase would desync the exact-stream
+        # assertion; autotest_post_load re-arms them after it.
         if AUTOTEST:
             bd.schedule(autotest_post_load, delay=10)
             bd.schedule(autotest_sheet_toggle_off, delay=20)
@@ -252,25 +297,29 @@ def on_map(event):
             bd.schedule(autotest_custom_action_rest_press, delay=105)
             bd.schedule(autotest_custom_action_rest_assert, delay=118)
             bd.schedule(autotest_custom_action_rest_release, delay=130)
-        else:
-            horror.start()
         return
 
-    # Torch and darkness: candles in the entrance chamber and the drowned
-    # passage, a corpse-light in the flooded hall.
-    horror.start()
-    systems.arm_crypt_lights(horror)
-    if not AUTOTEST:
+    # The probed set pieces (candle/corpse-light programs, the entrance
+    # dart trap, the fixture monsters) live on the crypt map alone; the
+    # generic rules layer runs everywhere.
+    on_crypt = systems.is_crypt_map()
+    horror.lights.clear()  # drop any stale programs before (re)arming
+    if on_crypt:
+        systems.arm_crypt_lights(horror)
+    if entrance_trap is not None:
+        entrance_trap.armed = on_crypt
+    if not AUTOTEST and on_crypt:
         toasts.toast(content.TOAST_INTRO, kind="omen")
 
-    # Worth XP: 25 + 25 + 50 = 100.
-    for class_name, tid, side in content.MONSTER_SPAWNS:
-        try:
-            bd.spawn(class_name, content.START_POS[0] + side,
-                     content.AWAY_POS[1], content.START_POS[2],
-                     angle=90.0, tid=tid, force=True)
-        except Exception as exc:
-            bd.warn(f"sunken crypt spawn {class_name} failed: {exc!r}")
+    if on_crypt:
+        # Worth XP: 25 + 25 + 50 = 100.
+        for class_name, tid, side in content.MONSTER_SPAWNS:
+            try:
+                bd.spawn(class_name, content.START_POS[0] + side,
+                         content.AWAY_POS[1], content.START_POS[2],
+                         angle=90.0, tid=tid, force=True)
+            except Exception as exc:
+                bd.warn(f"sunken crypt spawn {class_name} failed: {exc!r}")
 
     if not AUTOTEST:
         ensure_interactive_party()
@@ -286,6 +335,8 @@ def on_map(event):
         bd.schedule(autotest_kill_xp, delay=60)
         bd.schedule(autotest_exact_credit, delay=65)
         bd.schedule(autotest_xp_levelup, delay=70)
+        bd.schedule(autotest_door_generic, delay=77)
+        bd.schedule(autotest_level_damage, delay=78)
         bd.schedule(autotest_door_holds, delay=80)
         bd.schedule(autotest_door_bash, delay=130)
         bd.schedule(autotest_door_asserts, delay=170)
@@ -307,8 +358,10 @@ def on_map(event):
         bd.schedule(autotest_companion_revive_check, delay=375)
         bd.schedule(autotest_nightmare, delay=378)
         bd.schedule(autotest_fitful_and_sanctuary, delay=381)
-        bd.schedule(autotest_pre_save, delay=383)
-        bd.schedule(autotest_save, delay=385)
+        bd.schedule(autotest_second_wind_press, delay=382)
+        bd.schedule(autotest_second_wind_asserts, delay=384)
+        bd.schedule(autotest_pre_save, delay=386)
+        bd.schedule(autotest_save, delay=388)
         bd.schedule(autotest_rng_draws, delay=400)
         bd.schedule(autotest_load, delay=415)
     if SCREENSHOT:
@@ -354,9 +407,28 @@ def _run_crypt_rest():
     return outcome
 
 
+def _run_second_wind():
+    """The second_wind body shared by the console alias and Custom Action
+    3. Records the outcome dict so the autotest can read it back."""
+    global last_wind_outcome
+    outcome = systems.use_second_wind(character)
+    last_wind_outcome = outcome
+    if outcome.get("ok"):
+        bd.center_message(
+            f"Second wind! +{outcome['amount']} ({outcome['healed_pawn']} "
+            f"to the body)")
+    return outcome
+
+
 @bd.on("ui_command")
 def on_ui_command(event):
-    if event.get("command") != "crypt_rest":
+    command = event.get("command")
+    if command == "second_wind":
+        if AUTOTEST:
+            return  # the autotest drives the Custom Action 3 path
+        _run_second_wind()
+        return
+    if command != "crypt_rest":
         return
     if AUTOTEST:
         return  # the scripted rest assertions drive try_long_rest directly
@@ -365,8 +437,9 @@ def on_ui_command(event):
 
 @bd.on("custom_action")
 def on_custom_action(event):
-    """Action 1 toggles the reliquary, action 2 attempts a rest; both run
-    the same bodies as the `toggle_sheet` / `crypt_rest` aliases."""
+    """Action 1 toggles the reliquary, action 2 attempts a rest, action 3
+    spends the Second Wind; all run the same bodies as the
+    `toggle_sheet` / `crypt_rest` / `second_wind` aliases."""
     try:
         action = int(event.get("action") or 0)
         pressed = bool(event.get("pressed"))
@@ -377,6 +450,8 @@ def on_custom_action(event):
             sheet.toggle()
         elif action == 2:
             _run_crypt_rest()
+        elif action == 3:
+            _run_second_wind()
     except Exception as exc:
         bd.warn(f"sunken crypt: custom action failed: {exc!r}")
 
@@ -489,6 +564,11 @@ def autotest_class_creation():
                    and character.resources.get(content.NIGHTMARE_RESOURCE)
                    == content.NIGHTMARE_RESOURCE_CHARGES,
                    "the Grave-Hardened feature granted the resolve charges")
+    bd.assert_true(character.resource_max.get(content.SECOND_WIND_RESOURCE)
+                   == content.SECOND_WIND_CHARGES
+                   and character.resources.get(content.SECOND_WIND_RESOURCE)
+                   == content.SECOND_WIND_CHARGES,
+                   "the Second Wind feature granted its charge")
     # XP to level 4 queues a pending ASI entry (two points, unspent).
     unit = content.make_hero_via_wizard()
     unit.award_xp(2700)  # 300/900/2700 thresholds: exactly level 4
@@ -679,6 +759,101 @@ def autotest_exact_credit():
                     "actor_ref": None, "attacker_player_index": None})
     bd.assert_true(legacy.xp == 25,
                    "player_index=None restores any-death crediting")
+    # The shipped table covers the full Doom II roster plus the common
+    # Heretic/Hexen bestiary, so kills pay out on every map of any game.
+    table = {k.lower(): v for k, v in bd_dnd.DEFAULT_XP_TABLE.items()}
+    for class_name in ("revenant", "mancubus", "arachnotron",
+                       "painelemental", "archvile", "lostsoul",
+                       "chaingunguy", "spectre", "spidermastermind",
+                       "cyberdemon", "hereticimp", "wizard", "beast",
+                       "ironlich", "minotaur", "sorcerer1", "ettin",
+                       "firedemon", "centaur", "serpent", "bishop",
+                       "wraith", "heresiarch", "korax"):
+        bd.assert_true(table.get(class_name, 0) > 0,
+                       f"the XP table covers {class_name}")
+
+
+def autotest_door_generic():
+    """The bash dispatcher covers any locked line, not just the MAP02 door.
+
+    Synthetic events drive the dispatcher directly (same style as the
+    DialogueSkillGate test): a failed roll creates the per-line check and
+    leaves it armed; a passed roll whose activation is refused (the line
+    cannot resolve) retires the line into the unbashable memory.
+    """
+    pawn = player_pawn()
+    bd.assert_true(pawn is not None and door_bash is not None,
+                   "door generic: fixtures available")
+    if pawn is None or door_bash is None:
+        return
+    result = door_bash._dispatch({"reason": "locked", "line_index": 5,
+                                  "actor_ref": pawn},
+                                 rng=_Roller([1]))  # 1+3+2 = 6 < DC 15
+    check = door_bash.checks.get(("MAP02", 5))
+    bd.assert_true(result is not None and not result["success"],
+                   "the dispatcher rolled the lazily-created check")
+    bd.assert_true(check is not None and check.attempts == 1
+                   and not check.opened
+                   and ("MAP02", 5) not in door_bash.unbashable,
+                   "a failed bash stays armed for retries")
+    result = door_bash._dispatch({"reason": "locked", "line_index": 99999,
+                                  "actor_ref": pawn},
+                                 rng=_Roller([20]))  # 20+3+2 >= DC 15
+    bd.assert_true(result is not None and result["success"],
+                   "the second dispatch passed the roll")
+    bd.assert_true(("MAP02", 99999) in door_bash.unbashable,
+                   "a refused activation retires the line (no spam)")
+    before = door_bash.checks[("MAP02", 99999)].attempts
+    bd.assert_true(door_bash._dispatch({"reason": "locked",
+                                        "line_index": 99999,
+                                        "actor_ref": pawn}) is None
+                   and door_bash.checks[("MAP02", 99999)].attempts == before,
+                   "a retired line never rolls again")
+    bd.assert_true(door_bash._dispatch({"reason": "unknown_special",
+                                        "line_index": 7,
+                                        "actor_ref": pawn}) is None
+                   and ("MAP02", 7) not in door_bash.checks,
+                   "non-locked failures never create checks")
+
+
+def autotest_level_damage():
+    """Level-toughened blows: +1 per level past the first, monsters only.
+
+    The character is level 2 here (autotest_xp_levelup ran), so the bonus
+    is exactly +1. Synthetic before-damage events, same style as the
+    exact-credit test."""
+    pawn = player_pawn()
+    bd.assert_true(pawn is not None and level_damage_handler is not None,
+                   "level damage: fixtures available")
+    if pawn is None or level_damage_handler is None:
+        return
+    bd.assert_true(systems.level_damage_bonus(character) == 1,
+                   "level 2 grants +1 damage")
+    target = None
+    try:
+        target = bd.spawn("ZombieMan", *content.AWAY_POS, force=True)
+    except Exception as exc:
+        bd.warn(f"sunken crypt: level-damage target spawn failed: {exc!r}")
+    if target is not None:
+        event = {"actor_ref": target, "attacker_player_index": 0,
+                 "damage": 10}
+        level_damage_handler(event)
+        bd.assert_true(event["damage"] == 11,
+                       "a player hit on a monster gains the level bonus")
+        event = {"actor_ref": target, "attacker_player_index": None,
+                 "damage": 10}
+        level_damage_handler(event)
+        bd.assert_true(event["damage"] == 10,
+                       "a source-less hit is untouched")
+    event = {"actor_ref": pawn, "attacker_player_index": 0, "damage": 10}
+    level_damage_handler(event)
+    bd.assert_true(event["damage"] == 10,
+                   "hits on the player pawn are untouched")
+    if target is not None:
+        try:
+            target.destroy()
+        except Exception:
+            pass
 
 
 def autotest_xp_levelup():
@@ -697,11 +872,16 @@ def autotest_xp_levelup():
 
 def autotest_door_holds():
     """Phase A: an unreachable DC 30 bash always fails; door stays shut."""
-    global door_drive_until
+    global door_check, door_drive_until
     pawn = player_pawn()
     bd.assert_true(pawn is not None, "player pawn available")
     if pawn is None:
         return
+    # Pre-register the reference fixture through the dispatcher (the same
+    # object interactive play would create lazily on the first use).
+    door_check = door_bash.bashable_door(content.DOOR_LINE)
+    bd.assert_true(door_check is not None,
+                   "the line-111 bash check registered")
     door_check.dc = 30  # best possible total is 20+3+2 = 25
     pawn.set_position(*content.DOOR_APPROACH)
     pawn.angle = content.DOOR_FACE_ANGLE
@@ -752,9 +932,9 @@ def autotest_trap_fail_arm():
     if pawn is None:
         return
     # max dex save total: 20 + 1 = 21 < 30 -> always fails
-    autotest_trap_fail_arm.trap = systems.DreadTrapZone(
+    autotest_trap_fail_arm.trap = bd_dnd.TrapZone(
         content.TRAP_TAG, character, dc=30, damage="2d6",
-        save_ability="dex", once=True, dread=horror.dread)
+        save_ability="dex", once=True)
     pawn.damage_factor = 1.0  # traps must really hurt
     pawn.set_position(*content.AWAY_POS, check=False)
 
@@ -790,13 +970,6 @@ def autotest_trap_fail_asserts():
             "full trap damage landed on the actor")
     bd.assert_true(character.hp == character.max_hp,
                    "trap damage does not touch the RPG hp pool")
-    # The sprung trap spiked the dread meter.
-    bd.assert_true(len(systems.trap_dread_log) == 1
-                   and systems.trap_dread_log[-1]["amount"]
-                   == content.TRAP_DREAD_SPIKE,
-                   "trap spring spiked dread by +10")
-    bd.assert_true(horror.dread.level >= content.TRAP_DREAD_SPIKE,
-                   "dread meter reflects the trap spike")
 
 
 def autotest_trap_save_arm():
@@ -805,9 +978,9 @@ def autotest_trap_save_arm():
     if pawn is None:
         return
     # min dex save total: 1 + 1 = 2 >= 1 -> always saves
-    autotest_trap_save_arm.trap = systems.DreadTrapZone(
+    autotest_trap_save_arm.trap = bd_dnd.TrapZone(
         content.TRAP_TAG, character, dc=1, damage="2d6",
-        save_ability="dex", once=True, dread=horror.dread)
+        save_ability="dex", once=True)
     pawn.set_position(*content.AWAY_POS, check=False)
 
 
@@ -837,8 +1010,6 @@ def autotest_trap_save_asserts():
         bd.assert_true(
             pawn.health == autotest_trap_save_arm.health_before - expected,
             "halved trap damage landed on the actor")
-    bd.assert_true(len(systems.trap_dread_log) == 2,
-                   "both trap springs spiked the dread meter")
     pawn.damage_factor = 0.0  # test driver is invulnerable again
     # LockedDoorCheck event filtering, with synthetic events: wrong
     # reason / wrong line / non-player actor are all ignored.
@@ -1130,7 +1301,7 @@ def autotest_nightmare():
 
 def autotest_fitful_and_sanctuary():
     """Nightmare success grants half benefit; sanctuary light (>= 160)
-    grants the full long rest."""
+    grants the full long rest — on the sheet AND on the pawn."""
     pawn = player_pawn()
     bd.assert_true(pawn is not None, "sanctuary: pawn available")
     if pawn is None:
@@ -1138,11 +1309,20 @@ def autotest_fitful_and_sanctuary():
     sector = bd.sector_at(pawn.x, pawn.y)
     bd.assert_true(int(sector.light) < content.SANCTUARY_LIGHT,
                    "still in darkness for the fitful branch")
+    pawn.damage_factor = 1.0
+    health_before = pawn.health
+    pawn.damage(20)  # a real wound for the fitful/sanctuary heal asserts
+    pawn.damage_factor = 0.0
+    pawn_wound = health_before - pawn.health
+    bd.assert_true(pawn_wound > 0, "the pawn carries a real wound")
     # Scripted roller: 15 + 1 = 16 >= DC 12 -> the sleeper wakes.
     outcome = systems.try_long_rest(character, rng=_Roller([15]))
     bd.assert_true(outcome["kind"] == "fitful" and outcome["healed"] == 5
                    and character.hp == 15,
                    "fitful branch: half the missing HP, no resources")
+    bd.assert_true(outcome.get("pawn_healed", 0) > 0
+                   and pawn.health > health_before - pawn_wound,
+                   "a fitful rest mends the pawn too (half the missing)")
     bd.assert_true(character.resources[content.NIGHTMARE_RESOURCE] == 0,
                    "a survived nightmare does not restore resources")
     bd.assert_true(any(t["kind"] == "info"
@@ -1150,6 +1330,7 @@ def autotest_fitful_and_sanctuary():
                        for t in toasts.history),
                    "fitful rest raised its toast")
     # Sanctuary: force the light high and the full long rest lands.
+    pawn_wounded_health = pawn.health
     sector.light = 200
     outcome = systems.try_long_rest(character)
     bd.assert_true(outcome["kind"] == "sanctuary"
@@ -1157,20 +1338,78 @@ def autotest_fitful_and_sanctuary():
                    and character.resources[content.NIGHTMARE_RESOURCE]
                    == content.NIGHTMARE_RESOURCE_CHARGES,
                    "sanctuary branch: full heal and resources restored")
+    bd.assert_true(outcome.get("pawn_healed", 0) > 0
+                   and pawn.health > pawn_wounded_health,
+                   "a sanctuary rest heals the pawn to full")
+    bd.assert_true(character.resources[content.SECOND_WIND_RESOURCE]
+                   == content.SECOND_WIND_CHARGES,
+                   "the rest refilled the second wind charge")
     bd.assert_true(any(t["kind"] == "quest"
                        and t["text"] == content.TOAST_SANCTUARY
                        for t in toasts.history),
                    "sanctuary rest raised its toast")
 
 
-def autotest_pre_save():
-    """Quiesce the RNG-drawing horror systems before the checkpoint.
+def autotest_second_wind_press():
+    """Synthetic Custom Action 3 press: the active heal, body and sheet."""
+    pawn = player_pawn()
+    bd.assert_true(pawn is not None, "second wind: pawn available")
+    if pawn is None:
+        return
+    # The sanctuary rest just refilled the charge and healed everything;
+    # wound both pools so the heal has room to land. The wound must come
+    # from the real damage path: a direct `pawn.health = ...` write only
+    # touches mo->health and desyncs player->health, which the native
+    # P_GiveBody heal keys on (probe-verified).
+    character.set_hp(10)
+    pawn.damage_factor = 1.0
+    pawn.damage(40)
+    pawn.damage_factor = 0.0
+    autotest_second_wind_press.wounded_health = pawn.health
+    bd.assert_true(pawn.health < 100, "the pawn carries the wound")
+    bd.set_custom_action(3, True)
 
-    See systems.quiesce_horror: light programs re-anchor their task phase
+
+def autotest_second_wind_asserts():
+    pawn = player_pawn()
+    bd.assert_true((3, True) in action_log,
+                   "the second wind press fired {'action': 3, pressed: True}")
+    outcome = last_wind_outcome or {}
+    bd.assert_true(outcome.get("ok"), "the second wind spent its charge")
+    amount = outcome.get("amount", 0)
+    bd.assert_true(3 <= amount <= 12,
+                   "the heal rolled d10 + level 2 (3..12)")
+    bd.assert_true(character.hp == min(character.max_hp, 10 + amount),
+                   "the sheet's Blood pool healed by the roll (clamped)")
+    wounded = getattr(autotest_second_wind_press, "wounded_health", None)
+    if pawn is not None and wounded is not None:
+        bd.assert_true(pawn.health == wounded + amount,
+                       f"the pawn healed by the same roll "
+                       f"(wounded={wounded}, health={pawn.health}, "
+                       f"amount={amount})")
+        bd.assert_true(outcome.get("healed_pawn") == amount,
+                       "the outcome reports the pawn-side heal")
+    bd.assert_true(character.resources.get(content.SECOND_WIND_RESOURCE) == 0,
+                   "the charge is spent until the next rest")
+    labels = [entry["label"] for entry in character.roll_log]
+    bd.assert_true(any("second wind" in label for label in labels),
+                   "the heal shows up in the Omens roll log")
+    # Exhausted: a second press refuses politely.
+    bd.set_custom_action(3, False)
+    _run_second_wind()
+    bd.assert_true(last_wind_outcome is not None
+                   and not last_wind_outcome.get("ok"),
+                   "an empty second wind refuses")
+
+
+def autotest_pre_save():
+    """Quiesce the RNG-drawing light programs before the checkpoint.
+
+    See systems.quiesce_lights: light programs re-anchor their task phase
     at load time, which would desync the exact script-RNG stream the
     round-trip asserts. Stopped here, re-armed in autotest_post_load.
     """
-    systems.quiesce_horror(horror)
+    systems.quiesce_lights(horror)
     bd.assert_true(not horror.lights.programs,
                    "light programs quiesced before the checkpoint")
 
@@ -1296,7 +1535,7 @@ def autotest_post_load():
                        "character sheet drew inside imgui_frame")
     # Torch-and-darkness resurrection: with the RNG stream proven, re-arm
     # the crypt's lights and verify they bind again.
-    horror.start()
+    horror.lights.clear()
     systems.arm_crypt_lights(horror)
     report = systems.crypt_light_report(horror)
     bd.assert_true(report["candle"] and report["fluorescent"],
@@ -1395,7 +1634,7 @@ def autotest_custom_action_rest_release():
 
 def screenshot_flavor():
     # Populate the roll log so the reliquary's Omens show their colors,
-    # wound the blood bar, stir the dread meter, and greet with a toast.
+    # wound the blood bar, and refresh the progression strip.
     character.skill_check("athletics", 15)          # the door bash
     character.saving_throw("dex", 13)               # the dart trap
     character.skill_check("perception", 12)
@@ -1404,7 +1643,7 @@ def screenshot_flavor():
     character.skill_check("athletics", 28)          # a likely failure
     character.set_hp(max(1, character.max_hp * 2 // 5))
     character.use_resource(content.NIGHTMARE_RESOURCE)
-    horror.dread.set_level(40.0)
+    systems.refresh_progress_strip(character)
 
 
 # --- imgui overlay -------------------------------------------------------------
@@ -1415,8 +1654,9 @@ def draw_ui(event):
     global autowarp_done, sheet_drawn_ok
     # Headless runs (-scripttest) launch without +map: queue a warp on the
     # first rendered frame when nothing loaded a level yet (same pattern as
-    # 26_imgui_overlays / 27_quest_journal / 28_vtm_chronicle). This
-    # example is MAP02-specific (the sealed door and the entrance trap).
+    # 26_imgui_overlays / 27_quest_journal / 28_vtm_chronicle). MAP02 is
+    # only the documentation default — the crypt's probed set pieces live
+    # there, but the rules layer runs on any map the player loads.
     if not autowarp_done:
         autowarp_done = True
         try:

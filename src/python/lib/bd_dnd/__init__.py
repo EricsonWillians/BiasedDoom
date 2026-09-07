@@ -35,7 +35,7 @@ generic, evocative mechanics, no licensed assets:
   ``class_id`` name and the use/mastery counters ride along in
   :class:`CharacterState` saves.
 - **Kill XP.** :func:`track_xp_from_kills` turns ``actor_died`` events
-  into experience awards using a Doom-monster XP table
+  into experience awards using a Doom/Heretic/Hexen monster XP table
   (:data:`DEFAULT_XP_TABLE`, moddable), with exact player-credit
   attribution by default (``player_index``).
 - **Parties.** :class:`Party` groups several characters with an active
@@ -707,18 +707,68 @@ class Character:
 
 # --- XP from kills -----------------------------------------------------------------
 
-#: Default monster XP values (5e-flavored challenge rewards for Doom's
-#: roster). Keys are matched case-insensitively against the actor's
-#: class name. Plain dict — mods may edit it or pass their own table to
+#: Default monster XP values (5e-flavored challenge rewards). Covers the
+#: full Doom II roster plus the common Heretic and Hexen bestiary (class
+#: names verified against ``wadsrc/static/zscript/actors/``; entries for a
+#: game simply never match under another). Keys are matched
+#: case-insensitively against the actor's exact class name — subclasses
+#: like the stealth variants need their own entry or a mod-supplied
+#: table. Plain dict — mods may edit it or pass their own table to
 #: :func:`track_xp_from_kills`.
 DEFAULT_XP_TABLE: Dict[str, int] = {
+    # Doom II
     "ZombieMan": 25,
     "ShotgunGuy": 50,
+    "ChaingunGuy": 50,
+    "WolfensteinSS": 50,
     "DoomImp": 50,
+    "LostSoul": 50,
     "Demon": 100,
+    "Spectre": 100,
     "Cacodemon": 200,
+    "Revenant": 300,
+    "Arachnotron": 400,
+    "Mancubus": 400,
     "HellKnight": 400,
+    "PainElemental": 500,
+    "Archvile": 900,
     "BaronOfHell": 1100,
+    "SpiderMastermind": 3000,
+    "Cyberdemon": 4000,
+    # Heretic
+    "HereticImp": 40,          # gargoyle
+    "HereticImpLeader": 60,    # fire gargoyle
+    "Mummy": 50,               # golem
+    "MummyGhost": 50,
+    "MummyLeader": 70,         # nitrogolem
+    "MummyLeaderGhost": 70,
+    "Clink": 90,               # sabreclaw
+    "Knight": 100,             # undead warrior
+    "KnightGhost": 100,
+    "Wizard": 120,             # disciple of D'Sparil
+    "Snake": 200,              # ophidian
+    "Beast": 300,              # weredragon
+    "Ironlich": 700,
+    "Minotaur": 2000,          # maulotaur
+    "Sorcerer1": 2500,         # D'Sparil, mounted
+    "Sorcerer2": 1500,         # D'Sparil, on foot
+    # Hexen
+    "Ettin": 50,
+    "FireDemon": 60,           # afrit
+    "Centaur": 150,
+    "IceGuy": 150,             # wendigo
+    "CentaurLeader": 200,      # slaughtaur
+    "Serpent": 200,            # chaos serpent
+    "Dragon": 200,             # death wyvern
+    "SerpentLeader": 250,      # brown chaos serpent
+    "Bishop": 250,             # dark bishop
+    "Wraith": 300,             # reiver
+    "WraithBuried": 300,
+    "ClericBoss": 1000,        # Zedek
+    "MageBoss": 1000,          # Menelkir
+    "FighterBoss": 1000,       # Traductus
+    "Heresiarch": 3000,
+    "Korax": 4000,
 }
 
 

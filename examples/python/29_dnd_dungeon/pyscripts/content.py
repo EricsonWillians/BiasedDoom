@@ -6,16 +6,17 @@ only *constructs* bd_dnd rules objects (plain Python) and holds the
 scenario's constants, so every number a designer might tune lives here.
 Morrow himself is data: the ``FIGHTER`` CharacterClass and a driven
 ``CreationWizard`` (see ``make_hero_via_wizard``) rebuild his probed
-sheet exactly, level-1 feature included.
+sheet exactly, level-1 features included.
 
-The scenario (Doom II MAP02 "Underhalls", read as a drowned crypt): you
-are Morrow, a grave-hardened fighter. Two graverobber-thralls
-(zombiemen) and a crypt imp near the entrance are worth XP; the sealed
-red door on line 111 can be *bashed* with an Athletics check instead of
-the red key; the entrance chamber (sector 7, tag 13) hides a dart trap
-with a DEX save for half damage. The Hollow Warden — a hexer who died
-on watch and kept walking — marches with you, its bound crypt hound
-(a friendly Demon) shadowing your steps.
+The scenario: you are Morrow, a grave-hardened fighter delving the whole
+WAD. The rules layer — kill XP from the full bestiary, level-toughened
+blows, light-ruled rests that heal body and sheet alike, locked doors
+bashed with Athletics, fireballs rolled with on a DEX save, and the
+Hollow Warden with its bound crypt hound at your heel — rides every map
+of the game, not one. MAP02 keeps the probed set pieces that make it the
+crypt proper: the sealed red door on line 111 (bashed with Athletics
+instead of the red key), the dart trap in the entrance chamber (sector 7,
+tag 13), and the candle/corpse-light programs on tags 13/7/12.
 
 Map probe findings (verified against doom2.wad and the live engine — see
 README.md for how to reproduce): GZDoom translates Doom-format specials,
@@ -24,9 +25,10 @@ so the classic red door (raw special 135) appears as engine special 13
 key) on lines 111/112, approached from (752, 1328) facing angle 270.
 Using it without the key fires ``line_activation_failed`` with
 ``reason == "locked"``. ``Line.activate`` runs the special directly and
-the engine's lock check rejects a null activator, so ``LockedDoorCheck``
-opens the door by granting ``RedCard`` to the player for a single native
-``activate(activator, clear=True)`` and reclaiming it afterwards.
+the engine's lock check rejects a null activator, so the bash lends the
+Doom card keys to the player for a single native
+``activate(activator, clear=True)`` and reclaims them afterwards
+(systems.DoorBashRules).
 
 Sector tags (verified live with ``bd.sectors(tag=...)``): sector 7 (the
 player start room, light 144) carries tag 13; sectors 40-43 (the drowned
@@ -100,8 +102,12 @@ DOOR_LINE = 111                        # sealed red door (lock 129)
 DOOR_APPROACH = (752.0, 1328.0, 48.0)  # in front of the door, face angle 270
 DOOR_FACE_ANGLE = 270.0
 DOOR_TRACK_SECTOR = 43                 # the door's sector (tag 7)
-DOOR_DC = 15                           # Athletics bash DC
-DOOR_KEY_CLASS = "RedCard"             # lent for one native activation
+DOOR_DC = 15                           # Athletics bash DC (any locked door)
+#: Keys lent to the activator for one native door activation. Doom locks
+#: 1-3 (card only) and 129-134 (any card or skull) all accept the cards,
+#: per wadsrc/static/lockdefs.txt; a failed activation marks the line
+#: unbashable instead of spamming.
+BASH_KEY_CLASSES = ("RedCard", "BlueCard", "YellowCard")
 TRAP_TAG = 13                          # sector 7: the entrance chamber
 TRAP_DC = 13
 TRAP_DAMAGE = "2d6"
@@ -116,6 +122,9 @@ MONSTER_SPAWNS = (
     ("DoomImp", 9303, 0.0),
 )
 CHECKPOINT_NAME = "sunken_crypt_example"
+#: The map that carries the probed set pieces (door bash fixture, dart
+#: trap, light programs). Everywhere else the generic rules layer runs.
+CRYPT_MAP = "MAP02"
 
 # --- torch and darkness (bd_horror light programs) --------------------------------
 
@@ -134,8 +143,6 @@ CORPSE_LIGHT_TAGS = (12,)
 CORPSE_LIGHT_DROPOUT = 0.08
 CORPSE_LIGHT_PERIOD = 4
 
-# --- sanctuary rests ---------------------------------------------------------------
-
 #: A long rest is only safe where the light holds: sector light >= 160.
 SANCTUARY_LIGHT = 160
 #: Below that, sleep is a nightmare: DEX save vs. this DC.
@@ -145,6 +152,22 @@ NIGHTMARE_RESOURCE = "resolve"
 NIGHTMARE_RESOURCE_CHARGES = 2
 #: A survived nightmare grants half the missing HP, no resources.
 FITFUL_HEAL_FRACTION = 0.5
+
+# --- progression tuning (every map) ------------------------------------------------
+
+#: Bonus damage per player level past the first, added to every hit the
+#: local player lands on a monster (through the actor_before_damage
+#: filter), capped so late levels stay sane.
+LEVEL_DAMAGE_BONUS_CAP = 8
+#: Second Wind: the active heal button (Custom Action 3). One charge per
+#: rest; spending it heals the pawn by the hit die plus level.
+SECOND_WIND_RESOURCE = "second_wind"
+SECOND_WIND_CHARGES = 1
+#: Reflex saves (DamageSaveRule) against incoming hits: DEX vs. this DC.
+SAVE_DC = 12
+SAVE_COOLDOWN_TICS = 35
+#: How often the persistent progression strip refreshes.
+HUD_REFRESH_TICS = 35
 
 # --- the fighter class (bd_dnd classes layer) --------------------------------------
 
@@ -159,6 +182,11 @@ def _grant_grave_hardened(character: "bd_dnd.Character") -> None:
     character.grant_resource(NIGHTMARE_RESOURCE, NIGHTMARE_RESOURCE_CHARGES)
 
 
+def _grant_second_wind(character: "bd_dnd.Character") -> None:
+    """The level-1 Second Wind feature: seed the active heal charge."""
+    character.grant_resource(SECOND_WIND_RESOURCE, SECOND_WIND_CHARGES)
+
+
 FIGHTER = bd_dnd.CharacterClass(
     name="Fighter",
     hit_die=10,
@@ -171,7 +199,14 @@ FIGHTER = bd_dnd.CharacterClass(
              "description": "The crypt does not frighten you; what "
                             "frightens you is that the crypt knows it. "
                             "Two resolve charges per rest.",
-             "apply": _grant_grave_hardened}],
+             "apply": _grant_grave_hardened},
+            {"id": "second_wind",
+             "name": "Second Wind",
+             "description": "Dig in and rally on command: spend the "
+                            "charge (Custom Action 3) to heal your "
+                            "wounds by the hit die plus your level. "
+                            "One charge per rest.",
+             "apply": _grant_second_wind}],
         2: [{"id": "death_knell",
              "name": "Death Knell",
              "description": "Flavor only: you have heard the deep bell "
@@ -202,11 +237,11 @@ def make_hero_via_wizard() -> "bd_dnd.Character":
     standard array (Morrow's probed sheet predates it); the wizard then
     validates name, class, scores, and the two class-skill picks, and
     ``finish()`` binds the Fighter (``character.class_id``,
-    ``character.cls``) while applying the level-1 Grave-Hardened feature,
-    which seeds the resolve pool. The result is the exact sheet this
-    module has always shipped: str 16 / dex 12 / con 14 / int 10 /
-    wis 12 / cha 8, d10 hit die, athletics and perception proficiency,
-    str/con saves, resolve 2/2.
+    ``character.cls``) while applying the level-1 Grave-Hardened and
+    Second Wind features, which seed the resolve and second_wind pools.
+    The result is the exact sheet this module has always shipped: str 16 /
+    dex 12 / con 14 / int 10 / wis 12 / cha 8, d10 hit die, athletics and
+    perception proficiency, str/con saves, resolve 2/2, second_wind 1/1.
     """
     wizard = bd_dnd.CreationWizard(rng=_CreationDie())
     wizard.choose_class(FIGHTER)
@@ -218,11 +253,6 @@ def make_hero_via_wizard() -> "bd_dnd.Character":
     wizard.assign_skill("perception")
     return wizard.finish()
 
-
-# --- trap dread -----------------------------------------------------------------
-
-#: Every sprung trap spikes the dread meter by this much.
-TRAP_DREAD_SPIKE = 10
 
 # --- sounds (logical names; lumps verified present in doom2.wad) -------------------
 
@@ -238,6 +268,9 @@ TOAST_LEVEL_UP = "The crypt acknowledges your ascent."
 TOAST_SANCTUARY = "The light keeps the dark from your dreams."
 TOAST_NIGHTMARE = "The dark dreams with you."
 TOAST_FITFUL = "You wake before the dream takes hold."
+TOAST_SAVE = "You roll with the hit."
+TOAST_SECOND_WIND = "You dig in; the wound closes."
+TOAST_NO_WIND = "No wind left in you. Rest first."
 TOAST_KNELL = "{name} falls silent; a deep bell tolls below."
 
 
