@@ -305,7 +305,10 @@ FUNC(LS_Door_Animated)
 // Door_Animated (tag, speed, delay, lock)
 {
 	if (arg3 != 0 && !P_CheckKeys (it, arg3, arg0 != 0))
+	{
+		Level->LastSpecialFailReason = SPECIAL_FAIL_LOCKED;
 		return false;
+	}
 
 	return Level->EV_SlidingDoor (ln, it, arg0, arg1, arg2, DAnimatedDoor::adOpenClose);
 }
@@ -1966,7 +1969,10 @@ FUNC(LS_ACS_LockedExecute)
 // ACS_LockedExecute (script, map, s_arg1, s_arg2, lock)
 {
 	if (arg4 && !P_CheckKeys (it, arg4, true))
+	{
+		Level->LastSpecialFailReason = SPECIAL_FAIL_LOCKED;
 		return false;
+	}
 	else
 		return LS_ACS_Execute (Level, ln, it, backSide, arg0, arg1, arg2, arg3, 0);
 }
@@ -1975,7 +1981,10 @@ FUNC(LS_ACS_LockedExecuteDoor)
 // ACS_LockedExecuteDoor (script, map, s_arg1, s_arg2, lock)
 {
 	if (arg4 && !P_CheckKeys (it, arg4, false))
+	{
+		Level->LastSpecialFailReason = SPECIAL_FAIL_LOCKED;
 		return false;
+	}
 	else
 		return LS_ACS_Execute (Level, ln, it, backSide, arg0, arg1, arg2, arg3, 0);
 }
@@ -2028,7 +2037,11 @@ FUNC(LS_FS_Execute)
 // FS_Execute(script#,firstsideonly,lock,msgtype)
 {
 	if (arg1 && ln && backSide) return false;
-	if (arg2!=0 && !P_CheckKeys(it, arg2, !!arg3)) return false;
+	if (arg2!=0 && !P_CheckKeys(it, arg2, !!arg3))
+	{
+		Level->LastSpecialFailReason = SPECIAL_FAIL_LOCKED;
+		return false;
+	}
 	return T_RunScript(Level, arg0, it);
 }
 
@@ -3966,10 +3979,15 @@ int P_ExecuteSpecial(FLevelLocals *Level, int			num,
 					 int			arg4,
 					 int			arg5)
 {
+	// Reset the per-level failure reason; special implementations (and
+	// P_StartScript / EV_DoDoor) refine it when they fail.
+	Level->LastSpecialFailReason = SPECIAL_FAIL_NONE;
+
 	if (num >= 0 && num < (int)countof(LineSpecials))
 	{
 		return LineSpecials[num](Level, line, activator, backSide, arg1, arg2, arg3, arg4, arg5);
 	}
+	Level->LastSpecialFailReason = SPECIAL_FAIL_UNKNOWN_SPECIAL;
 	return 0;
 }
 

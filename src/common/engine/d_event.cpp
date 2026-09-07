@@ -38,6 +38,7 @@
 #include "c_cvars.h"
 #include "d_eventbase.h"
 #include "d_gui.h"
+#include "common/imgui/bd_imgui.h"
 #include "gamestate.h"
 #include "i_interface.h"
 #include "keydef.h"
@@ -112,6 +113,8 @@ void D_ProcessEvents (void)
 			{
 				if (C_Responder(ev))
 					continue;				// console ate the event
+				if (BdImGui::HandleEvent(ev))
+					continue;				// ImGui overlay ate the event
 				if (M_Responder(ev))
 					continue;				// menu ate the event
 			}

@@ -62,6 +62,7 @@
 #include "events.h"
 #include "actorinlines.h"
 #include "d_main.h"
+#include "python/python_runtime.h"
 
 static FRandom pr_botrespawn ("BotRespawn");
 static FRandom pr_killmobj ("ActorDie");
@@ -403,8 +404,12 @@ void AActor::Die (AActor *source, AActor *inflictor, int dmgflags, FName MeansOf
 		target = source;
 	}
 
-	// [ZZ] Fire WorldThingDied script hook.
-	Level->localEventManager->WorldThingDied(this, inflictor);
+	// [ZZ] Fire WorldThingDied script hook. source is the killer: for missile
+	// kills it is the shooter (P_DamageMobj receives missile->target as source,
+	// see p_map.cpp), for hitscan/melee the attacker itself, for explosions the
+	// bomb owner; it is null for environmental deaths (crushers, falling,
+	// damaging terrain, scripted kills without a source).
+	Level->localEventManager->WorldThingDied(this, inflictor, source);
 
 	// [JM] Fire KILL type scripts for actor. Not needed for players, since they have the "DEATH" script type.
 	if (!player && !(flags7 & MF7_NOKILLSCRIPTS) && ((flags7 & MF7_USEKILLSCRIPTS) || gameinfo.forcekillscripts))
@@ -1564,6 +1569,16 @@ static int DamageMobj (AActor *target, AActor *inflictor, AActor *source, int da
 
 static int DoDamageMobj(AActor *target, AActor *inflictor, AActor *source, int damage, FName mod, int flags, DAngle angle)
 {
+	// [BiasedDoom] Python pre-damage filter (actor_before_damage). PERFORMANCE-
+	// CRITICAL: this is the hottest gameplay choke point in the engine, so the
+	// entry point early-outs on a single HasCallbacks array read when no script
+	// subscribes, and skips dispatch entirely in multiplayer/demo sessions.
+	// A cancelled hit returns 0 immediately: no damage, no actor_damaged event,
+	// matching the "only resultant damage is reported" contract below.
+	// ZScript DamageMobj overrides that never call Super bypass this filter
+	// (P_DamageMobj routes around DoDamageMobj for them).
+	if (PythonRuntime::OnBeforeDamage(target, inflictor, source, damage, mod, flags, angle.Degrees()))
+		return 0;
 	// [ZZ] event handlers need the result.
 	bool needevent = true;
 	int realdamage = DamageMobj(target, inflictor, source, damage, mod, flags, angle, needevent);

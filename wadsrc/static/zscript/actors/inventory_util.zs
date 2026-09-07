@@ -295,6 +295,9 @@ extend class Actor
 		drop.bNoGravity = false;	// Don't float
 		drop.ClearCounters();	// do not count for statistics again
 		drop.OnDrop(self);
+		// BiasedDoom Python hook: fire item_dropped once the tossed item is in
+		// the world. Covers the console/ACS DropInventory path.
+		Inventory.PythonNotifyItemDropped(drop, self, drop.Amount);
 		return drop;
 	}
 
@@ -666,6 +669,9 @@ extend class Actor
 						inv.Destroy();
 						return null;
 					}
+					// BiasedDoom Python hook: fire item_dropped for death-drop style
+					// drops (DropItem lists, A_DropItem) once the item is in the world.
+					Inventory.PythonNotifyItemDropped(inv, self, inv.Amount);
 				}
 				return mo;
 			}

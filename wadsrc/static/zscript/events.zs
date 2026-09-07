@@ -80,6 +80,9 @@ struct WorldEvent native play version("2.4")
     native readonly Actor Inflictor;
     // for thingdamaged, line/sector damaged
     native readonly int Damage;
+    // for thingdied: the attacker that killed Thing (AActor.Die's source; can
+    // be null for environmental deaths). Also set for thingdamaged and
+    // line/sector damaged.
     native readonly Actor DamageSource;
     native readonly Name DamageType;
     native readonly EDmgFlags DamageFlags;
@@ -88,6 +91,10 @@ struct WorldEvent native play version("2.4")
     native readonly Line ActivatedLine;
 	native readonly int ActivationType;
     native bool ShouldActivate;
+    // for line activation failed: why the special did not run.
+    // 0 = none, 1 = unknown special, 2 = script not found, 3 = locked,
+    // 4 = activation filtered, 5 = insufficient resources.
+    native readonly int ActivationFailReason;
     // for line/sector damaged
     native readonly SectorPart DamageSectorPart;
     native readonly Line DamageLine;
@@ -171,6 +178,9 @@ class StaticEventHandler : Object native play version("2.4")
     virtual void WorldHitscanFired(WorldEvent e) {}
     virtual void WorldLinePreActivated(WorldEvent e) {}
     virtual void WorldLineActivated(WorldEvent e) {}
+    // called when a line with a nonzero special is activated but fails.
+    // e.ActivationFailReason tells why (see WorldEvent).
+    virtual void WorldLineActivationFailed(WorldEvent e) {}
     virtual void WorldSectorDamaged(WorldEvent e) {}
     virtual void WorldLineDamaged(WorldEvent e) {}
     virtual void WorldLightning(WorldEvent e) {} // for the sake of completeness.

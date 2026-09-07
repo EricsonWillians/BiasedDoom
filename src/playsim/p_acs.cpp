@@ -10666,6 +10666,10 @@ int P_StartScript (FLevelLocals *Level, AActor *who, line_t *where, int script, 
 		}
 		else
 		{
+			// The script number has no backing script: record the failure
+			// reason for the line_activation_failed / WorldLineActivationFailed
+			// events.
+			Level->LastSpecialFailReason = SPECIAL_FAIL_SCRIPT_NOT_FOUND;
 			if (!(flags & ACS_NET) || (who && Level->isConsolePlayer(who->player->mo))) // The indirection is necessary here.
 			{
 				Printf("P_StartScript: Unknown %s\n", ScriptPresentation(script).GetChars());

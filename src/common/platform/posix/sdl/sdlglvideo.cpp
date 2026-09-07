@@ -352,6 +352,7 @@ SDLVideo::SDLVideo ()
 
 		if (Priv::window == nullptr)
 		{
+			Printf(TEXTCOLOR_YELLOW "Failed to create a Vulkan window (%s); falling back to OpenGL.\n", SDL_GetError());
 			Priv::vulkanEnabled = false;
 		}
 	}

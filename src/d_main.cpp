@@ -95,6 +95,7 @@
 #include "p_setup.h"
 #include "po_man.h"
 #include "python/python_runtime.h"
+#include "common/imgui/bd_imgui.h"
 #include "r_data/r_vanillatrans.h"
 #include "r_sky.h"
 #include "r_utility.h"
@@ -322,10 +323,16 @@ const char *D_DrawIcon;	// [RH] Patch name of icon to draw on next refresh
 int NoWipe;				// [RH] Allow wipe? (Needs to be set each time)
 bool singletics = false;	// debug flag to cancel adaptiveness
 
-// -scripttest <tics>: run a level for N tics, then print a PASS/FAIL summary
-// and exit 0/1 by Python error count (CI for embedded scripts).
+// -scripttest <tics> [ff]: run a level for N tics, then print a PASS/FAIL
+// summary and exit 0/1 by Python error count (CI for embedded scripts).
+// The optional ff factor fast-forwards wall-clock pacing via i_timescale and
+// renders only every 8th frame; tic counting (maptime) is unchanged.
 static int scripttestTics = 0;
+static int scripttestFF = 1;
 static int scripttestStart = -1;
+static bool scripttestFFApplied = false;
+static bool scripttestFFReleased = false;
+static unsigned scripttestFrame = 0;
 FString startmap;
 bool setmap;
 bool autostart;
@@ -905,6 +912,17 @@ static void DrawOverlays()
 	DrawRateStuff();
 	if (!hud_toggled)
 		FStat::PrintStat (twod);
+
+	// Dear ImGui overlay; submits into twod like the console and menus do.
+	{
+		static uint64_t imguiLastNS = 0;
+		const uint64_t nowNS = I_GetTimeNS();
+		double dt = imguiLastNS == 0 ? 1.0 / 60.0 : (double)(nowNS - imguiLastNS) / 1e9;
+		imguiLastNS = nowNS;
+		if (dt < 1.0 / 1000.0) dt = 1.0 / 1000.0;
+		if (dt > 1.0 / 10.0) dt = 1.0 / 10.0;
+		BdImGui::Frame(dt);
+	}
 }
 
 static void End2DAndUpdate()
@@ -935,6 +953,9 @@ void D_Display ()
 
 	if (nodrawers || screen == NULL)
 		return; 				// for comparative timing / profiling
+
+	if (I_IsHeadless())
+		return;				// headless: skip all rendering and presentation
 	
 	if (!AppActive && !setmodeneeded && (screen->IsFullscreen() || !vid_activeinbackground))
 	{
@@ -1277,11 +1298,27 @@ void D_DoomLoop ()
 			}
 			I_SetFrameTime();
 
+			// -scripttest fast-forward: once a level is active, boost the engine
+			// timescale so ff times as many tics elapse per wall second, and
+			// render only every 8th loop iteration. Event pumping (I_StartTic /
+			// D_ProcessEvents below) still runs every iteration so the window
+			// stays responsive to the OS.
+			if (scripttestTics > 0 && scripttestFF > 1)
+			{
+				if (!scripttestFFApplied && !scripttestFFReleased && gamestate == GS_LEVEL)
+				{
+					scripttestFFApplied = true;
+					i_timescale = static_cast<float>(scripttestFF);
+				}
+				++scripttestFrame;
+			}
+			const bool scripttestSkipRender = scripttestFFApplied && (scripttestFrame % 8) != 0;
+
 			TryRunTics (); // will run at least one tic
 			// Update display, next frame, with current state.
 			I_StartTic ();
 			D_ProcessEvents();
-			D_Display ();
+			if (!scripttestSkipRender) D_Display ();
 			S_UpdateMusic();
 
 			if (scripttestTics > 0)
@@ -1289,6 +1326,15 @@ void D_DoomLoop ()
 				if (gamestate == GS_LEVEL && primaryLevel->maptime > 1)
 				{
 					if (scripttestStart < 0) scripttestStart = primaryLevel->maptime;
+					// Release the fast-forward near the target so the final tics
+					// run at normal speed and the count does not overshoot.
+					if (scripttestFFApplied &&
+						scripttestTics - (primaryLevel->maptime - scripttestStart) <= scripttestFF)
+					{
+						i_timescale = 1.0f;
+						scripttestFFApplied = false;
+						scripttestFFReleased = true;
+					}
 					if (primaryLevel->maptime - scripttestStart >= scripttestTics)
 					{
 						const unsigned errors = PythonRuntime::GetErrorCount();
@@ -2810,6 +2856,10 @@ bool System_WantGuiCapture()
 	if (!wantCapt && primaryLevel->localEventManager->CheckUiProcessors())
 		wantCapt = true;
 
+	// The ImGui overlay wants EV_GUI_* events while it captures input.
+	if (!wantCapt && BdImGui::WantsGuiCapture())
+		wantCapt = true;
+
 	return wantCapt;
 }
 
@@ -3347,8 +3397,19 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 	if (const char* st = Args->CheckValue("-scripttest"))
 	{
 		scripttestTics = st[0] != 0 ? atoi(st) : 1050;
+		// Optional second value: fast-forward factor (default 1).
+		const int stParm = Args->CheckParm("-scripttest");
+		if (stParm > 0 && stParm + 2 < Args->NumArgs())
+		{
+			const char* ff = Args->GetArg(stParm + 2);
+			if (ff != nullptr && ff[0] != 0 && ff[0] != '+' && ff[0] != '-')
+			{
+				scripttestFF = atoi(ff);
+				if (scripttestFF < 1) scripttestFF = 1;
+			}
+		}
 	}
-	bool nostartscreen = batchrun || restart || Args->CheckParm("-join") || Args->CheckParm("-host") || norun;
+	bool nostartscreen = batchrun || restart || Args->CheckParm("-join") || Args->CheckParm("-host") || norun || I_IsHeadless();
 
 	if (GameStartupInfo.Type == FStartupInfo::DefaultStartup)
 	{

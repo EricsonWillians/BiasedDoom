@@ -18,6 +18,9 @@ namespace PythonRuntime::GameApi
 	// Return a new Python reference representing actor, or None for nullptr.
 	_object* MakeActorRef(AActor* actor);
 
+	// Return a new Python Player handle for the given player index.
+	_object* MakePlayerRef(int index);
+
 	// Unwraps an Actor handle (or a nonzero TID) into a live actor for other
 	// native modules. Raises a Python error and returns nullptr when invalid.
 	AActor* ActorFromHandle(_object* object);

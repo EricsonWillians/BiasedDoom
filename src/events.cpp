@@ -704,19 +704,19 @@ void EventManager::WorldThingSpawned(AActor* actor)
 	if (dispatchPython) PythonRuntime::OnActorSpawned(actor);
 }
 
-void EventManager::WorldThingDied(AActor* actor, AActor* inflictor)
+void EventManager::WorldThingDied(AActor* actor, AActor* inflictor, AActor* source)
 {
 	// don't call anything if actor was destroyed on PostBeginPlay/BeginPlay/whatever.
 	if (actor->ObjectFlags & OF_EuthanizeMe)
 		return;
 
 	const bool dispatchPython = ShouldCallStatic(true);
-	if (dispatchPython) staticEventManager.WorldThingDied(actor, inflictor);
+	if (dispatchPython) staticEventManager.WorldThingDied(actor, inflictor, source);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
-		handler->WorldThingDied(actor, inflictor);
+		handler->WorldThingDied(actor, inflictor, source);
 
-	if (dispatchPython) PythonRuntime::OnActorDied(actor, inflictor);
+	if (dispatchPython) PythonRuntime::OnActorDied(actor, inflictor, source);
 }
 
 bool EventManager::WorldHitscanPreFired(AActor* actor, DAngle angle, double distance, DAngle pitch, int damage, FName damageType, PClassActor *pufftype, int flags, double sz, double offsetforward, double offsetside)
@@ -859,13 +859,21 @@ void EventManager::WorldLineActivated(line_t* line, AActor* actor, int activatio
 	if (dispatchPython) PythonRuntime::OnLineActivated(line == nullptr ? -1 : line->Index(), actor, activationType);
 }
 
-// Python-only event (no ZScript handler surface): fired when a line with a
-// nonzero special is activated but the special fails (e.g. ACS_Execute with
-// no backing script). This is the primary debugging signal for dead triggers.
-void EventManager::WorldLineActivationFailed(line_t* line, AActor* actor, int activationType)
+// Fired when a line with a nonzero special is activated but the activation
+// fails: rejected by activation filtering (wrong side/type, monster on a
+// player-only line, handler veto), locked, missing ACS script, or unknown
+// special. 'reason' carries the ESpecialFailReason code. This is the primary
+// debugging signal for dead triggers, for both ZScript and Python.
+void EventManager::WorldLineActivationFailed(line_t* line, AActor* actor, int activationType, int reason)
 {
-	if (ShouldCallStatic(true))
-		PythonRuntime::OnLineActivationFailed(line == nullptr ? -1 : line->Index(), line == nullptr ? 0 : line->special, line == nullptr ? nullptr : line->args, actor, activationType);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.WorldLineActivationFailed(line, actor, activationType, reason);
+
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+		handler->WorldLineActivationFailed(line, actor, activationType, reason);
+
+	if (dispatchPython)
+		PythonRuntime::OnLineActivationFailed(line == nullptr ? -1 : line->Index(), line == nullptr ? 0 : line->special, line == nullptr ? nullptr : line->args, actor, activationType, reason);
 }
 
 int EventManager::WorldSectorDamaged(sector_t* sector, AActor* source, int damage, FName damagetype, int part, DVector3 position, bool isradius)
@@ -1145,6 +1153,7 @@ DEFINE_FIELD_X(WorldEvent, FWorldEvent, DamageAngle);
 DEFINE_FIELD_X(WorldEvent, FWorldEvent, ActivatedLine);
 DEFINE_FIELD_X(WorldEvent, FWorldEvent, ActivationType);
 DEFINE_FIELD_X(WorldEvent, FWorldEvent, ShouldActivate);
+DEFINE_FIELD_X(WorldEvent, FWorldEvent, ActivationFailReason);
 DEFINE_FIELD_X(WorldEvent, FWorldEvent, DamageSectorPart);
 DEFINE_FIELD_X(WorldEvent, FWorldEvent, DamageLine);
 DEFINE_FIELD_X(WorldEvent, FWorldEvent, DamageSector);
@@ -1852,7 +1861,7 @@ void DStaticEventHandler::WorldThingSpawned(AActor* actor)
 	}
 }
 
-void DStaticEventHandler::WorldThingDied(AActor* actor, AActor* inflictor)
+void DStaticEventHandler::WorldThingDied(AActor* actor, AActor* inflictor, AActor* source)
 {
 	IFVIRTUAL(DStaticEventHandler, WorldThingDied)
 	{
@@ -1861,6 +1870,10 @@ void DStaticEventHandler::WorldThingDied(AActor* actor, AActor* inflictor)
 		FWorldEvent e = owner->SetupWorldEvent();
 		e.Thing = actor;
 		e.Inflictor = inflictor;
+		// DamageSource doubles as the death's attacker (AActor::Die's source,
+		// the killer), mirroring what WorldThingDamaged reports. It was always
+		// null for thingdied before, so existing mods see no behavior change.
+		e.DamageSource = source;
 		VMValue params[2] = { (DStaticEventHandler*)this, &e };
 		VMCall(func, params, 2, nullptr, 0);
 	}
@@ -2044,6 +2057,22 @@ void DStaticEventHandler::WorldLineActivated(line_t* line, AActor* actor, int ac
 		e.Thing = actor;
 		e.ActivatedLine = line;
 		e.ActivationType = activationType;
+		VMValue params[2] = { (DStaticEventHandler*)this, &e };
+		VMCall(func, params, 2, nullptr, 0);
+	}
+}
+
+void DStaticEventHandler::WorldLineActivationFailed(line_t* line, AActor* actor, int activationType, int reason)
+{
+	IFVIRTUAL(DStaticEventHandler, WorldLineActivationFailed)
+	{
+		// don't create excessive DObjects if not going to be processed anyway
+		if (isEmpty(func)) return;
+		FWorldEvent e = owner->SetupWorldEvent();
+		e.Thing = actor;
+		e.ActivatedLine = line;
+		e.ActivationType = activationType;
+		e.ActivationFailReason = reason;
 		VMValue params[2] = { (DStaticEventHandler*)this, &e };
 		VMCall(func, params, 2, nullptr, 0);
 	}

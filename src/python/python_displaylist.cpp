@@ -1022,7 +1022,7 @@ PyObject* PyDrawText(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "text", "id", "x", "y", "font", "color", "scale", "alpha", "shadow", "outline", "align", "layer", "height", "duration", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|$OddsOOdppsidO:draw_text", const_cast<char**>(keywords),
 		&text, &idObject, &x, &y, &fontName, &colorObject, &scaleObject, &alpha, &shadow, &outline, &alignName, &layer, &normHeight, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	FFont* font = ResolveFont(fontName);
@@ -1066,7 +1066,7 @@ PyObject* PyDrawRect(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "id", "x", "y", "w", "h", "color", "alpha", "color2", "layer", "duration", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|$OddddOdOiO:draw_rect", const_cast<char**>(keywords),
 		&idObject, &x, &y, &w, &h, &colorObject, &alpha, &color2Object, &layer, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	DrawItem item;
@@ -1102,7 +1102,7 @@ PyObject* PyDrawLine(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "id", "x1", "y1", "x2", "y2", "color", "alpha", "layer", "duration", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|$OddddOdiO:draw_line", const_cast<char**>(keywords),
 		&idObject, &x1, &y1, &x2, &y2, &colorObject, &alpha, &layer, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	DrawItem item;
@@ -1134,7 +1134,7 @@ PyObject* PyDrawTexture(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "name", "id", "x", "y", "scale", "alpha", "tint", "rotate", "layer", "duration", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|$OddOdOdiO:draw_texture", const_cast<char**>(keywords),
 		&name, &idObject, &x, &y, &scaleObject, &alpha, &tintObject, &rotate, &layer, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	FGameTexture* texture = TexMan.FindGameTexture(name, ETextureType::MiscPatch, FTextureManager::TEXMAN_TryAny);
@@ -1195,7 +1195,7 @@ PyObject* PyDrawWorldBar(PyObject*, PyObject* args, PyObject* kwargs)
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|$OdddOOOOdppOdsiO:draw_world_bar", const_cast<char**>(keywords),
 		&actorObject, &idObject, &offsetZ, &barWidth, &barHeight, &trackObject, &fracObject, &fgObject, &bgObject, &maxDistance,
 		&occlude, &label, &labelColorObject, &labelScale, &labelFontName, &layer, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	AActor* actor = ResolveAnchorActor(actorObject);
@@ -1286,7 +1286,7 @@ PyObject* PyDrawWorldText(PyObject*, PyObject* args, PyObject* kwargs)
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|$OsdddsOOddpppidO:draw_world_text", const_cast<char**>(keywords),
 		&actorObject, &idObject, &text, &offsetX, &offsetY, &offsetZ, &fontName, &colorObject, &scaleObject, &alpha, &maxDistance, &occlude,
 		&shadow, &outline, &layer, &normHeight, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	if (text == nullptr)
@@ -1360,7 +1360,7 @@ PyObject* PyDrawCircle(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "id", "x", "y", "radius", "color", "alpha", "fill", "layer", "duration", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|$OdddOdpiO:draw_circle", const_cast<char**>(keywords),
 		&idObject, &x, &y, &radius, &colorObject, &alpha, &fill, &layer, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	DrawItem item;
@@ -1392,7 +1392,7 @@ PyObject* PyDrawFrame(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "id", "x", "y", "w", "h", "color", "thickness", "alpha", "layer", "duration", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|$OddddOidiO:draw_frame", const_cast<char**>(keywords),
 		&idObject, &x, &y, &w, &h, &colorObject, &thickness, &alpha, &layer, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	DrawItem item;
@@ -1426,7 +1426,7 @@ PyObject* PyDrawWorldTexture(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "actor", "name", "id", "offset_z", "size", "alpha", "tint", "occlude", "max_distance", "layer", "duration", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Os|$OdddOpdiO:draw_world_texture", const_cast<char**>(keywords),
 		&actorObject, &name, &idObject, &offsetZ, &size, &alpha, &tintObject, &occlude, &maxDistance, &layer, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	AActor* actor = ResolveAnchorActor(actorObject);
@@ -1526,7 +1526,7 @@ PyObject* PyDrawWorldLine(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "a", "b", "id", "color", "alpha", "layer", "duration", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|$OOdiO:draw_world_line", const_cast<char**>(keywords),
 		&aObject, &bObject, &idObject, &colorObject, &alpha, &layer, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	DrawItem item;
@@ -1558,7 +1558,7 @@ PyObject* PyDrawWorldRing(PyObject*, PyObject* args, PyObject* kwargs)
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|$OdOddidpiO:draw_world_ring", const_cast<char**>(keywords),
 		&actorObject, &idObject, &radius, &colorObject, &alpha, &offsetZ, &segments, &maxDistance,
 		&occlude, &layer, &durationObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	AActor* actor = ResolveAnchorActor(actorObject);
@@ -1594,7 +1594,7 @@ PyObject* PyDrawClear(PyObject*, PyObject* args, PyObject* kwargs)
 	PyObject* idObject = nullptr;
 	static const char* keywords[] = { "id", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O:draw_clear", const_cast<char**>(keywords), &idObject)) return nullptr;
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	uint32_t id = 0;
 	if (!ParseItemId(idObject, id)) return nullptr;
 	Items.erase(id);
@@ -1603,7 +1603,7 @@ PyObject* PyDrawClear(PyObject*, PyObject* args, PyObject* kwargs)
 
 PyObject* PyDrawClearAll(PyObject*, PyObject*)
 {
-	if (!PythonRuntime::CheckGameplayMutation()) return nullptr;
+	if (!PythonRuntime::CheckLocalPresentation()) return nullptr;
 	Items.clear();
 	Py_RETURN_NONE;
 }

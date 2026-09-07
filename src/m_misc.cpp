@@ -675,6 +675,18 @@ void M_ProcessPendingScreenShot()
 
 UNSAFE_CCMD (screenshot)
 {
+	if (I_IsHeadless())
+	{
+		// There is no rendered frame to capture; warn once instead of
+		// queuing a pending screenshot that can never be processed.
+		static bool headlessScreenshotWarned = false;
+		if (!headlessScreenshotWarned)
+		{
+			headlessScreenshotWarned = true;
+			Printf ("Screenshot unavailable in headless mode.\n");
+		}
+		return;
+	}
 	if (argv.argc() == 1)
 		G_ScreenShot (NULL);
 	else

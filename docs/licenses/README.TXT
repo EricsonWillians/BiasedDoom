@@ -27,3 +27,7 @@ Please note that the content of brightmaps.pk3, game_support.pk3 and game_widesc
 is based on copyrighted game content and subject to some restrictions.
 Please see the license notes in the respective files/subfolders.
 
+This software uses the Dear ImGui library (version 1.92.8) for the
+in-game overlay user interface, which is covered by the MIT License.
+See libraries/imgui/LICENSE.txt.
+

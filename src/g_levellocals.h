@@ -543,6 +543,10 @@ public:
 	FSectionContainer sections;
 	FCanvasTextureInfo canvasTextureInfo;
 	EventManager *localEventManager = nullptr;
+	// Reason code (ESpecialFailReason, see p_spec.h) for the most recent failed
+	// line special activation on this level. Reset at the top of P_ActivateLine
+	// and P_ExecuteSpecial; consumed by the activation-failed events.
+	int LastSpecialFailReason = 0;
 	DoomLevelAABBTree* aabbTree = nullptr;
 	DoomLevelMesh* levelMesh = nullptr;
 

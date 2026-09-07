@@ -212,13 +212,41 @@ def on(event_name: str, *, every: int = 1, priority: int = 0,
     """Decorator registering a callback for a BiasedDoom lifecycle event.
 
     Events: engine_start, map_load, map_unload, pre_tick, tick, post_tick,
-    actor_spawned, actor_died, actor_damaged, actor_destroyed, actor_revived,
+    actor_spawned, actor_died, actor_damaged, actor_before_damage,
+    actor_destroyed, actor_revived,
     line_activated, line_activation_failed, player_entered, player_spawned,
     player_respawned, player_died, player_disconnected, item_picked,
-    secret_found, save, load, engine_shutdown.
+    secret_found, item_dropped, weapon_changed, sector_entered, sector_exited,
+    conversation_started, conversation_reply, ui_command, save, load,
+    engine_shutdown.
 
+    actor_died event fields: actor, actor_ref, inflictor, inflictor_ref,
+    attacker_ref, attacker_class, attacker_player_index. attacker_* report the
+    killer (Actor.Die's source): the shooter for missile kills (the missile
+    stays in inflictor_ref), the attacker itself for hitscan/melee, the bomb
+    owner for explosions, None for environmental deaths or damage applied
+    without a source.
+    actor_before_damage event fields: actor_ref, inflictor_ref, attacker_ref,
+    attacker_class, attacker_player_index, damage, damage_type, flags, angle,
+    cancel. MUTABLE pre-damage filter: damage, damage_type and cancel are
+    write-back keys — mutate the event dict in place to rewrite the incoming
+    hit (damage is clamped to [0, 2**31-1]) or set cancel=True to swallow it
+    entirely (no damage, no actor_damaged event). Offline-only: not dispatched
+    in multiplayer or demo sessions.
     item_picked event fields: class_name, name, amount, player.
     secret_found event fields: player, found_secrets, total_secrets.
+    item_dropped event fields: actor_ref, dropper_ref, player_index, class_name, amount.
+    weapon_changed event fields: player_index, weapon, actor_ref, player_ref.
+    sector_entered/sector_exited event fields: sector, tags, player_index, actor_ref.
+    conversation_started event fields: npc_ref, pc_ref, player_index, npc_class.
+    conversation_reply event fields: player_index, npc_ref, node, reply_index,
+    log_number, log_string, next_node, item_changed.
+    ui_command event fields: command. Fired by the `pyui <name>` console
+    command; bridge for console aliases/key binds driving script UI.
+    line_activation_failed event fields: line_index, special, args, actor_ref,
+    activation_type, reason, reason_code. reason is one of "none",
+    "unknown_special", "script_not_found", "locked", "activation_filtered",
+    "insufficient_resources".
     """
 
 
@@ -232,6 +260,13 @@ def current_map() -> Optional[str]:
 
 def level_time() -> int:
     """Return elapsed level time in 35 Hz tics."""
+
+def headless() -> bool:
+    """Return True when the engine runs on the null video driver (nothing
+    renders; imgui_frame never fires)."""
+
+def session_read_only() -> bool:
+    """Return True when world mutations are blocked (multiplayer or demo session)."""
 
 def get_cvar(name: str) -> Any:
     """Read a console variable using its native Python type."""
@@ -249,13 +284,16 @@ def execute_acs(script: Any, arguments: Optional[list] = None, always: bool = Fa
 def read_text(path: str) -> str:
     """Read a UTF-8 resource from the current mod."""
 
+def read_bytes(path: str) -> bytes:
+    """Read a binary resource from the current mod, capped at 32 MiB."""
+
 def import_script(path: str, module_name: Optional[str] = None) -> Any:
     """Execute and return another Python module from the current mod. The
     module is also registered in sys.modules under module_name, so sibling
     scripts loaded afterwards can reach it with plain `import module_name`
     (import in dependency order; circular imports are not supported)."""
 
-def schedule(callback: Callable, delay: int = 0, repeat: int = 0, map_local: bool = False) -> int:
+def schedule(callback: Callable, delay: int = 0, repeat: int = 0, map_local: bool = True) -> int:
     """Schedule a one-shot or repeating callable in engine tics; returns a task ID."""
 
 def cancel_task(task_id: int) -> None:
@@ -269,6 +307,33 @@ def profile() -> dict:
 
 def reset_profile() -> None:
     """Reset callback timing and budget statistics."""
+
+def assert_true(cond: Any, msg: str = "") -> None:
+    """Fail the script test with a message when the condition is false. Prints
+    SCRIPT ASSERT FAILED in red with the caller's file/line, feeds the
+    -pyerrorlog JSON feed with severity "assert", and makes -scripttest exit
+    1, but returns None instead of raising so a test can report several
+    failures in one run."""
+
+def warn(message: str) -> None:
+    """Print a rate-limited yellow SCRIPT WARNING line and feed -pyerrorlog
+    with severity "warning". Identical consecutive warnings are deduplicated
+    (a repeat summary prints every ~10 seconds). Never counts as an error."""
+
+
+# --- deterministic script RNG (serialized with savegames via state) ----------
+
+def random() -> float:
+    """Return the next deterministic float in [0, 1)."""
+
+def randrange(lo: int, hi: Optional[int] = None) -> int:
+    """Return the next deterministic integer in [lo, hi); randrange(hi) uses [0, hi)."""
+
+def randint(lo: int, hi: int) -> int:
+    """Return the next deterministic integer in [lo, hi] inclusive."""
+
+def choice(sequence: Union[list, tuple]) -> Any:
+    """Return a deterministic item from a non-empty sequence."""
 
 
 # --- snapshots --------------------------------------------------------------
@@ -298,12 +363,26 @@ def destroy_actor(tid: int) -> None:
 def actor_ref(tid: int) -> Optional[Actor]:
     """Return a live Actor handle for a TID, or None."""
 
-def actor_refs(class_name: Optional[str] = None, tid: int = 0, limit: int = 1024) -> list:
-    """Return lightweight live Actor handles."""
+def actor_refs(class_name: Optional[str] = None, tid: int = 0, limit: int = 4096,
+               subclasses: bool = True, sphere: Any = None, z: Optional[float] = None) -> list:
+    """Return lightweight live Actor handles. class_name matches derived
+    classes unless subclasses=False (exact class match). sphere=(x, y, r)
+    filters by 2D distance; with z it also requires |actor.z - z| <= r.
+    All filters combine (AND) and run natively during the scan."""
 
 def spawn(class_name: str, x: float, y: float, z: float, angle: float = 0.0,
           tid: int = 0, force: bool = False) -> Actor:
     """Spawn and return a live Actor handle."""
+
+def actor_data(ref: Actor) -> dict:
+    """Return the actor's persistent per-actor data dict, creating it on
+    demand. Purged automatically when the actor is destroyed or the map
+    changes; not saved in savegames. Raises ReferenceError on a stale
+    handle."""
+
+def actor_data_drop(ref: Actor) -> bool:
+    """Drop the actor's per-actor data dict if present. Returns True when one
+    existed. Idempotent: stale handles return False instead of raising."""
 
 def player(index: int = 0) -> Player:
     """Return a live Player handle by slot."""
@@ -323,6 +402,13 @@ def sector(index: int) -> Sector:
 def sectors(tag: Optional[int] = None) -> list:
     """Return Sector handles, optionally by tag."""
 
+def sector_at(x: float, y: float) -> Optional[Sector]:
+    """Return the Sector containing the given point, or None."""
+
+def actors_in_sector(sector: Any) -> list:
+    """Return live Actor handles currently inside the given sector. Accepts a
+    Sector handle or a sector index."""
+
 def execute_special(special: Any, arguments: Optional[list] = None,
                     activator: Optional[Actor] = None, line: Optional[Line] = None,
                     back_side: int = 0) -> bool:
@@ -341,13 +427,20 @@ def line_attack(source: Actor, angle: float = 0.0, distance: float = 0.0, pitch:
                 flags: int = 0) -> dict:
     """Fire a native hitscan and return its result."""
 
-def apply_actor_batch(operations: list) -> None:
+def apply_actor_batch(operations: list) -> int:
     """Apply many actor mutations in one C API crossing. Each operation is a
     tuple: ("position", actor, x, y, z), ("velocity"/"add_velocity", actor,
     x, y, z), ("health"/"damage", actor, amount), ("destroy", actor),
     ("speed"/"alpha"/"scale"/"damage_factor"/"damage_multiply", actor,
     value), or ("tint", actor, r, g, b) — the same sprite tint as the
     Actor.tint property."""
+
+def actor_field_batch(refs: list, fields: list) -> list:
+    """Read many actor fields in one C API crossing, returning a tuple per
+    actor in the same order as refs. Stale or invalid handles yield a tuple
+    of None values instead of raising. Valid field names: health, x, y, z,
+    angle, pitch, roll, speed, alpha, tid, class_name, alive, is_player,
+    is_monster, special, damage_factor. Unknown names raise ValueError."""
 
 def exit_level(position: int = 0, secret: bool = False, keep_facing: bool = False) -> None:
     """Exit through the normal or secret route."""
@@ -360,6 +453,20 @@ def center_message(message: str, bold: bool = False) -> None:
 
 def set_music(name: str, order: int = 0, looping: bool = True, force: bool = False) -> None:
     """Change level music immediately."""
+
+def player_log(player_index: int = 0) -> Optional[str]:
+    """Return the player's conversation log text (the Strife journal line),
+    or None when unset or the index has no player. Read-only; allowed in
+    observer mode."""
+
+def set_player_log(text: str, player_index: int = 0) -> None:
+    """Set the player's conversation log text (the Strife journal line).
+    Mutation-guarded; ValueError when the slot has no player."""
+
+def start_conversation(npc: Actor) -> bool:
+    """Start a Strife conversation between the local player and the given
+    actor (USE-path arguments). Returns False when the actor cannot talk.
+    Mutation-guarded."""
 
 
 # --- gameplay director --------------------------------------------------------
@@ -606,6 +713,629 @@ def draw_clear(id: int) -> None:
 
 def draw_clear_all() -> None:
     """Remove every display-list item."""
+
+
+# --- Dear ImGui overlay (bd.imgui) ---------------------------------------------
+
+# bd.imgui binds the vendored Dear ImGui 1.92.8 (docking branch) as an
+# engine overlay. Every
+# function is only valid inside an imgui_frame handler (they raise
+# RuntimeError anywhere else) except the font registry (add_font_ttf(),
+# add_font_default(), remove_font(), clear_fonts(), list_fonts(),
+# set_default_font(), get_default_font()), the global scale
+# (set_ui_scale()/get_ui_scale()), the persistent style accessors
+# (get_style_color()/set_style_color(), get_style_var()/set_style_var(),
+# style_theme()), set_master_visible()/master_visible() and
+# set_nav_enabled()/nav_enabled(),
+# which toggle engine-side state from any event. State flows through your
+# variables: value-editing widgets return (changed, new_value) tuples. The
+# overlay is gated by the py_imgui CVar; the py_imgui_demo console command
+# toggles the stock demo window.
+
+class _ImguiCol:
+    """ImGuiCol_* indices for push_style_color()/get_style_color()/set_style_color()."""
+    Text: int
+    TextDisabled: int
+    WindowBg: int
+    ChildBg: int
+    PopupBg: int
+    Border: int
+    BorderShadow: int
+    FrameBg: int
+    FrameBgHovered: int
+    FrameBgActive: int
+    TitleBg: int
+    TitleBgActive: int
+    TitleBgCollapsed: int
+    MenuBarBg: int
+    ScrollbarBg: int
+    ScrollbarGrab: int
+    ScrollbarGrabHovered: int
+    ScrollbarGrabActive: int
+    CheckMark: int
+    CheckboxSelectedBg: int
+    SliderGrab: int
+    SliderGrabActive: int
+    Button: int
+    ButtonHovered: int
+    ButtonActive: int
+    Header: int
+    HeaderHovered: int
+    HeaderActive: int
+    Separator: int
+    SeparatorHovered: int
+    SeparatorActive: int
+    ResizeGrip: int
+    ResizeGripHovered: int
+    ResizeGripActive: int
+    InputTextCursor: int
+    TabHovered: int
+    Tab: int
+    TabSelected: int
+    TabSelectedOverline: int
+    TabDimmed: int
+    TabDimmedSelected: int
+    TabDimmedSelectedOverline: int
+    DockingPreview: int
+    DockingEmptyBg: int
+    PlotLines: int
+    PlotLinesHovered: int
+    PlotHistogram: int
+    PlotHistogramHovered: int
+    TableHeaderBg: int
+    TableBorderStrong: int
+    TableBorderLight: int
+    TableRowBg: int
+    TableRowBgAlt: int
+    TextLink: int
+    TextSelectedBg: int
+    TreeLines: int
+    DragDropTarget: int
+    DragDropTargetBg: int
+    UnsavedMarker: int
+    NavCursor: int
+    NavWindowingHighlight: int
+    NavWindowingDimBg: int
+    ModalWindowDimBg: int
+
+class _ImguiStyleVar:
+    """ImGuiStyleVar_* indices for push_style_var()/get_style_var()/set_style_var()."""
+    Alpha: int
+    DisabledAlpha: int
+    WindowPadding: int
+    WindowRounding: int
+    WindowBorderSize: int
+    WindowMinSize: int
+    WindowTitleAlign: int
+    ChildRounding: int
+    ChildBorderSize: int
+    PopupRounding: int
+    PopupBorderSize: int
+    FramePadding: int
+    FrameRounding: int
+    FrameBorderSize: int
+    ItemSpacing: int
+    ItemInnerSpacing: int
+    IndentSpacing: int
+    CellPadding: int
+    ScrollbarSize: int
+    ScrollbarRounding: int
+    ScrollbarPadding: int
+    GrabMinSize: int
+    GrabRounding: int
+    ImageRounding: int
+    ImageBorderSize: int
+    TabRounding: int
+    TabBorderSize: int
+    TabMinWidthBase: int
+    TabMinWidthShrink: int
+    TabBarBorderSize: int
+    TabBarOverlineSize: int
+    TableAngledHeadersAngle: int
+    TableAngledHeadersTextAlign: int
+    TreeLinesSize: int
+    TreeLinesRounding: int
+    DragDropTargetRounding: int
+    ButtonTextAlign: int
+    SelectableTextAlign: int
+    SeparatorSize: int
+    SeparatorTextBorderSize: int
+    SeparatorTextAlign: int
+    SeparatorTextPadding: int
+    DockingSeparatorSize: int
+
+class _ImguiKey:
+    """ImGuiKey_* values for is_key_down()/is_key_pressed()/is_key_chord_pressed()/shortcut()."""
+    Tab: int
+    Left: int
+    Right: int
+    Up: int
+    Down: int
+    PageUp: int
+    PageDown: int
+    Home: int
+    End: int
+    Insert: int
+    Delete: int
+    Backspace: int
+    Space: int
+    Enter: int
+    KeyPadEnter: int
+    Escape: int
+    A: int
+    B: int
+    C: int
+    D: int
+    E: int
+    F: int
+    G: int
+    H: int
+    I: int
+    J: int
+    K: int
+    L: int
+    M: int
+    N: int
+    O: int
+    P: int
+    Q: int
+    R: int
+    S: int
+    T: int
+    U: int
+    V: int
+    W: int
+    X: int
+    Y: int
+    Z: int
+    F1: int
+    F2: int
+    F3: int
+    F4: int
+    F5: int
+    F6: int
+    F7: int
+    F8: int
+    F9: int
+    F10: int
+    F11: int
+    F12: int
+
+class _ImguiMod:
+    """ImGuiMod_* modifier bits for the mods argument of is_key_chord_pressed()/shortcut()."""
+    Ctrl: int
+    Shift: int
+    Alt: int
+    Super: int
+
+class _ImguiInputTextFlags:
+    """ImGuiInputTextFlags_* bits for input_text()."""
+    CharsDecimal: int
+    CharsHexadecimal: int
+    CharsUppercase: int
+    CharsNoBlank: int
+    EnterReturnsTrue: int
+    ReadOnly: int
+    Password: int
+    AutoSelectAll: int
+
+class _ImguiWindowFlags:
+    """ImGuiWindowFlags_* bits for imgui.begin()/begin_child()."""
+    NoTitleBar: int
+    NoResize: int
+    NoMove: int
+    NoCollapse: int
+    NoBackground: int
+    NoScrollbar: int
+    MenuBar: int
+    AlwaysAutoResize: int
+
+class _ImguiCond:
+    """ImGuiCond_* values for imgui.set_next_window_*() calls (0 = Always)."""
+    Always: int
+    Once: int
+    FirstUseEver: int
+    Appearing: int
+
+class _ImguiNamespace:
+    """Dear ImGui immediate-mode UI overlay.
+
+    All widget calls in this module submit ImGui draw commands and are only
+    valid inside an imgui_frame event handler (they raise RuntimeError
+    anywhere else). Not frame-gated: the font registry (add_font_ttf(),
+    add_font_default(), remove_font(), clear_fonts(), list_fonts(),
+    set_default_font(), get_default_font()), the global scale
+    (set_ui_scale()/get_ui_scale()), the persistent style accessors
+    (get_style_color()/set_style_color(), get_style_var()/set_style_var(),
+    style_theme()), set_master_visible()/master_visible() and
+    set_nav_enabled()/nav_enabled(); the style accessors require the
+    overlay to have rendered at least one frame.
+    Cost model: one CPython crossing per widget call, and when no script
+    registers imgui_frame the whole feature costs a single HasCallbacks
+    check per frame. The overlay is gated by the py_imgui CVar (default on)
+    and the py_imgui_demo console command opens the stock demo window."""
+
+    Col: _ImguiCol
+    StyleVar: _ImguiStyleVar
+    Key: _ImguiKey
+    Mod: _ImguiMod
+    InputTextFlags: _ImguiInputTextFlags
+    WindowFlags: _ImguiWindowFlags
+    Cond: _ImguiCond
+
+    def begin(self, name: str, open: Any = None, flags: int = 0) -> Any:
+        """begin(name, open=None, flags=0) -> bool | (bool, bool)
+        Push a window onto the stack; every call must be paired with end().
+        With open=None (the default) returns a single bool: False when the window
+        is collapsed/clipped (still call end()). With open set to a bool the window
+        gets a close button and the return is a (expanded, open) tuple; assign the
+        second element back to your visibility state."""
+    def end(self) -> None:
+        """end() -> None
+        Pop the current window. Always call it, even when begin() returned False."""
+    def begin_child(self, id: str, size: tuple = (0, 0), border: bool = False, flags: int = 0) -> bool:
+        """begin_child(id, size=(0, 0), border=False, flags=0) -> bool
+        Begin a scrolling child region; returns False when clipped (still call end_child())."""
+    def end_child(self) -> None:
+        """end_child() -> None
+        End the current child region."""
+    def set_next_window_pos(self, x: float, y: float, cond: int = 0) -> None:
+        """set_next_window_pos(x, y, cond=0) -> None
+        Set the position of the next begin() window. cond is an imgui.Cond value (0 = always)."""
+    def set_next_window_size(self, w: float, h: float, cond: int = 0) -> None:
+        """set_next_window_size(w, h, cond=0) -> None
+        Set the size of the next begin() window; use 0 on an axis for auto-fit."""
+    def set_next_window_collapsed(self, collapsed: bool, cond: int = 0) -> None:
+        """set_next_window_collapsed(collapsed, cond=0) -> None
+        Force the collapsed state of the next begin() window."""
+    def set_next_window_bg_alpha(self, a: float) -> None:
+        """set_next_window_bg_alpha(a) -> None
+        Override the background alpha of the next begin() window (0.0 - 1.0)."""
+    def is_window_focused(self) -> bool:
+        """is_window_focused() -> bool
+        True when the current window is focused."""
+    def is_window_hovered(self) -> bool:
+        """is_window_hovered() -> bool
+        True when the current window is hovered. For input dispatch decisions use want_capture_mouse() instead."""
+    def get_window_pos(self) -> tuple:
+        """get_window_pos() -> (float, float)
+        Current window position in screen pixels."""
+    def get_window_size(self) -> tuple:
+        """get_window_size() -> (float, float)
+        Current window size in screen pixels."""
+    def text(self, s: str) -> None:
+        """text(s) -> None
+        Unformatted text (no printf interpretation)."""
+    def text_colored(self, r: float, g: float, b: float, a: float, s: str) -> None:
+        """text_colored(r, g, b, a, s) -> None
+        Text with an explicit RGBA color (components 0.0 - 1.0)."""
+    def text_disabled(self, s: str) -> None:
+        """text_disabled(s) -> None
+        Text drawn in the disabled color."""
+    def text_wrapped(self, s: str) -> None:
+        """text_wrapped(s) -> None
+        Text wrapped at the window width."""
+    def label_text(self, label: str, s: str) -> None:
+        """label_text(label, s) -> None
+        Text with a right-aligned label, like the value+label widgets."""
+    def bullet_text(self, s: str) -> None:
+        """bullet_text(s) -> None
+        Text prefixed with a bullet."""
+    def button(self, label: str, w: float = 0, h: float = 0) -> bool:
+        """button(label, w=0, h=0) -> bool
+        Standard button; True on the frame it is clicked."""
+    def small_button(self, label: str) -> bool:
+        """small_button(label) -> bool
+        Compact button for embedding in text lines."""
+    def checkbox(self, label: str, checked: bool) -> tuple:
+        """checkbox(label, checked) -> (bool, bool)
+        Returns (changed, new_value)."""
+    def radio_button(self, label: str, active: bool) -> bool:
+        """radio_button(label, active) -> bool
+        True when pressed; pass value == button_value as active and assign on True."""
+    def slider_int(self, label: str, value: int, min: int, max: int) -> tuple:
+        """slider_int(label, value, min, max) -> (bool, int)
+        Returns (changed, value)."""
+    def slider_float(self, label: str, value: float, min: float, max: float, format: str = "%.3f") -> tuple:
+        """slider_float(label, value, min, max, format='%.3f') -> (bool, float)
+        Returns (changed, value)."""
+    def drag_int(self, label: str, value: int, speed: float = 1.0, min: int = 0, max: int = 0) -> tuple:
+        """drag_int(label, value, speed=1.0, min=0, max=0) -> (bool, int)
+        Drag widget; min >= max means unbounded. Returns (changed, value)."""
+    def drag_float(self, label: str, value: float, speed: float = 1.0, min: float = 0.0, max: float = 0.0, format: str = "%.3f") -> tuple:
+        """drag_float(label, value, speed=1.0, min=0.0, max=0.0, format='%.3f') -> (bool, float)
+        min >= max means unbounded. Returns (changed, value)."""
+    def input_text(self, label: str, text: str, max_length: int = 256, flags: int = 0) -> tuple:
+        """input_text(label, text, max_length=256, flags=0) -> (bool, str)
+        Single-line edit box backed by a fixed buffer of max_length + 1 bytes.
+        The returned text is the current buffer contents every frame; what 'changed'
+        means depends on flags (with no flags it is True on every edit; pass
+        ImGuiInputTextFlags_EnterReturnsTrue (value 32) to report only on Enter)."""
+    def input_int(self, label: str, value: int, step: int = 1, step_fast: int = 100) -> tuple:
+        """input_int(label, value, step=1, step_fast=100) -> (bool, int)
+        Integer input with +/- steppers. Returns (changed, value)."""
+    def input_float(self, label: str, value: float, step: float = 0.0, step_fast: float = 0.0, format: str = "%.3f") -> tuple:
+        """input_float(label, value, step=0.0, step_fast=0.0, format='%.3f') -> (bool, float)
+        Float input; step 0 hides the steppers. Returns (changed, value)."""
+    def combo(self, label: str, current_index: int, items: Any) -> tuple:
+        """combo(label, current_index, items) -> (bool, int)
+        Drop-down over a sequence of str. Returns (changed, new_index)."""
+    def list_box(self, label: str, current_index: int, items: Any, height_items: int = -1) -> tuple:
+        """list_box(label, current_index, items, height_items=-1) -> (bool, int)
+        Framed scrolling list over a sequence of str. Returns (changed, new_index)."""
+    def selectable(self, label: str, selected: bool, flags: int = 0) -> bool:
+        """selectable(label, selected, flags=0) -> bool
+        True when pressed; toggle your own selection state on True."""
+    def tree_node(self, label: str) -> bool:
+        """tree_node(label) -> bool
+        True when open; emit children and then call tree_pop() only in that case."""
+    def tree_pop(self) -> None:
+        """tree_pop() -> None
+        Close a tree_node() that returned True."""
+    def collapsing_header(self, label: str, flags: int = 0) -> bool:
+        """collapsing_header(label, flags=0) -> bool
+        True when the header is open; no tree_pop() needed."""
+    def separator(self) -> None:
+        """separator() -> None
+        Horizontal separator line (vertical inside menu bars)."""
+    def same_line(self, offset: float = 0.0, spacing: float = -1.0) -> None:
+        """same_line(offset=0.0, spacing=-1.0) -> None
+        Keep the next widget on the current line."""
+    def spacing(self) -> None:
+        """spacing() -> None
+        Vertical spacing."""
+    def newline(self) -> None:
+        """newline() -> None
+        Undo a same_line() / force a line break."""
+    def indent(self, width: float = 0.0) -> None:
+        """indent(width=0.0) -> None
+        Move content right (0 = style default spacing)."""
+    def unindent(self, width: float = 0.0) -> None:
+        """unindent(width=0.0) -> None
+        Move content back left."""
+    def align_text_to_frame_padding(self) -> None:
+        """align_text_to_frame_padding() -> None
+        Align text baseline to framed widgets on the same line."""
+    def begin_table(self, id: str, columns: int, flags: int = 0) -> bool:
+        """begin_table(id, columns, flags=0) -> bool
+        Begin a table; call end_table() only when it returns True."""
+    def end_table(self) -> None:
+        """end_table() -> None
+        End a begin_table() that returned True."""
+    def table_next_row(self, flags: int = 0, min_height: float = 0.0) -> None:
+        """table_next_row(flags=0, min_height=0.0) -> None
+        Advance into the first cell of a new row."""
+    def table_next_column(self) -> bool:
+        """table_next_column() -> bool
+        Advance into the next column; False when the column is clipped."""
+    def table_setup_column(self, label: str, flags: int = 0, init_width: float = 0.0) -> None:
+        """table_setup_column(label, flags=0, init_width=0.0) -> None
+        Declare one column before the first row."""
+    def table_headers_row(self) -> None:
+        """table_headers_row() -> None
+        Emit a header row from the declared columns."""
+    def progress_bar(self, fraction: float, w: float = -1, h: float = 0, overlay: Optional[str] = None) -> None:
+        """progress_bar(fraction, w=-1, h=0, overlay=None) -> None
+        Horizontal progress bar; fraction is 0.0 - 1.0, w < 0 fills the row."""
+    def color_edit3(self, label: str, r: float, g: float, b: float) -> tuple:
+        """color_edit3(label, r, g, b) -> (bool, float, float, float)
+        RGB color editor. Returns (changed, r, g, b)."""
+    def color_edit4(self, label: str, r: float, g: float, b: float, a: float) -> tuple:
+        """color_edit4(label, r, g, b, a) -> (bool, float, float, float, float)
+        RGBA color editor. Returns (changed, r, g, b, a)."""
+    def plot_lines(self, label: str, values: Any, overlay: Optional[str] = None, scale_min: float = 3.4028234663852886e+38, scale_max: float = 3.4028234663852886e+38, w: float = 0, h: float = 0) -> None:
+        """plot_lines(label, values, overlay=None, scale_min=FLT_MAX, scale_max=FLT_MAX, w=0, h=0) -> None
+        Line plot over a sequence of floats. Leave scale_min/scale_max at their defaults
+        for auto-scaling (the FLT_MAX sentinel is ImGui's 'compute from data' semantic)."""
+    def image(self, texture: Any, w: float = 0, h: float = 0, uv0: tuple = (0, 0), uv1: tuple = (1, 1), tint: tuple = (1, 1, 1, 1), border: tuple = (0, 0, 0, 0)) -> None:
+        """image(texture, w=0, h=0, uv0=(0, 0), uv1=(1, 1), tint=(1, 1, 1, 1), border=(0, 0, 0, 0)) -> None
+        Draw a game texture inside the current window. texture is either a lump name
+        (MiscPatch lookup first, sprite-namespace fallback for PLAYA1 style names) or an
+        Actor handle (its current sprite frame texture, rotation 0). w/h 0 means the
+        texture's natural display size; uv0/uv1 select a sub-rectangle; tint is an RGBA
+        multiplier; border with alpha > 0 draws a 1px border of that color. Unknown
+        texture raises ValueError."""
+    def image_size(self, texture: Any) -> tuple:
+        """image_size(texture) -> (float, float)
+        Natural display size (w, h) of a texture accepted by image(). Callable from any event."""
+    def dock_space_over_viewport(self, flags: int = 0) -> int:
+        """dock_space_over_viewport(flags=0) -> int
+        Create a dockspace covering the whole viewport and return its dockspace id.
+        flags are ImGuiDockNodeFlags_* (2 = PassthruCentralNode). Requires the docking
+        branch (always vendored); multi-viewport is not supported."""
+    def dock_space(self, id: int, w: float = 0, h: float = 0, flags: int = 0) -> int:
+        """dock_space(id, w=0, h=0, flags=0) -> int
+        Submit a dockspace node with the given id inside the current window; returns the
+        node id. Windows become dockable while any dockspace exists."""
+    def set_next_window_dock_id(self, id: int, cond: int = 0) -> None:
+        """set_next_window_dock_id(id, cond=0) -> None
+        Dock the next begin() window into the dockspace node with the given id (a value
+        returned by dock_space_over_viewport()/dock_space()). cond is an imgui.Cond value."""
+    def begin_main_menu_bar(self) -> bool:
+        """begin_main_menu_bar() -> bool
+        Begin the screen-top menu bar; call end_main_menu_bar() only when True."""
+    def end_main_menu_bar(self) -> None:
+        """end_main_menu_bar() -> None
+        End the main menu bar."""
+    def begin_menu(self, label: str) -> bool:
+        """begin_menu(label) -> bool
+        Begin a sub-menu; call end_menu() only when True."""
+    def end_menu(self) -> None:
+        """end_menu() -> None
+        End a begin_menu() that returned True."""
+    def menu_item(self, label: str, shortcut: Optional[str] = None, selected: bool = False, enabled: bool = True) -> bool:
+        """menu_item(label, shortcut=None, selected=False, enabled=True) -> bool
+        True when the item is activated."""
+    def begin_tooltip(self) -> bool:
+        """begin_tooltip() -> bool
+        Begin a tooltip window; call end_tooltip() only when True."""
+    def end_tooltip(self) -> None:
+        """end_tooltip() -> None
+        End a begin_tooltip() that returned True."""
+    def set_tooltip(self, s: str) -> None:
+        """set_tooltip(s) -> None
+        Text-only tooltip, typically after is_item_hovered()."""
+    def set_keyboard_focus_here(self, offset: float = 0.0) -> None:
+        """set_keyboard_focus_here(offset=0.0) -> None
+        Focus keyboard on the next widget (or on a sub component with a positive offset; -1 addresses the previous widget)."""
+    def is_item_hovered(self) -> bool:
+        """is_item_hovered() -> bool
+        True when the last submitted item is hovered."""
+    def is_item_clicked(self, button: int = 0) -> bool:
+        """is_item_clicked(button=0) -> bool
+        True when the last item was clicked with the given mouse button."""
+    def is_item_active(self) -> bool:
+        """is_item_active() -> bool
+        True while the last item is being interacted with."""
+    def is_any_item_active(self) -> bool:
+        """is_any_item_active() -> bool
+        True while any item is active."""
+    def push_style_color(self, idx: int, r: float, g: float, b: float, a: float) -> None:
+        """push_style_color(idx, r, g, b, a) -> None
+        Override a style color (idx is an imgui.Col value). Pair with pop_style_color()."""
+    def pop_style_color(self, count: int = 1) -> None:
+        """pop_style_color(count=1) -> None
+        Undo style color pushes."""
+    def push_style_var(self, idx: int, x: float, y: Optional[float] = None) -> None:
+        """push_style_var(idx, x, y=None) -> None
+        Override a style variable; y=None pushes a scalar var, a number pushes an ImVec2 var. Pair with pop_style_var()."""
+    def pop_style_var(self, count: int = 1) -> None:
+        """pop_style_var(count=1) -> None
+        Undo style var pushes."""
+    def get_font_size(self) -> float:
+        """get_font_size() -> float
+        Current font height in pixels after global scaling."""
+    def add_font_ttf(self, name: str, data: bytes, size: float) -> bool:
+        """add_font_ttf(name, data, size) -> bool
+        Register a TTF/OTF font from a bytes object (e.g. bd.read_bytes()) under name, requested
+        pixel size 4..96. The atlas rebuilds outside the frame; a mutation during imgui_frame is
+        applied after the frame renders, so the font becomes usable on the next frame. Duplicate
+        or empty names are rejected (returns False). Callable from any event."""
+    def add_font_default(self, name: str, size: float, bitmap: bool = False) -> bool:
+        """add_font_default(name, size, bitmap=False) -> bool
+        Register a font from ImGui's embedded default data; bitmap=True selects the classic
+        pixel font, False the scalable vector font. Same rebuild and naming rules as add_font_ttf().
+        Callable from any event."""
+    def remove_font(self, name: str) -> bool:
+        """remove_font(name) -> bool
+        Remove a script-registered font and rebuild the atlas. The built-in 'Default' font cannot
+        be removed. Callable from any event."""
+    def clear_fonts(self) -> None:
+        """clear_fonts() -> None
+        Remove all script-registered fonts, keeping 'Default'. Callable from any event."""
+    def list_fonts(self) -> list:
+        """list_fonts() -> [(name, size, bitmap, builtin), ...]
+        Snapshot of the font registry. Callable from any event."""
+    def set_default_font(self, name: str) -> bool:
+        """set_default_font(name) -> bool
+        Select the font every imgui_frame starts on. Returns False for an unknown name.
+        Callable from any event."""
+    def get_default_font(self) -> Optional[str]:
+        """get_default_font() -> str | None
+        Name of the font every imgui_frame starts on. Callable from any event."""
+    def push_font(self, name: str) -> None:
+        """push_font(name) -> None
+        Switch to a registered font; pair with pop_font(). Raises ValueError for an unknown name."""
+    def pop_font(self) -> None:
+        """pop_font() -> None
+        Undo push_font()."""
+    def set_ui_scale(self, factor: float) -> bool:
+        """set_ui_scale(factor) -> bool
+        Global UI scale, clamped to [0.5, 4.0]. Sets style.FontScaleMain and rescales all
+        spacing/padding via ScaleAllSizes() by the ratio between the new and the previous factor,
+        so repeated calls compose. Callable from any event."""
+    def get_ui_scale(self) -> float:
+        """get_ui_scale() -> float
+        Current global UI scale factor. Callable from any event."""
+    def set_window_font_scale(self, scale: float) -> None:
+        """set_window_font_scale(scale) -> None
+        Per-window font scale for the current window; prefer set_ui_scale() for global scaling."""
+    def get_style_color(self, idx: int) -> tuple:
+        """get_style_color(idx) -> (r, g, b, a)
+        Read a style color (idx is an imgui.Col value). Callable from any event."""
+    def set_style_color(self, idx: int, r: float, g: float, b: float, a: float) -> None:
+        """set_style_color(idx, r, g, b, a) -> None
+        Write a style color (idx is an imgui.Col value). Callable from any event."""
+    def get_style_var(self, idx: int) -> Any:
+        """get_style_var(idx) -> float | (x, y)
+        Read a style variable (idx is an imgui.StyleVar value); ImVec2-backed vars return a tuple.
+        Callable from any event."""
+    def set_style_var(self, idx: int, x: float, y: Optional[float] = None) -> None:
+        """set_style_var(idx, x, y=None) -> None
+        Write a style variable; ImVec2-backed vars require y. Callable from any event."""
+    def style_theme(self, name: str) -> None:
+        """style_theme(name) -> None
+        Reset all colors to a stock theme: 'dark', 'classic' or 'light'. The UI scale factors are
+        preserved. Callable from any event."""
+    def is_key_down(self, key: int) -> bool:
+        """is_key_down(key) -> bool
+        True while the key is held (key is an imgui.Key value)."""
+    def is_key_pressed(self, key: int, repeat: bool = False) -> bool:
+        """is_key_pressed(key, repeat=False) -> bool
+        True on the frame the key went down; repeat=True also reports held-key repeats."""
+    def is_key_chord_pressed(self, key: int, mods: int = 0) -> bool:
+        """is_key_chord_pressed(key, mods=0) -> bool
+        True on the frame the mods+key chord went down (mods is an OR of imgui.Mod values).
+        Does no focus routing; prefer shortcut()."""
+    def shortcut(self, key: int, mods: int = 0) -> bool:
+        """shortcut(key, mods=0) -> bool
+        Like is_key_chord_pressed() but with ImGui focus routing, so the deepest focused window wins."""
+    def set_item_default_focus(self) -> None:
+        """set_item_default_focus() -> None
+        Make the last submitted item the default focused item of a newly appearing window."""
+    def open_popup(self, str_id: str) -> None:
+        """open_popup(str_id) -> None
+        Mark a popup as open; call on an event (e.g. a button press), not every frame."""
+    def begin_popup(self, str_id: str) -> bool:
+        """begin_popup(str_id) -> bool
+        True when the popup is open; call end_popup() only in that case."""
+    def end_popup(self) -> None:
+        """end_popup() -> None
+        End a begin_popup() that returned True."""
+    def close_current_popup(self) -> None:
+        """close_current_popup() -> None
+        Close the popup currently open in this scope."""
+    def is_popup_open(self, str_id: str) -> bool:
+        """is_popup_open(str_id) -> bool
+        True when the popup with this id is open."""
+    def calc_text_size(self, s: str) -> tuple:
+        """calc_text_size(s) -> (w, h)
+        Size of a text string in the current font, in pixels."""
+    def set_cursor_pos(self, x: float, y: float) -> None:
+        """set_cursor_pos(x, y) -> None
+        Set the cursor position inside the current window (window-local coordinates)."""
+    def get_cursor_pos(self) -> tuple:
+        """get_cursor_pos() -> (x, y)
+        Cursor position in window-local coordinates."""
+    def get_cursor_screen_pos(self) -> tuple:
+        """get_cursor_screen_pos() -> (x, y)
+        Cursor position in absolute screen coordinates."""
+    def show_demo_window(self, open: bool) -> bool:
+        """show_demo_window(open) -> bool
+        Show the ImGui demo window while open is True; returns the still-open state (the window's close button flips it)."""
+    def show_metrics_window(self, open: bool) -> bool:
+        """show_metrics_window(open) -> bool
+        Show the ImGui metrics/debugger window; returns the still-open state."""
+    def want_capture_mouse(self) -> bool:
+        """want_capture_mouse() -> bool
+        True when ImGui is consuming the mouse this frame."""
+    def want_capture_keyboard(self) -> bool:
+        """want_capture_keyboard() -> bool
+        True when ImGui is consuming the keyboard this frame."""
+    def set_master_visible(self, visible: bool) -> None:
+        """set_master_visible(visible) -> None
+        Toggle the whole overlay (the py_imgui CVar). Callable from any event, not just imgui_frame."""
+    def master_visible(self) -> bool:
+        """master_visible() -> bool
+        Read the py_imgui master switch. Callable from any event."""
+    def set_nav_enabled(self, enabled: bool) -> None:
+        """set_nav_enabled(enabled) -> None
+        Enable or disable ImGui keyboard navigation (ImGuiConfigFlags_NavEnableKeyboard, on by default). Callable from any event, not just imgui_frame."""
+    def nav_enabled(self) -> bool:
+        """nav_enabled() -> bool
+        True when ImGui keyboard navigation is enabled. Callable from any event."""
+
+imgui: _ImguiNamespace
 
 
 # --- ui toolkit (embedded pure-python) ----------------------------------------
@@ -1756,7 +2486,6 @@ class _ActorsRegistry:
     PUZZ_GEM_RED: str  # PuzzGemRed
     PUZZ_M_WEAPON: str  # PuzzMWeapon
     PUZZ_SKULL: str  # PuzzSkull
-    PYTHON_BRIDGE_PROBE: str  # PythonBridgeProbe
     QUEST_ITEM: str  # QuestItem
     QUEST_ITEM1: str  # QuestItem1
     QUEST_ITEM10: str  # QuestItem10

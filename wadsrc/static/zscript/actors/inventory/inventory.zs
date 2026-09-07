@@ -133,6 +133,10 @@ class Inventory : Actor
 	native static void PrintPickupMessage (bool localview, String str);
 	// BiasedDoom Python hook: notifies the embedded runtime of a world pickup.
 	native static void PythonNotifyItemPicked(Inventory item, Actor toucher, int amount);
+	// BiasedDoom Python hook: notifies the embedded runtime of an inventory drop.
+	native static void PythonNotifyItemDropped(Inventory item, Actor dropper, int amount);
+	// BiasedDoom Python hook: notifies the embedded runtime of a ready-weapon change.
+	native static void PythonNotifyWeaponChanged(PlayerPawn pawn, Weapon weapon);
 
 	States(Actor)
 	{

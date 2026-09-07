@@ -544,6 +544,20 @@ elseif(BIASEDDOOM_ENABLE_PYTHON AND MINGW)
 	endif()
 endif()
 
+# Dear ImGui engine overlay. Drives the imgui_frame Python event, so it
+# requires the embedded Python runtime to be available.
+option(BIASEDDOOM_ENABLE_IMGUI "Enable the Dear ImGui engine overlay layer" ON)
+set(BIASEDDOOM_IMGUI_AVAILABLE OFF)
+if(BIASEDDOOM_ENABLE_IMGUI)
+	if(BIASEDDOOM_PYTHON_AVAILABLE)
+		add_subdirectory( libraries/imgui )
+		set(BIASEDDOOM_IMGUI_AVAILABLE ON)
+		message(STATUS "Dear ImGui overlay enabled")
+	else()
+		message(STATUS "Dear ImGui overlay requires the embedded Python runtime; building without ImGui support")
+	endif()
+endif()
+
 add_subdirectory( libraries/lzma )
 add_subdirectory( tools )
 add_subdirectory( wadsrc )

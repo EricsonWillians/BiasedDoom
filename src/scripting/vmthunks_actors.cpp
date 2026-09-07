@@ -1769,6 +1769,48 @@ DEFINE_ACTION_FUNCTION_NATIVE(AInventory, PythonNotifyItemPicked, PythonNotifyIt
 	return 0;
 }
 
+// BiasedDoom Python hook: called from Actor.DropInventory and Actor.A_DropItem
+// after the tossed item exists in the world so item_dropped events fire exactly
+// once per successful drop (player-initiated, ACS, and death drops alike).
+static void PythonNotifyItemDropped(AActor *item, AActor *dropper, int amount)
+{
+	if (item != nullptr && dropper != nullptr)
+	{
+		PythonRuntime::OnItemDropped(item, dropper, amount);
+	}
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(AInventory, PythonNotifyItemDropped, PythonNotifyItemDropped)
+{
+	PARAM_PROLOGUE;
+	PARAM_OBJECT(item, AActor);
+	PARAM_OBJECT(dropper, AActor);
+	PARAM_INT(amount);
+	PythonNotifyItemDropped(item, dropper, amount);
+	return 0;
+}
+
+// BiasedDoom Python hook: called from PlayerPawn.BringUpWeapon right after
+// player.ReadyWeapon is reassigned so weapon_changed events fire at the real
+// switch point (A_Lower calls the ZScript BringUpWeapon directly, bypassing
+// the C++ P_BringUpWeapon wrapper).
+static void PythonNotifyWeaponChanged(AActor *pawn, AActor *weapon)
+{
+	if (pawn != nullptr)
+	{
+		PythonRuntime::OnWeaponChanged(pawn, weapon);
+	}
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(AInventory, PythonNotifyWeaponChanged, PythonNotifyWeaponChanged)
+{
+	PARAM_PROLOGUE;
+	PARAM_OBJECT(pawn, AActor);
+	PARAM_OBJECT(weapon, AActor);
+	PythonNotifyWeaponChanged(pawn, weapon);
+	return 0;
+}
+
 //=====================================================================================
 //
 // Key exports

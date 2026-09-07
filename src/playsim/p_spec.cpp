@@ -141,6 +141,29 @@ bool FLevelLocals::CheckIfExitIsGood (AActor *self, level_info_t *info)
 // UTILITIES
 //
 
+//==========================================================================
+//
+// P_SpecialFailReasonName
+//
+// Stable string names for ESpecialFailReason values, surfaced to the Python
+// line_activation_failed event payload and usable for debug logging.
+//
+//==========================================================================
+
+const char *P_SpecialFailReasonName(int reason)
+{
+	switch (reason)
+	{
+	case SPECIAL_FAIL_UNKNOWN_SPECIAL:			return "unknown_special";
+	case SPECIAL_FAIL_SCRIPT_NOT_FOUND:			return "script_not_found";
+	case SPECIAL_FAIL_LOCKED:					return "locked";
+	case SPECIAL_FAIL_ACTIVATION_FILTERED:		return "activation_filtered";
+	case SPECIAL_FAIL_INSUFFICIENT_RESOURCES:	return "insufficient_resources";
+	case SPECIAL_FAIL_NONE:
+	default:									return "none";
+	}
+}
+
 //============================================================================
 //
 // P_ActivateLine
@@ -154,20 +177,48 @@ bool P_ActivateLine (line_t *line, AActor *mo, int side, int activationType, DVe
 	INTBOOL buttonSuccess;
 	uint8_t special;
 
+	auto Level = line->GetLevel();
+
+	// Reset the failure reason for this activation attempt. The failure paths
+	// below (and P_ExecuteSpecial / P_StartScript / EV_DoDoor) refine it so the
+	// activation-failed events can report why the trigger did nothing.
+	Level->LastSpecialFailReason = SPECIAL_FAIL_NONE;
+
 	if (!P_TestActivateLine (line, mo, side, activationType, optpos))
 	{
+		// Activation filtering rejected the trigger before the special ran
+		// (wrong side, wrong activation type, monster on a player-only line,
+		// switch out of range...). Report it so silent triggers produce signal.
+		if (line->special)
+		{
+			Level->LastSpecialFailReason = SPECIAL_FAIL_ACTIVATION_FILTERED;
+			Level->localEventManager->WorldLineActivationFailed(line, mo, activationType, Level->LastSpecialFailReason);
+		}
 		return false;
 	}
-
-	auto Level = line->GetLevel();
 
 	// [MK] Use WorldLinePreActivated to decide if activation should continue
 	bool shouldactivate = true;
 	Level->localEventManager->WorldLinePreActivated(line, mo, activationType, &shouldactivate);
-	if ( !shouldactivate ) return false;
+	if ( !shouldactivate )
+	{
+		// An event handler vetoed the activation; treat it as filtered.
+		if (line->special)
+		{
+			Level->LastSpecialFailReason = SPECIAL_FAIL_ACTIVATION_FILTERED;
+			Level->localEventManager->WorldLineActivationFailed(line, mo, activationType, Level->LastSpecialFailReason);
+		}
+		return false;
+	}
 
 	bool remote = (line->special != 7 && line->special != 8 && (line->special < 11 || line->special > 14));
-	if (line->locknumber > 0 && !P_CheckKeys (mo, line->locknumber, remote)) return false;
+	if (line->locknumber > 0 && !P_CheckKeys (mo, line->locknumber, remote))
+	{
+		// P_TestActivateLine guarantees a nonzero special here.
+		Level->LastSpecialFailReason = SPECIAL_FAIL_LOCKED;
+		Level->localEventManager->WorldLineActivationFailed(line, mo, activationType, Level->LastSpecialFailReason);
+		return false;
+	}
 
 	lineActivation = line->activation;
 	repeat = line->flags & ML_REPEAT_SPECIAL;
@@ -176,7 +227,7 @@ bool P_ActivateLine (line_t *line, AActor *mo, int side, int activationType, DVe
 
 	// [MK] Fire up WorldLineActivated
 	if ( buttonSuccess ) Level->localEventManager->WorldLineActivated(line, mo, activationType);
-	else if ( line->special ) Level->localEventManager->WorldLineActivationFailed(line, mo, activationType);
+	else if ( line->special ) Level->localEventManager->WorldLineActivationFailed(line, mo, activationType, Level->LastSpecialFailReason);
 
 	special = line->special;
 	if (!repeat && buttonSuccess)

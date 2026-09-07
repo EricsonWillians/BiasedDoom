@@ -21,6 +21,10 @@ public:
 void I_InitGraphics();
 void I_ShutdownGraphics();
 
+// True when running without a display (-headless or BIASEDDOOM_HEADLESS=1).
+// Implemented in common/rendering/nullvideo/null_video.cpp.
+bool I_IsHeadless();
+
 extern IVideo *Video;
 
 void I_PolyPresentInit();

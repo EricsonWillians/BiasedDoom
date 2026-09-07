@@ -431,7 +431,12 @@ bool FLevelLocals::EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
 	sector_t*	sec;
 
 	if (lock != 0 && !P_CheckKeys (thing, lock, tag != 0))
+	{
+		// Activator lacks the required key: record the failure reason for the
+		// line_activation_failed / WorldLineActivationFailed events.
+		LastSpecialFailReason = SPECIAL_FAIL_LOCKED;
 		return false;
+	}
 
 	if (tag == 0)
 	{		// [RH] manual door

@@ -12,6 +12,7 @@
 #include "python_game_api.h"
 #include "python_runtime.h"
 #include "python_displaylist.h"
+#include "python_imgui.h"
 
 #ifdef BIASEDDOOM_PYTHON
 
@@ -32,6 +33,7 @@
 #include "g_statusbar/sbar.h"
 #include "gamestate.h"
 #include "m_random.h"
+#include "p_conversation.h"
 #include "p_lnspec.h"
 #include "p_local.h"
 #include "r_defs.h"
@@ -51,6 +53,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -117,6 +120,27 @@ PyTypeObject* rngStreamType = nullptr;
 uint32_t worldGeneration = 1;
 bool markerRegistered = false;
 
+// Persistent per-actor script data backing bd.actor_data(). Keyed by
+// (slot << 32) | generation so a recycled slot can never resurrect a previous
+// actor's dict (AcquireActorSlot bumps the generation on every reuse). The map
+// holds a strong reference to each dict; entries are purged from
+// InvalidateActorSlot (destruction/GC) and InvalidateWorld (map change), so
+// the data deliberately does not survive savegames or level transitions.
+std::map<uint64_t, PyObject*> actorDataStore;
+
+uint64_t ActorDataKey(uint32_t slot, uint32_t generation)
+{
+	return (static_cast<uint64_t>(slot) << 32) | generation;
+}
+
+void PurgeActorData(uint32_t slot, uint32_t generation)
+{
+	auto entry = actorDataStore.find(ActorDataKey(slot, generation));
+	if (entry == actorDataStore.end()) return;
+	Py_DECREF(entry->second);
+	actorDataStore.erase(entry);
+}
+
 bool IsUsableActor(AActor* actor)
 {
 	return actor != nullptr && !(actor->ObjectFlags & OF_EuthanizeMe) &&
@@ -130,6 +154,10 @@ void InvalidateActorSlot(uint32_t index)
 	AActor* actor = slot.Actor.ForceGet();
 	if (actor != nullptr) actorLookup.erase(actor);
 	slot.Actor = nullptr;
+	// Purge with the generation at invalidation time: only matching-generation
+	// handles could ever resolve to this actor, so this key can no longer be
+	// reached once the slot is gone or recycled.
+	PurgeActorData(index, slot.Generation);
 }
 
 uint32_t AcquireActorSlot(AActor* actor)
@@ -1884,8 +1912,12 @@ PyObject* PyActorRefs(PyObject*, PyObject* args, PyObject* kwargs)
 	const char* className = nullptr;
 	int tid = 0;
 	int limit = 4096;
-	static const char* keywords[] = { "class_name", "tid", "limit", nullptr };
-	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|zii:actor_refs", const_cast<char**>(keywords), &className, &tid, &limit)) return nullptr;
+	int subclasses = 1;
+	PyObject* sphereObject = Py_None;
+	PyObject* zObject = Py_None;
+	static const char* keywords[] = { "class_name", "tid", "limit", "subclasses", "sphere", "z", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|ziipOO:actor_refs", const_cast<char**>(keywords),
+		&className, &tid, &limit, &subclasses, &sphereObject, &zObject)) return nullptr;
 	if (!CheckApiThread()) return nullptr;
 	if (limit < 0 || limit > 1000000)
 	{
@@ -1902,6 +1934,64 @@ PyObject* PyActorRefs(PyObject*, PyObject* args, PyObject* kwargs)
 			return nullptr;
 		}
 	}
+	// Push-down spatial filters: evaluated in C++ during the single thinker
+	// scan, so no per-actor Python crossings happen while filtering.
+	bool useSphere = sphereObject != Py_None;
+	double sphereX = 0, sphereY = 0, sphereRadius = 0;
+	if (useSphere)
+	{
+		PyObject* sphere = PySequence_Fast(sphereObject, "sphere must be an (x, y, radius) sequence");
+		if (sphere == nullptr) return nullptr;
+		if (PySequence_Fast_GET_SIZE(sphere) != 3)
+		{
+			Py_DECREF(sphere);
+			PyErr_SetString(PyExc_ValueError, "sphere must contain exactly three numbers: x, y, radius");
+			return nullptr;
+		}
+		sphereX = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(sphere, 0));
+		sphereY = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(sphere, 1));
+		sphereRadius = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(sphere, 2));
+		const bool valid = !PyErr_Occurred();
+		Py_DECREF(sphere);
+		if (!valid) return nullptr;
+		if (sphereRadius < 0)
+		{
+			PyErr_SetString(PyExc_ValueError, "sphere radius must not be negative");
+			return nullptr;
+		}
+	}
+	bool useZ = zObject != Py_None;
+	double sphereZ = 0;
+	if (useZ)
+	{
+		sphereZ = PyFloat_AsDouble(zObject);
+		if (PyErr_Occurred()) return nullptr;
+		if (!useSphere)
+		{
+			PyErr_SetString(PyExc_ValueError, "z requires the sphere filter");
+			return nullptr;
+		}
+	}
+	const double radiusSquared = sphereRadius * sphereRadius;
+	auto matches = [&](AActor* actor)
+	{
+		if (filter != nullptr)
+		{
+			if (subclasses != 0)
+			{
+				if (!actor->IsKindOf(filter)) return false;
+			}
+			else if (actor->GetClass() != filter) return false;
+		}
+		if (useSphere)
+		{
+			const double dx = actor->X() - sphereX;
+			const double dy = actor->Y() - sphereY;
+			if (dx * dx + dy * dy > radiusSquared) return false;
+			if (useZ && std::abs(actor->Z() - sphereZ) > sphereRadius) return false;
+		}
+		return true;
+	};
 	PyObject* result = PyList_New(0);
 	if (result == nullptr || primaryLevel == nullptr) return result;
 	if (tid != 0)
@@ -1910,7 +2000,7 @@ PyObject* PyActorRefs(PyObject*, PyObject* args, PyObject* kwargs)
 		AActor* actor = nullptr;
 		while (PyList_GET_SIZE(result) < limit && (actor = iterator.Next()) != nullptr)
 		{
-			if (filter != nullptr && !actor->IsKindOf(filter)) continue;
+			if (!matches(actor)) continue;
 			PyObject* reference = MakeActorRef(actor);
 			if (reference == nullptr || PyList_Append(result, reference) < 0)
 			{
@@ -1927,7 +2017,7 @@ PyObject* PyActorRefs(PyObject*, PyObject* args, PyObject* kwargs)
 		AActor* actor = nullptr;
 		while (PyList_GET_SIZE(result) < limit && (actor = iterator.Next()) != nullptr)
 		{
-			if (filter != nullptr && !actor->IsKindOf(filter)) continue;
+			if (!matches(actor)) continue;
 			PyObject* reference = MakeActorRef(actor);
 			if (reference == nullptr || PyList_Append(result, reference) < 0)
 			{
@@ -1974,14 +2064,6 @@ PyObject* PySpawnActorRef(PyObject*, PyObject* args, PyObject* kwargs)
 	actor->Angles.Yaw = DAngle::fromDeg(angle);
 	if (tid != 0) actor->SetTID(tid);
 	return MakeActorRef(actor);
-}
-
-PyObject* MakePlayerRef(int index)
-{
-	PyPlayerRef* reference = PyObject_New(PyPlayerRef, playerRefType);
-	if (reference == nullptr) return nullptr;
-	reference->Index = index;
-	return reinterpret_cast<PyObject*>(reference);
 }
 
 PyObject* PyPlayer(PyObject*, PyObject* args)
@@ -2051,6 +2133,65 @@ PyObject* PySectors(PyObject*, PyObject* args, PyObject* kwargs)
 			PyList_Append(result, reference);
 			Py_DECREF(reference);
 		}
+	}
+	return result;
+}
+
+PyObject* PySectorAt(PyObject*, PyObject* args)
+{
+	double x, y;
+	if (!PyArg_ParseTuple(args, "dd:sector_at", &x, &y)) return nullptr;
+	if (!CheckApiThread()) return nullptr;
+	if (primaryLevel == nullptr || primaryLevel->sectors.Size() == 0) Py_RETURN_NONE;
+	sector_t* sector = primaryLevel->PointInSector(x, y);
+	if (sector == nullptr) Py_RETURN_NONE;
+	return MakeWorldRef(sectorRefType, sector->Index());
+}
+
+PyObject* PyActorsInSector(PyObject*, PyObject* args)
+{
+	PyObject* sectorObject = nullptr;
+	if (!PyArg_ParseTuple(args, "O:actors_in_sector", &sectorObject)) return nullptr;
+	if (!CheckApiThread()) return nullptr;
+	int sectorIndex = -1;
+	if (sectorRefType != nullptr && PyObject_TypeCheck(sectorObject, sectorRefType))
+	{
+		sector_t* sector = ResolveSector(reinterpret_cast<PyWorldRef*>(sectorObject), false);
+		if (sector == nullptr) return nullptr;
+		sectorIndex = sector->Index();
+	}
+	else if (PyLong_Check(sectorObject))
+	{
+		const long index = PyLong_AsLong(sectorObject);
+		if (PyErr_Occurred()) return nullptr;
+		if (primaryLevel == nullptr || index < 0 || static_cast<unsigned>(index) >= primaryLevel->sectors.Size())
+		{
+			PyErr_Format(PyExc_ValueError, "sector index %ld is out of range", index);
+			return nullptr;
+		}
+		sectorIndex = static_cast<int>(index);
+	}
+	else
+	{
+		PyErr_SetString(PyExc_TypeError, "sector must be a Sector handle or a sector index");
+		return nullptr;
+	}
+	sector_t* target = &primaryLevel->sectors[sectorIndex];
+	PyObject* result = PyList_New(0);
+	if (result == nullptr) return nullptr;
+	auto iterator = primaryLevel->GetThinkerIterator<AActor>();
+	AActor* actor = nullptr;
+	while ((actor = iterator.Next()) != nullptr)
+	{
+		if (actor->Sector != target) continue;
+		PyObject* reference = MakeActorRef(actor);
+		if (reference == nullptr || PyList_Append(result, reference) < 0)
+		{
+			Py_XDECREF(reference);
+			Py_DECREF(result);
+			return nullptr;
+		}
+		Py_DECREF(reference);
 	}
 	return result;
 }
@@ -2204,6 +2345,7 @@ PyObject* PyApplyActorBatch(PyObject*, PyObject* args)
 	if (operations == nullptr) return nullptr;
 	const Py_ssize_t operationCount = PySequence_Fast_GET_SIZE(operations);
 	Py_ssize_t applied = 0;
+	Py_ssize_t skipped = 0;
 	for (Py_ssize_t index = 0; index < operationCount; ++index)
 	{
 		PyObject* operation = PySequence_Fast(PySequence_Fast_GET_ITEM(operations, index),
@@ -2217,7 +2359,26 @@ PyObject* PyApplyActorBatch(PyObject*, PyObject* args)
 			return nullptr;
 		}
 		const char* name = PyUnicode_AsUTF8(PySequence_Fast_GET_ITEM(operation, 0));
-		AActor* actor = ResolveActorArgument(PySequence_Fast_GET_ITEM(operation, 1), "batch actor", false, true);
+		PyObject* actorObject = PySequence_Fast_GET_ITEM(operation, 1);
+		AActor* actor = nullptr;
+		if (name != nullptr && actorRefType != nullptr && PyObject_TypeCheck(actorObject, actorRefType))
+		{
+			// Batches are best-effort: ops whose Actor handle went stale since
+			// the batch was built are skipped (counted, reported once per call
+			// via the warning channel) instead of aborting the remaining ops.
+			actor = ResolveActor(reinterpret_cast<PyActorRef*>(actorObject), true, false);
+			if (actor == nullptr)
+			{
+				if (PyErr_Occurred()) { Py_DECREF(operation); Py_DECREF(operations); return nullptr; }
+				++skipped;
+				Py_DECREF(operation);
+				continue;
+			}
+		}
+		else if (name != nullptr)
+		{
+			actor = ResolveActorArgument(actorObject, "batch actor", false, true);
+		}
 		if (name == nullptr || actor == nullptr) { Py_DECREF(operation); Py_DECREF(operations); return nullptr; }
 		if (strcmp(name, "velocity") == 0 || strcmp(name, "add_velocity") == 0 || strcmp(name, "position") == 0)
 		{
@@ -2307,7 +2468,159 @@ PyObject* PyApplyActorBatch(PyObject*, PyObject* args)
 		Py_DECREF(operation);
 	}
 	Py_DECREF(operations);
+	if (skipped > 0)
+	{
+		ReportScriptWarning("apply_actor_batch skipped %u operation%s with stale actor handles",
+			static_cast<unsigned>(skipped), skipped == 1 ? "" : "s");
+	}
 	return PyLong_FromSsize_t(applied);
+}
+
+enum class ActorBatchField : uint8_t
+{
+	Health,
+	X,
+	Y,
+	Z,
+	Angle,
+	Pitch,
+	Roll,
+	Speed,
+	Alpha,
+	Tid,
+	ClassName,
+	Alive,
+	IsPlayer,
+	IsMonster,
+	Special,
+	DamageFactor,
+};
+
+struct ActorBatchFieldName
+{
+	const char* Name;
+	ActorBatchField Field;
+};
+
+const ActorBatchFieldName ActorBatchFields[] = {
+	{ "health", ActorBatchField::Health },
+	{ "x", ActorBatchField::X },
+	{ "y", ActorBatchField::Y },
+	{ "z", ActorBatchField::Z },
+	{ "angle", ActorBatchField::Angle },
+	{ "pitch", ActorBatchField::Pitch },
+	{ "roll", ActorBatchField::Roll },
+	{ "speed", ActorBatchField::Speed },
+	{ "alpha", ActorBatchField::Alpha },
+	{ "tid", ActorBatchField::Tid },
+	{ "class_name", ActorBatchField::ClassName },
+	{ "alive", ActorBatchField::Alive },
+	{ "is_player", ActorBatchField::IsPlayer },
+	{ "is_monster", ActorBatchField::IsMonster },
+	{ "special", ActorBatchField::Special },
+	{ "damage_factor", ActorBatchField::DamageFactor },
+};
+
+const char* ActorBatchFieldNames =
+	"health, x, y, z, angle, pitch, roll, speed, alpha, tid, class_name, "
+	"alive, is_player, is_monster, special, damage_factor";
+
+PyObject* ActorBatchFieldValue(AActor* actor, ActorBatchField field)
+{
+	switch (field)
+	{
+	case ActorBatchField::Health: return PyLong_FromLong(actor->health);
+	case ActorBatchField::X: return PyFloat_FromDouble(actor->X());
+	case ActorBatchField::Y: return PyFloat_FromDouble(actor->Y());
+	case ActorBatchField::Z: return PyFloat_FromDouble(actor->Z());
+	case ActorBatchField::Angle: return PyFloat_FromDouble(actor->Angles.Yaw.Degrees());
+	case ActorBatchField::Pitch: return PyFloat_FromDouble(actor->Angles.Pitch.Degrees());
+	case ActorBatchField::Roll: return PyFloat_FromDouble(actor->Angles.Roll.Degrees());
+	case ActorBatchField::Speed: return PyFloat_FromDouble(actor->Speed);
+	case ActorBatchField::Alpha: return PyFloat_FromDouble(actor->Alpha);
+	case ActorBatchField::Tid: return PyLong_FromLong(actor->tid);
+	case ActorBatchField::ClassName: return PyUnicode_FromString(actor->GetClass()->TypeName.GetChars());
+	case ActorBatchField::Alive: return PyBool_FromLong(actor->health > 0);
+	case ActorBatchField::IsPlayer: return PyBool_FromLong(actor->player != nullptr);
+	case ActorBatchField::IsMonster: return PyBool_FromLong((actor->flags3 & MF3_ISMONSTER) != 0);
+	case ActorBatchField::Special: return PyLong_FromLong(actor->special);
+	case ActorBatchField::DamageFactor: return PyFloat_FromDouble(actor->DamageFactor);
+	}
+	Py_RETURN_NONE;
+}
+
+PyObject* PyActorFieldBatch(PyObject*, PyObject* args)
+{
+	PyObject* refsObject = nullptr;
+	PyObject* fieldsObject = nullptr;
+	if (!PyArg_ParseTuple(args, "OO:actor_field_batch", &refsObject, &fieldsObject)) return nullptr;
+	if (!CheckApiThread()) return nullptr;
+	PyObject* fields = PySequence_Fast(fieldsObject, "fields must be a sequence of field names");
+	if (fields == nullptr) return nullptr;
+	const Py_ssize_t fieldCount = PySequence_Fast_GET_SIZE(fields);
+	std::vector<ActorBatchField> parsed;
+	parsed.reserve(fieldCount);
+	for (Py_ssize_t index = 0; index < fieldCount; ++index)
+	{
+		PyObject* item = PySequence_Fast_GET_ITEM(fields, index);
+		if (!PyUnicode_Check(item))
+		{
+			Py_DECREF(fields);
+			PyErr_Format(PyExc_TypeError, "field %zd must be a string", index);
+			return nullptr;
+		}
+		const char* name = PyUnicode_AsUTF8(item);
+		if (name == nullptr) { Py_DECREF(fields); return nullptr; }
+		bool found = false;
+		for (const ActorBatchFieldName& entry : ActorBatchFields)
+		{
+			if (strcmp(name, entry.Name) == 0)
+			{
+				parsed.push_back(entry.Field);
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+		{
+			Py_DECREF(fields);
+			PyErr_Format(PyExc_ValueError, "unknown actor field '%s'; valid fields: %s", name, ActorBatchFieldNames);
+			return nullptr;
+		}
+	}
+	Py_DECREF(fields);
+	PyObject* refs = PySequence_Fast(refsObject, "refs must be a sequence of Actor handles");
+	if (refs == nullptr) return nullptr;
+	const Py_ssize_t refCount = PySequence_Fast_GET_SIZE(refs);
+	PyObject* result = PyList_New(refCount);
+	if (result == nullptr) { Py_DECREF(refs); return nullptr; }
+	for (Py_ssize_t row = 0; row < refCount; ++row)
+	{
+		PyObject* item = PySequence_Fast_GET_ITEM(refs, row);
+		// Reads are best-effort: stale or invalid handles yield a row of None
+		// values instead of aborting the whole batch.
+		AActor* actor = nullptr;
+		if (actorRefType != nullptr && PyObject_TypeCheck(item, actorRefType))
+		{
+			actor = ResolveActor(reinterpret_cast<PyActorRef*>(item), false, false);
+			if (actor == nullptr && PyErr_Occurred()) PyErr_Clear();
+		}
+		PyObject* tuple = PyTuple_New(fieldCount);
+		if (tuple == nullptr) { Py_DECREF(refs); Py_DECREF(result); return nullptr; }
+		for (Py_ssize_t column = 0; column < fieldCount; ++column)
+		{
+			PyObject* value = actor != nullptr ? ActorBatchFieldValue(actor, parsed[column]) : nullptr;
+			if (value == nullptr)
+			{
+				PyErr_Clear();
+				value = Py_NewRef(Py_None);
+			}
+			PyTuple_SET_ITEM(tuple, column, value);
+		}
+		PyList_SET_ITEM(result, row, tuple);
+	}
+	Py_DECREF(refs);
+	return result;
 }
 
 PyObject* PySpawnMissile(PyObject*, PyObject* args, PyObject* kwargs)
@@ -2437,6 +2750,9 @@ PyObject* PyCenterMessage(PyObject*, PyObject* args, PyObject* kwargs)
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|p:center_message", const_cast<char**>(keywords),
 		&message, &bold)) return nullptr;
 	if (!CheckApiThread()) return nullptr;
+	// Center messages only attach to the local status bar; they stay available
+	// in multiplayer/demo observer mode.
+	if (!CheckLocalPresentation()) return nullptr;
 	C_MidPrint(nullptr, message, bold != 0);
 	Py_RETURN_NONE;
 }
@@ -2451,7 +2767,69 @@ PyObject* PySetMusic(PyObject*, PyObject* args, PyObject* kwargs)
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|ipp:set_music", const_cast<char**>(keywords),
 		&name, &order, &looping, &force)) return nullptr;
 	if (!CheckApiThread()) return nullptr;
+	// S_ChangeMusic only drives the local ZMusic stream (mus_playing); music
+	// is per-client presentation, not serialized world state, so it stays
+	// available in multiplayer/demo observer mode.
+	if (!CheckLocalPresentation()) return nullptr;
 	return PyBool_FromLong(S_ChangeMusic(name, order, looping != 0, force != 0));
+}
+
+PyObject* PyPlayerLog(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	int playerIndex = 0;
+	static const char* keywords[] = { "player_index", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|i:player_log", const_cast<char**>(keywords),
+		&playerIndex)) return nullptr;
+	if (!CheckApiThread()) return nullptr;
+	// Read-only: no mutation guard, so observer mode may query the log too.
+	if (playerIndex < 0 || playerIndex >= static_cast<int>(MAXPLAYERS) || !playeringame[playerIndex])
+	{
+		Py_RETURN_NONE;
+	}
+	const FString& log = players[playerIndex].LogText;
+	if (log.IsEmpty()) Py_RETURN_NONE;
+	return PyUnicode_FromString(log.GetChars());
+}
+
+PyObject* PySetPlayerLog(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	const char* text = nullptr;
+	int playerIndex = 0;
+	static const char* keywords[] = { "text", "player_index", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|i:set_player_log", const_cast<char**>(keywords),
+		&text, &playerIndex)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	if (playerIndex < 0 || playerIndex >= static_cast<int>(MAXPLAYERS) || !playeringame[playerIndex] ||
+		players[playerIndex].mo == nullptr)
+	{
+		PyErr_Format(PyExc_ValueError, "no player in slot %d", playerIndex);
+		return nullptr;
+	}
+	players[playerIndex].SetLogText(text);
+	Py_RETURN_NONE;
+}
+
+PyObject* PyStartConversation(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	PyObject* npcObject = nullptr;
+	static const char* keywords[] = { "npc", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O:start_conversation", const_cast<char**>(keywords),
+		&npcObject)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	AActor* npc = ResolveActorArgument(npcObject, "npc", false, false);
+	if (npc == nullptr) return nullptr;
+	player_t* console = &players[consoleplayer];
+	if (console->mo == nullptr || console->mo->Level == nullptr) Py_RETURN_FALSE;
+	// Mirror CanTalk (p_map.cpp) so a failed start leaves no dangling
+	// conversation state on the player.
+	if (npc->Conversation == nullptr || npc->health <= 0 || (npc->flags4 & MF4_INCOMBAT))
+	{
+		Py_RETURN_FALSE;
+	}
+	// Mirror the USE-path arguments from P_TalkFacing: faceTalker + saveAngle.
+	npc->ConversationAnimation(0);
+	P_StartConversation(npc, console->mo, true, true);
+	Py_RETURN_TRUE;
 }
 
 //---------------------------------------------------------------------------
@@ -2586,7 +2964,7 @@ PyObject* PyHudText(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "text", "id", "x", "y", "color", "hold", "fade", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|iddsdd:hud_text", const_cast<char**>(keywords),
 		&text, &id, &x, &y, &colorName, &hold, &fade)) return nullptr;
-	if (!CheckGameplayMutation()) return nullptr;
+	if (!CheckLocalPresentation()) return nullptr;
 	if (StatusBar == nullptr)
 	{
 		PyErr_SetString(PyExc_RuntimeError, "hud_text requires an active status bar");
@@ -2608,7 +2986,7 @@ PyObject* PyHudClear(PyObject*, PyObject* args, PyObject* kwargs)
 	int id = 0;
 	static const char* keywords[] = { "id", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|i:hud_clear", const_cast<char**>(keywords), &id)) return nullptr;
-	if (!CheckGameplayMutation()) return nullptr;
+	if (!CheckLocalPresentation()) return nullptr;
 	// Messages attached with the default id 0 cannot be addressed; clearing is
 	// a graceful no-op without a status bar, matching AttachMessage's detach.
 	if (StatusBar == nullptr || id == 0) Py_RETURN_NONE;
@@ -2635,7 +3013,7 @@ PyObject* PyScreenFlash(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "r", "g", "b", "alpha", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "iiid:screen_flash", const_cast<char**>(keywords),
 		&red, &green, &blue, &alpha)) return nullptr;
-	if (!CheckGameplayMutation()) return nullptr;
+	if (!CheckLocalPresentation()) return nullptr;
 	player_t* viewer = RequireConsolePlayer("screen_flash");
 	if (viewer == nullptr) return nullptr;
 	viewer->BlendR = std::clamp(red, 0, 255) / 255.f;
@@ -2653,7 +3031,7 @@ PyObject* PyScreenFade(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "r", "g", "b", "alpha", "seconds", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "iiid|d:screen_fade", const_cast<char**>(keywords),
 		&red, &green, &blue, &alpha, &seconds)) return nullptr;
-	if (!CheckGameplayMutation()) return nullptr;
+	if (!CheckLocalPresentation()) return nullptr;
 	player_t* viewer = RequireConsolePlayer("screen_fade");
 	if (viewer == nullptr) return nullptr;
 	const float fromR = std::clamp(red, 0, 255) / 255.f;
@@ -2682,7 +3060,7 @@ PyObject* PyPlayUiSound(PyObject*, PyObject* args, PyObject* kwargs)
 	static const char* keywords[] = { "name", "volume", nullptr };
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|d:play_ui_sound", const_cast<char**>(keywords),
 		&name, &volume)) return nullptr;
-	if (!CheckGameplayMutation()) return nullptr;
+	if (!CheckLocalPresentation()) return nullptr;
 	S_Sound(CHAN_AUTO, CHANF_UI | CHANF_NORUMBLE, name, static_cast<float>(volume), ATTN_NORM);
 	Py_RETURN_NONE;
 }
@@ -2750,24 +3128,85 @@ PyObject* PyLoadCheckpoint(PyObject*, PyObject* args, PyObject* kwargs)
 }
 
 
+PyObject* PySessionReadOnly(PyObject*, PyObject*)
+{
+	if (!CheckApiThread()) return nullptr;
+	return PyBool_FromLong(netgame || multiplayer || demoplayback || demorecording);
+}
+
+PyObject* PyActorData(PyObject*, PyObject* args)
+{
+	PyObject* object = nullptr;
+	if (!PyArg_ParseTuple(args, "O:actor_data", &object)) return nullptr;
+	if (actorRefType == nullptr || !PyObject_TypeCheck(object, actorRefType))
+	{
+		PyErr_SetString(PyExc_TypeError, "actor_data requires an Actor handle");
+		return nullptr;
+	}
+	PyActorRef* reference = reinterpret_cast<PyActorRef*>(object);
+	// Read-only resolve (raises ReferenceError on stale/invalid handles like
+	// every other handle use): the data dict is script-side storage and
+	// carries no gameplay mutation by itself.
+	if (ResolveActor(reference, false, true) == nullptr) return nullptr;
+	const uint64_t key = ActorDataKey(reference->Slot, reference->Generation);
+	auto existing = actorDataStore.find(key);
+	if (existing != actorDataStore.end()) return Py_NewRef(existing->second);
+	PyObject* dict = PyDict_New();
+	if (dict == nullptr) return nullptr;
+	// The store keeps its own strong reference; the caller owns the new one.
+	actorDataStore.emplace(key, Py_NewRef(dict));
+	return dict;
+}
+
+PyObject* PyActorDataDrop(PyObject*, PyObject* args)
+{
+	PyObject* object = nullptr;
+	if (!PyArg_ParseTuple(args, "O:actor_data_drop", &object)) return nullptr;
+	if (actorRefType == nullptr || !PyObject_TypeCheck(object, actorRefType))
+	{
+		PyErr_SetString(PyExc_TypeError, "actor_data_drop requires an Actor handle");
+		return nullptr;
+	}
+	if (!CheckApiThread()) return nullptr;
+	PyActorRef* reference = reinterpret_cast<PyActorRef*>(object);
+	// Drop is idempotent: stale handles (destroyed actor, unloaded map) return
+	// False instead of raising. Resolving without raise also lets the stale
+	// path invalidate the slot, which purges any orphaned entry as a side
+	// effect.
+	if (ResolveActor(reference, false, false) == nullptr) Py_RETURN_FALSE;
+	auto entry = actorDataStore.find(ActorDataKey(reference->Slot, reference->Generation));
+	if (entry == actorDataStore.end()) Py_RETURN_FALSE;
+	Py_DECREF(entry->second);
+	actorDataStore.erase(entry);
+	Py_RETURN_TRUE;
+}
+
 PyMethodDef GameMethods[] = {
 	{ "actor_ref", PyActorRefByTid, METH_VARARGS, "Return a live Actor handle for a TID, or None." },
 	{ "actor_refs", BD_GAME_KEYWORD_FUNCTION(PyActorRefs), METH_VARARGS | METH_KEYWORDS, "Return lightweight live Actor handles." },
 	{ "spawn", BD_GAME_KEYWORD_FUNCTION(PySpawnActorRef), METH_VARARGS | METH_KEYWORDS, "Spawn and return a live Actor handle." },
+	{ "actor_data", PyActorData, METH_VARARGS, "Return the actor's persistent per-actor data dict, creating it on demand. Purged automatically when the actor is destroyed or the map changes; not saved in savegames." },
+	{ "actor_data_drop", PyActorDataDrop, METH_VARARGS, "Drop the actor's per-actor data dict if present. Returns True when one existed." },
 	{ "player", PyPlayer, METH_VARARGS, "Return a live Player handle by slot." },
 	{ "player_refs", PyPlayerRefs, METH_NOARGS, "Return all in-game Player handles." },
 	{ "sector", PySector, METH_VARARGS, "Return a Sector handle by index." },
 	{ "sectors", BD_GAME_KEYWORD_FUNCTION(PySectors), METH_VARARGS | METH_KEYWORDS, "Return Sector handles, optionally by tag." },
+	{ "sector_at", PySectorAt, METH_VARARGS, "Return the Sector containing the given point, or None." },
+	{ "actors_in_sector", PyActorsInSector, METH_VARARGS, "Return live Actor handles currently inside the given sector." },
 	{ "line", PyLine, METH_VARARGS, "Return a Line handle by index." },
 	{ "lines", BD_GAME_KEYWORD_FUNCTION(PyLines), METH_VARARGS | METH_KEYWORDS, "Return Line handles, optionally by line ID." },
 	{ "execute_special", BD_GAME_KEYWORD_FUNCTION(PyExecuteSpecial), METH_VARARGS | METH_KEYWORDS, "Execute any numeric or named action special." },
 	{ "radius_damage", BD_GAME_KEYWORD_FUNCTION(PyRadiusDamage), METH_VARARGS | METH_KEYWORDS, "Perform a native radius attack." },
 	{ "apply_actor_batch", PyApplyActorBatch, METH_VARARGS, "Apply many actor mutations in one C API crossing." },
+	{ "actor_field_batch", PyActorFieldBatch, METH_VARARGS, "Read many actor fields in one C API crossing, returning a tuple per actor. Stale or invalid handles yield a tuple of None values." },
 	{ "spawn_missile", BD_GAME_KEYWORD_FUNCTION(PySpawnMissile), METH_VARARGS | METH_KEYWORDS, "Spawn a native aimed missile." },
 	{ "line_attack", BD_GAME_KEYWORD_FUNCTION(PyLineAttack), METH_VARARGS | METH_KEYWORDS, "Fire a native hitscan and return its result." },
 	{ "exit_level", BD_GAME_KEYWORD_FUNCTION(PyExitLevel), METH_VARARGS | METH_KEYWORDS, "Exit through the normal or secret route." },
 	{ "change_level", BD_GAME_KEYWORD_FUNCTION(PyChangeLevel), METH_VARARGS | METH_KEYWORDS, "Request an explicit map transition." },
 	{ "center_message", BD_GAME_KEYWORD_FUNCTION(PyCenterMessage), METH_VARARGS | METH_KEYWORDS, "Display an immediate center-screen message." },
+	{ "player_log", BD_GAME_KEYWORD_FUNCTION(PyPlayerLog), METH_VARARGS | METH_KEYWORDS, "Return the player's conversation log text (the Strife journal line), or None." },
+	{ "set_player_log", BD_GAME_KEYWORD_FUNCTION(PySetPlayerLog), METH_VARARGS | METH_KEYWORDS, "Set the player's conversation log text (the Strife journal line)." },
+	{ "start_conversation", BD_GAME_KEYWORD_FUNCTION(PyStartConversation), METH_VARARGS | METH_KEYWORDS, "Start a Strife conversation between the local player and the given actor." },
 	{ "set_music", BD_GAME_KEYWORD_FUNCTION(PySetMusic), METH_VARARGS | METH_KEYWORDS, "Change level music immediately." },
 	{ "rng", BD_GAME_KEYWORD_FUNCTION(PyBdRngStream), METH_VARARGS | METH_KEYWORDS, "Create a deterministic random stream from a seed." },
 	{ "set_timescale", PySetTimescale, METH_VARARGS, "Set the game time scale and return the applied value." },
@@ -2779,6 +3218,7 @@ PyMethodDef GameMethods[] = {
 	{ "play_ui_sound", BD_GAME_KEYWORD_FUNCTION(PyPlayUiSound), METH_VARARGS | METH_KEYWORDS, "Play a UI sound for the local player." },
 	{ "save_checkpoint", BD_GAME_KEYWORD_FUNCTION(PySaveCheckpoint), METH_VARARGS | METH_KEYWORDS, "Save the game into a named checkpoint slot at the next tic boundary." },
 	{ "load_checkpoint", BD_GAME_KEYWORD_FUNCTION(PyLoadCheckpoint), METH_VARARGS | METH_KEYWORDS, "Load a named checkpoint slot at the next tic boundary, aborting the current level." },
+	{ "session_read_only", PySessionReadOnly, METH_NOARGS, "Return True when world mutations are blocked (multiplayer or demo session)." },
 	{ nullptr, nullptr, 0, nullptr },
 };
 
@@ -2846,6 +3286,7 @@ bool Initialize(PyObject* module)
 	if (actorRefType == nullptr || playerRefType == nullptr || sectorRefType == nullptr || lineRefType == nullptr || rngStreamType == nullptr) return false;
 	if (PyModule_AddFunctions(module, GameMethods) < 0) return false;
 	if (!PythonDisplayList::AddFunctions(module)) return false;
+	if (!PythonImGui::Initialize(module)) return false;
 	if (!AddType(module, "Actor", actorRefType) || !AddType(module, "Player", playerRefType) ||
 		!AddType(module, "Sector", sectorRefType) || !AddType(module, "Line", lineRefType) ||
 		!AddType(module, "RngStream", rngStreamType)) return false;
@@ -2886,6 +3327,10 @@ void MarkRoots()
 
 void InvalidateWorld()
 {
+	// Drop every per-actor data dict; the per-slot purge below would reach the
+	// same keys, but only for actors that still have a slot.
+	for (auto& entry : actorDataStore) Py_DECREF(entry.second);
+	actorDataStore.clear();
 	for (uint32_t index = 0; index < actorSlots.size(); ++index) InvalidateActorSlot(index);
 	actorLookup.clear();
 	if (++worldGeneration == 0) ++worldGeneration;
@@ -2930,6 +3375,19 @@ PyObject* MakeActorRef(AActor* actor)
 	return reinterpret_cast<PyObject*>(reference);
 }
 
+PyObject* MakePlayerRef(int index)
+{
+	if (playerRefType == nullptr)
+	{
+		PyErr_SetString(PyExc_RuntimeError, "biaseddoom.Player type is not initialized");
+		return nullptr;
+	}
+	PyPlayerRef* reference = PyObject_New(PyPlayerRef, playerRefType);
+	if (reference == nullptr) return nullptr;
+	reference->Index = index;
+	return reinterpret_cast<PyObject*>(reference);
+}
+
 AActor* ActorFromHandle(_object* object)
 {
 	if (object == nullptr)
@@ -2950,6 +3408,7 @@ void MarkRoots() {}
 void InvalidateWorld() {}
 void Shutdown() {}
 _object* MakeActorRef(AActor*) { return nullptr; }
+_object* MakePlayerRef(int) { return nullptr; }
 AActor* ActorFromHandle(_object*) { return nullptr; }
 }
 

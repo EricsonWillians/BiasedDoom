@@ -73,6 +73,25 @@ typedef enum
 // (This is so scrolling floors and objects on them can move at same speed.)
 const double CARRYFACTOR = 3 / 32.;
 
+// Reason codes describing why a line special activation failed.
+// Stored in FLevelLocals::LastSpecialFailReason and surfaced through the
+// line_activation_failed Python event and the ZScript
+// StaticEventHandler.WorldLineActivationFailed virtual.
+enum ESpecialFailReason
+{
+	SPECIAL_FAIL_NONE = 0,					// no specific reason recorded
+	SPECIAL_FAIL_UNKNOWN_SPECIAL = 1,		// special number has no implementation
+	SPECIAL_FAIL_SCRIPT_NOT_FOUND = 2,		// ACS script number has no backing script
+	SPECIAL_FAIL_LOCKED = 3,				// activator lacks the required key
+	SPECIAL_FAIL_ACTIVATION_FILTERED = 4,	// rejected before execution (wrong side/type, monster on player-only line, handler veto)
+	SPECIAL_FAIL_INSUFFICIENT_RESOURCES = 5,	// activator lacks required resources (reserved)
+};
+
+// Returns the stable string name of an ESpecialFailReason value
+// ("none", "unknown_special", "script_not_found", "locked",
+// "activation_filtered", "insufficient_resources").
+const char *P_SpecialFailReasonName(int reason);
+
 // Flags for P_SectorDamage
 #define DAMAGE_PLAYERS				1
 #define DAMAGE_NONPLAYERS			2

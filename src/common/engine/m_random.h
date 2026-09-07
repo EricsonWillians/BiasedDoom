@@ -36,6 +36,7 @@
 #define __M_RANDOM__
 
 #include <stdio.h>
+#include <string.h>
 #include "basics.h"
 #include "tarray.h"
 #include "sfmt/SFMTObj.h"
@@ -93,6 +94,24 @@ public:
 	}
 
 	void Init(uint32_t seed);
+
+	// Raw full-state access for hosts that serialize this RNG outside the
+	// FSerializer framework (the embedded Python runtime keeps its script
+	// stream in the JSON "pythonstate" save blob).
+	static constexpr int StateWordCount = SFMT::N32;
+	void GetState(uint32_t* words, int& index) const
+	{
+		memcpy(words, sfmt.u, sizeof(sfmt.u));
+		index = idx;
+	}
+	void SetState(const uint32_t* words, int index)
+	{
+		memcpy(sfmt.u, words, sizeof(sfmt.u));
+		idx = index;
+#ifndef NDEBUG
+		initialized = true;
+#endif
+	}
 
 	/* These real versions are due to Isaku Wada */
 	/** generates a random number on [0,1]-real-interval */

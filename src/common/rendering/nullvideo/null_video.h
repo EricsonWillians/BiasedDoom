@@ -1,10 +1,12 @@
 /*
-** hardware.cpp
-** Somewhat OS-independant interface to the screen, mouse, keyboard, and stick
+** null_video.h
+** Headless ("null") video driver: an IVideo/DFrameBuffer pair that never
+** touches a display, GL context or Vulkan device. Used by -headless /
+** BIASEDDOOM_HEADLESS=1 so the engine can boot and run the game loop in
+** CI environments without X11/xvfb.
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2006 Randy Heit
-** Copyright 2017-2025 GZDoom Maintainers and Contributors
+** Copyright 2025 BiasedDoom Maintainers and Contributors
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -33,73 +35,30 @@
 **
 */
 
-#include <SDL2/SDL.h>
-#include <signal.h>
-#include <stdlib.h>
+#pragma once
 
-#include "c_console.h"
-#include "c_dispatch.h"
-#include "hardware.h"
-#include "i_system.h"
 #include "i_video.h"
-#include "m_argv.h"
-#include "printf.h"
-#include "v_text.h"
-#include "nullvideo/null_video.h"
+#include "v_video.h"
 
-IVideo *Video;
-
-void I_RestartRenderer();
-
-void I_ShutdownGraphics ()
+class NullFrameBuffer : public DFrameBuffer
 {
-	if (screen)
-	{
-		DFrameBuffer *s = screen;
-		screen = NULL;
-		delete s;
-	}
-	if (Video)
-		delete Video, Video = NULL;
+public:
+	NullFrameBuffer(int width, int height);
 
-	SDL_QuitSubSystem (SDL_INIT_VIDEO);
-}
+	void InitializeState() override {}
+	bool IsFullscreen() override { return false; }
+	void ToggleFullscreen(bool) override {}
+	int GetClientWidth() override { return GetWidth(); }
+	int GetClientHeight() override { return GetHeight(); }
 
-void I_InitGraphics ()
+	// There is no presentation target; the base Update() would try to resize
+	// hardware vertex buffers that do not exist here.
+	void Update() override {}
+};
+
+class NullVideo : public IVideo
 {
-	const bool headless = I_IsHeadless();
-
-	if (headless)
-	{
-		// SDL's "dummy" video driver keeps the event pump alive without
-		// needing a display (X11/Wayland) or creating any window.
-		setenv("SDL_VIDEODRIVER", "dummy", 1);
-	}
-
-#ifdef __APPLE__
-	SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
-#endif // __APPLE__
-	SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
-
-	if (SDL_InitSubSystem (SDL_INIT_VIDEO) < 0)
-	{
-		I_FatalError ("Could not initialize SDL video:\n%s\n", SDL_GetError());
-		return;
-	}
-
-	if (headless)
-	{
-		Printf("Headless mode: null video driver (no display, no rendering)\n");
-		Video = new NullVideo();
-	}
-	else
-	{
-		Printf("Using video driver %s\n", SDL_GetCurrentVideoDriver());
-
-		extern IVideo *gl_CreateVideo();
-		Video = gl_CreateVideo();
-	}
-
-	if (Video == NULL)
-		I_FatalError ("Failed to initialize display");
-}
+public:
+	DFrameBuffer *CreateFrameBuffer() override;
+	void DumpAdapters() override;
+};

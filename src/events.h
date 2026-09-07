@@ -307,7 +307,7 @@ public:
 	void WorldLoaded();
 	void WorldUnloaded(const FString& nextmap);
 	void WorldThingSpawned(AActor* actor);
-	void WorldThingDied(AActor* actor, AActor* inflictor);
+	void WorldThingDied(AActor* actor, AActor* inflictor, AActor* source);
 	void WorldThingGround(AActor* actor, FState* st);
 	void WorldThingRevived(AActor* actor);
 	void WorldThingDamaged(AActor* actor, AActor* inflictor, AActor* source, int damage, FName mod, int flags, DAngle angle);
@@ -318,6 +318,7 @@ public:
 	void WorldRailgunFired(AActor* actor, const DVector3& AttackPos, const DVector3& DamagePosition, AActor* Inflictor, int flags);
 	void WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate);
 	void WorldLineActivated(line_t* line, AActor* actor, int activationType);
+	void WorldLineActivationFailed(line_t* line, AActor* actor, int activationType, int reason);
 	int WorldSectorDamaged(sector_t* sector, AActor* source, int damage, FName damagetype, int part, DVector3 position, bool isradius);
 	int WorldLineDamaged(line_t* line, AActor* source, int damage, FName damagetype, int side, DVector3 position, bool isradius);
 	void WorldLightning();
@@ -390,6 +391,8 @@ struct FWorldEvent
 	line_t* ActivatedLine = nullptr;
 	int ActivationType = 0;
 	bool ShouldActivate = true;
+	// for line activation failed: ESpecialFailReason code (see p_spec.h)
+	int ActivationFailReason = 0;
 	// for line/sector damaged
 	int DamageSectorPart = 0;
 	line_t* DamageLine = nullptr;
@@ -481,8 +484,10 @@ struct EventManager
 	void WorldUnloaded(const FString& nextmap);
 	// called around PostBeginPlay of each actor.
 	void WorldThingSpawned(AActor* actor);
-	// called after AActor::Die of each actor.
-	void WorldThingDied(AActor* actor, AActor* inflictor);
+	// called after AActor::Die of each actor. source is the killer passed to
+	// AActor::Die (can be null; see the call site in p_interaction.cpp for the
+	// exact attribution semantics).
+	void WorldThingDied(AActor* actor, AActor* inflictor, AActor* source);
 	// called when a hitscan attack is fired (can be overridden to block it)
 	bool WorldHitscanPreFired(AActor* actor, DAngle angle, double distance, DAngle pitch, int damage, FName damageType, PClassActor *pufftype, int flags, double sz, double offsetforward, double offsetside);
 	// called when a hitscan attack has been fired
@@ -503,8 +508,10 @@ struct EventManager
 	void WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate);
 	// called in P_ActivateLine after successful special execution.
 	void WorldLineActivated(line_t* line, AActor* actor, int activationType);
-	// called in P_ActivateLine when a line with a nonzero special fails to execute it (Python event only).
-	void WorldLineActivationFailed(line_t* line, AActor* actor, int activationType);
+	// called in P_ActivateLine when a line with a nonzero special is activated
+	// but fails (filtered, locked, missing script, unknown special...).
+	// reason is an ESpecialFailReason code (see p_spec.h).
+	void WorldLineActivationFailed(line_t* line, AActor* actor, int activationType, int reason);
 	// called in P_DamageSector and P_DamageLinedef before receiving damage to the sector. returns actual damage
 	int WorldSectorDamaged(sector_t* sector, AActor* source, int damage, FName damagetype, int part, DVector3 position, bool isradius);
 	// called in P_DamageLinedef before receiving damage to the linedef. returns actual damage

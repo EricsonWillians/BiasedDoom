@@ -436,6 +436,11 @@ DEFINE_ACTION_FUNCTION(_Screen, GetAspectRatio)
 
 CCMD(vid_setsize)
 {
+	if (I_IsHeadless())
+	{
+		Printf("vid_setsize ignored in headless mode (no display).\n");
+		return;
+	}
 	if (argv.argc() < 3)
 	{
 		Printf("Usage: vid_setsize width height\n");

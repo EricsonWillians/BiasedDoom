@@ -23,9 +23,12 @@
 #include "g_level.h"
 #include "g_levellocals.h"
 #include "i_interface.h"
+#include "i_video.h"
 #include "m_argv.h"
+#include "m_random.h"
 #include "p_local.h"
 #include "p_spec.h"
+#include "r_defs.h"
 #include "serializer.h"
 #include "version.h"
 
@@ -34,6 +37,7 @@
 #include <chrono>
 #include <cctype>
 #include <climits>
+#include <cstdarg>
 #include <cstdint>
 #include <string>
 #include <thread>
@@ -145,10 +149,27 @@ std::string stderrBuffer;
 // dedup state for identical consecutive Python errors (see ReportPythonError)
 FString s_lastPythonError;
 unsigned s_repeatPythonErrorCount = 0;
+// dedup state for identical consecutive script warnings (bd.warn); kept
+// separate from the error dedup so warnings and errors never suppress
+// each other
+FString s_lastPythonWarning;
+unsigned s_repeatPythonWarningCount = 0;
 // -scripttest: total reported errors, including suppressed repeats
 unsigned s_pythonErrorCount = 0;
 // -pyerrorlog <file>: JSON-lines feed of Python errors for external tools
 std::string s_pythonErrorLogPath;
+// Dedicated deterministic stream backing bd.random()/randrange()/randint()/
+// choice(). Named, so StaticClearRandom seeds it with the run's rngseed on a
+// new game like every other engine RNG; per-map reseeding happens in
+// OnWorldLoaded and the full state round-trips through the "pythonstate"
+// save blob under the reserved "__rng_state__" key.
+FRandom s_pyRandom("PythonRandom");
+// Set by LoadStateJson when it handled the stream for the pending map entry,
+// so OnWorldLoaded does not clobber a restored savegame/hub-snapshot state.
+bool s_rngStateLoaded = false;
+// Per-player last-known sector index backing the sector_entered/sector_exited
+// events. -1 means "unknown/not in a sector"; reset on map load and unload.
+int s_lastPlayerSector[MAXPLAYERS] = { -1, -1, -1, -1, -1, -1, -1, -1 };
 std::vector<ScriptEntry> discoveredScripts;
 std::vector<ScriptModule> modules;
 std::vector<Callback> callbacks;
@@ -181,6 +202,17 @@ const char* const EventNames[] = {
 	"engine_shutdown",
 	"item_picked",
 	"secret_found",
+	"item_dropped",
+	"weapon_changed",
+	"sector_entered",
+	"sector_exited",
+	"imgui_frame",
+	"conversation_started",
+	"conversation_reply",
+	// APPEND new event names at the END only: eventHasCallbacks is indexed by
+	// position in this table.
+	"ui_command",
+	"actor_before_damage",
 };
 constexpr size_t EventCount = sizeof(EventNames) / sizeof(EventNames[0]);
 std::array<bool, EventCount> eventHasCallbacks{};
@@ -293,9 +325,22 @@ std::string JsonEscape(const char* text)
 	return out;
 }
 
+// Structured fields appended to each -pyerrorlog JSON line. ExcFile/
+// ExcFunc/ExcLine describe the last traceback frame belonging to a user
+// script (bootstrap frames use synthetic "<...>" filenames and are skipped).
+struct PythonLogRecord
+{
+	const char* Severity = "error"; // "error" | "warning" | "assert"
+	const char* ExcType = "";        // exception class name, when raised by Python
+	std::string ExcFile;
+	int ExcLine = 0;
+	std::string ExcFunc;
+};
+
 // append one JSON line to the -pyerrorlog feed (no-op when not configured)
 void WritePythonErrorLog(const char* context, const std::string& source,
-	const FString& traceback, unsigned repeats, bool heartbeat)
+	const FString& traceback, unsigned repeats, bool heartbeat,
+	const PythonLogRecord& record)
 {
 	if (s_pythonErrorLogPath.empty()) return;
 
@@ -308,11 +353,58 @@ void WritePythonErrorLog(const char* context, const std::string& source,
 
 	fprintf(file,
 		"{\"time_ms\":%lld,\"map\":\"%s\",\"context\":\"%s\",\"source\":\"%s\","
-		"\"repeats_suppressed\":%u,\"heartbeat\":%s,\"traceback\":\"%s\"}\n",
+		"\"severity\":\"%s\",\"repeats_suppressed\":%u,\"heartbeat\":%s,"
+		"\"exc_type\":\"%s\",\"exc_file\":\"%s\",\"exc_line\":%d,\"exc_func\":\"%s\","
+		"\"traceback\":\"%s\"}\n",
 		(long long)nowMs, JsonEscape(map).c_str(), JsonEscape(context).c_str(),
-		JsonEscape(source.c_str()).c_str(), repeats, heartbeat ? "true" : "false",
+		JsonEscape(source.c_str()).c_str(), JsonEscape(record.Severity).c_str(),
+		repeats, heartbeat ? "true" : "false",
+		JsonEscape(record.ExcType).c_str(), JsonEscape(record.ExcFile.c_str()).c_str(),
+		record.ExcLine, JsonEscape(record.ExcFunc.c_str()).c_str(),
 		JsonEscape(traceback.GetChars()).c_str());
 	fclose(file);
+}
+
+// Pull the exception class name and the innermost user-script frame out of a
+// normalized exception/traceback pair. Introspection failures never replace
+// the original error report.
+void ExtractTracebackInfo(PyObject* type, PyObject* tracebackObject, PythonLogRecord& record)
+{
+	if (type != nullptr && PyType_Check(type))
+	{
+		record.ExcType = reinterpret_cast<PyTypeObject*>(type)->tp_name;
+	}
+	if (tracebackObject == nullptr || tracebackObject == Py_None) return;
+	PyObject* tb = tracebackObject;
+	Py_INCREF(tb);
+	while (tb != nullptr && tb != Py_None)
+	{
+		PyObject* frame = PyObject_GetAttrString(tb, "tb_frame");
+		PyObject* linenoObject = PyObject_GetAttrString(tb, "tb_lineno");
+		PyObject* next = PyObject_GetAttrString(tb, "tb_next");
+		if (frame != nullptr && PyFrame_Check(frame))
+		{
+			PyCodeObject* code = PyFrame_GetCode(reinterpret_cast<PyFrameObject*>(frame));
+			if (code != nullptr)
+			{
+				const char* filename = PyUnicode_AsUTF8(code->co_filename);
+				if (filename != nullptr && strchr(filename, '<') == nullptr)
+				{
+					record.ExcFile = filename;
+					const char* funcName = PyUnicode_AsUTF8(code->co_name);
+					record.ExcFunc = funcName != nullptr ? funcName : "";
+					record.ExcLine = linenoObject != nullptr
+						? static_cast<int>(PyLong_AsLong(linenoObject)) : 0;
+				}
+				Py_DECREF(code);
+			}
+		}
+		Py_XDECREF(frame);
+		Py_XDECREF(linenoObject);
+		Py_DECREF(tb);
+		tb = next;
+	}
+	PyErr_Clear();
 }
 
 void ReportPythonError(const char* context, const std::string& source)
@@ -366,6 +458,9 @@ void ReportPythonError(const char* context, const std::string& source)
 		formatted = PyString(value != nullptr ? value : type);
 	}
 
+	PythonLogRecord record;
+	ExtractTracebackInfo(type, tracebackObject, record);
+
 	// flush pending print() output first, so it appears before the error
 	EmitBufferedOutput(stdoutBuffer, nullptr, true, false);
 	EmitBufferedOutput(stderrBuffer, nullptr, true, true);
@@ -391,7 +486,7 @@ void ReportPythonError(const char* context, const std::string& source)
 				"repeated %u times; duplicates suppressed)\n",
 				s_repeatPythonErrorCount);
 			WritePythonErrorLog(context, source, s_lastPythonError,
-				s_repeatPythonErrorCount, true);
+				s_repeatPythonErrorCount, true, record);
 		}
 
 		Py_XDECREF(type);
@@ -408,19 +503,69 @@ void ReportPythonError(const char* context, const std::string& source)
 			s_repeatPythonErrorCount,
 			s_repeatPythonErrorCount == 1 ? "" : "s");
 		WritePythonErrorLog(context, source, s_lastPythonError,
-			s_repeatPythonErrorCount, true);
+			s_repeatPythonErrorCount, true, record);
 		s_repeatPythonErrorCount = 0;
 	}
 
 	s_lastPythonError = full;
 
 	Printf(TEXTCOLOR_RED "%s", full.GetChars());
-	WritePythonErrorLog(context, source, full, 0, false);
+	WritePythonErrorLog(context, source, full, 0, false, record);
 
 	Py_XDECREF(type);
 	Py_XDECREF(value);
 	Py_XDECREF(tracebackObject);
 	PyErr_Clear();
+}
+
+// Yellow-console warning channel for script-facing issues that are not test
+// failures (bd.warn, internal C++ diagnostics). Mirrors ReportPythonError's
+// identical-message dedup and heartbeat, keyed separately so warnings and
+// errors never suppress each other. Never increments s_pythonErrorCount.
+void EmitScriptWarning(const char* message)
+{
+	FString full;
+	full.Format("SCRIPT WARNING: %s", message != nullptr ? message : "");
+	if (full.IsEmpty() || full.Back() != '\n') full += '\n';
+
+	PythonLogRecord record;
+	record.Severity = "warning";
+
+	if (s_lastPythonWarning.IsNotEmpty() && full == s_lastPythonWarning)
+	{
+		s_repeatPythonWarningCount++;
+
+		// periodic heartbeat, same cadence as the error dedup
+		if (s_repeatPythonWarningCount % 350 == 0)
+		{
+			Printf(TEXTCOLOR_YELLOW "(the previous Python warning has now "
+				"repeated %u times; duplicates suppressed)\n",
+				s_repeatPythonWarningCount);
+			WritePythonErrorLog("warning", currentSource, s_lastPythonWarning,
+				s_repeatPythonWarningCount, true, record);
+		}
+		return;
+	}
+
+	if (s_repeatPythonWarningCount > 0)
+	{
+		Printf(TEXTCOLOR_YELLOW "(the previous Python warning repeated %u more "
+			"time%s before this one; duplicates suppressed)\n",
+			s_repeatPythonWarningCount,
+			s_repeatPythonWarningCount == 1 ? "" : "s");
+		WritePythonErrorLog("warning", currentSource, s_lastPythonWarning,
+			s_repeatPythonWarningCount, true, record);
+		s_repeatPythonWarningCount = 0;
+	}
+
+	s_lastPythonWarning = full;
+
+	// flush pending print() output first, so it appears before the warning
+	EmitBufferedOutput(stdoutBuffer, nullptr, true, false);
+	EmitBufferedOutput(stderrBuffer, nullptr, true, true);
+
+	Printf(TEXTCOLOR_YELLOW "%s", full.GetChars());
+	WritePythonErrorLog("warning", currentSource, full, 0, false, record);
 }
 
 bool ValidateStateDictionary()
@@ -609,8 +754,25 @@ bool CheckSessionMutationAllowed()
 {
 	if (netgame || multiplayer || demoplayback || demorecording)
 	{
+		// The warning channel dedups identical consecutive messages, so
+		// repeated blocked calls do not flood the console. The RuntimeError
+		// contract for the caller is unchanged.
+		ReportScriptWarning("mutation blocked during multiplayer/demo session");
 		PyErr_SetString(PyExc_RuntimeError,
 			"Python gameplay mutations are disabled in multiplayer and demo sessions to protect synchronization");
+		return false;
+	}
+	return true;
+}
+
+// Presentation-only effects (HUD text, screen blends, UI sounds, music, the
+// display list) are safe in multiplayer and demo sessions because they only
+// touch the local console player's view; they just need an active level.
+bool CheckLocalPresentationAllowed()
+{
+	if (primaryLevel == nullptr || primaryLevel->MapName.IsEmpty())
+	{
+		PyErr_SetString(PyExc_RuntimeError, "no level is currently active");
 		return false;
 	}
 	return true;
@@ -998,6 +1160,12 @@ PyObject* PyBdLevelTime(PyObject*, PyObject*)
 {
 	if (!CheckEngineThread()) return nullptr;
 	return PyLong_FromLong(primaryLevel == nullptr ? 0 : primaryLevel->time);
+}
+
+PyObject* PyBdHeadless(PyObject*, PyObject*)
+{
+	if (!CheckEngineThread()) return nullptr;
+	return PyBool_FromLong(I_IsHeadless() ? 1 : 0);
 }
 
 PyObject* PyBdPlayers(PyObject*, PyObject*)
@@ -1418,6 +1586,41 @@ PyObject* PyBdReadText(PyObject*, PyObject* args)
 	return PyUnicode_DecodeUTF8(source.data(), static_cast<Py_ssize_t>(source.size()), "strict");
 }
 
+// Binary companion of read_text: same in-mod-only VFS scoping (no absolute
+// paths, no '..', no backslashes) and the same FileNotFoundError contract,
+// but returns bytes and caps the payload at 32 MiB since binary resources
+// (e.g. font files) are far larger than text scripts.
+PyObject* PyBdReadBytes(PyObject*, PyObject* args)
+{
+	if (!CheckEngineThread()) return nullptr;
+	const char* path = nullptr;
+	if (!PyArg_ParseTuple(args, "s:read_bytes", &path)) return nullptr;
+	if (currentContainer < 0)
+	{
+		PyErr_SetString(PyExc_RuntimeError, "read_bytes must be called while a mod script or callback is executing");
+		return nullptr;
+	}
+	constexpr size_t kMaxReadBytesSize = 32u * 1024u * 1024u;
+	if (!ValidResourcePath(path, false))
+	{
+		PyErr_Format(PyExc_FileNotFoundError, "resource '%s' was not found in the current mod", path);
+		return nullptr;
+	}
+	const int lump = fileSystem.CheckNumForFullName(path, currentContainer);
+	if (lump < 0)
+	{
+		PyErr_Format(PyExc_FileNotFoundError, "resource '%s' was not found in the current mod", path);
+		return nullptr;
+	}
+	auto data = fileSystem.ReadFile(lump);
+	if (data.size() > kMaxReadBytesSize)
+	{
+		PyErr_Format(PyExc_ValueError, "resource '%s' exceeds the 32 MiB read_bytes limit", path);
+		return nullptr;
+	}
+	return PyBytes_FromStringAndSize(data.string(), static_cast<Py_ssize_t>(data.size()));
+}
+
 PyObject* ExecuteResourceModule(int container, const std::string& path, const std::string& moduleName, bool registerNamed);
 
 PyObject* PyBdImportScript(PyObject*, PyObject* args, PyObject* kwargs)
@@ -1605,12 +1808,174 @@ PyObject* PyBdResetProfile(PyObject*, PyObject*)
 	Py_RETURN_NONE;
 }
 
+//---------------------------------------------------------------------------
+// bd.assert_true(cond, msg="") - scripted test assertions. A failure prints
+// in red, feeds -pyerrorlog with severity "assert", and increments the
+// -scripttest error count, but returns None instead of raising so a test
+// script can report several failures in one run.
+//---------------------------------------------------------------------------
+
+PyObject* PyBdAssertTrue(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	PyObject* condition = nullptr;
+	const char* message = "";
+	static const char* keywords[] = { "cond", "msg", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|s:assert_true",
+		const_cast<char**>(keywords), &condition, &message)) return nullptr;
+	if (!CheckEngineThread()) return nullptr;
+	const int truthy = PyObject_IsTrue(condition);
+	if (truthy < 0) return nullptr;
+	if (truthy) Py_RETURN_NONE;
+
+	s_pythonErrorCount++;
+
+	// caller location: PyEval_GetFrame returns the Python frame that invoked
+	// this C function
+	std::string file;
+	std::string func;
+	int line = 0;
+	PyFrameObject* frame = PyEval_GetFrame();
+	if (frame != nullptr)
+	{
+		PyCodeObject* code = PyFrame_GetCode(frame);
+		if (code != nullptr)
+		{
+			const char* filename = PyUnicode_AsUTF8(code->co_filename);
+			if (filename != nullptr) file = filename;
+			const char* funcName = PyUnicode_AsUTF8(code->co_name);
+			if (funcName != nullptr) func = funcName;
+			Py_DECREF(code);
+		}
+		line = PyFrame_GetLineNumber(frame);
+	}
+	// Location introspection must never leak a secondary error into the
+	// Py_None return below.
+	PyErr_Clear();
+
+	// flush pending print() output first, so it appears before the failure
+	EmitBufferedOutput(stdoutBuffer, nullptr, true, false);
+	EmitBufferedOutput(stderrBuffer, nullptr, true, true);
+
+	FString full;
+	if (message[0] != 0) full.Format("SCRIPT ASSERT FAILED: %s", message);
+	else full = "SCRIPT ASSERT FAILED";
+	if (!file.empty()) full.AppendFormat(" (%s:%d)", file.c_str(), line);
+	full += '\n';
+
+	Printf(TEXTCOLOR_RED "%s", full.GetChars());
+
+	PythonLogRecord record;
+	record.Severity = "assert";
+	record.ExcFile = file;
+	record.ExcLine = line;
+	record.ExcFunc = func;
+	WritePythonErrorLog("assert", file.empty() ? currentSource : file,
+		full, 0, false, record);
+	Py_RETURN_NONE;
+}
+
+PyObject* PyBdWarn(PyObject*, PyObject* args)
+{
+	const char* message = nullptr;
+	if (!PyArg_ParseTuple(args, "s:warn", &message)) return nullptr;
+	if (!CheckEngineThread()) return nullptr;
+	EmitScriptWarning(message);
+	Py_RETURN_NONE;
+}
+
+//---------------------------------------------------------------------------
+// bd.random()/randrange()/randint()/choice() - deterministic script RNG
+// backed by s_pyRandom. These live in EngineMethods (not the gameplay API)
+// so the stream stays usable before any level is loaded; the stream is
+// reseeded per map in OnWorldLoaded and serialized with bd.state.
+//---------------------------------------------------------------------------
+
+PyObject* PyBdRandom(PyObject*, PyObject*)
+{
+	if (!CheckEngineThread()) return nullptr;
+	return PyFloat_FromDouble(s_pyRandom.GenRand_Real2());
+}
+
+PyObject* PyBdRandRange(PyObject*, PyObject* args)
+{
+	const Py_ssize_t count = PyTuple_GET_SIZE(args);
+	long long lo = 0;
+	long long hi = 0;
+	if (count == 1)
+	{
+		hi = PyLong_AsLongLong(PyTuple_GET_ITEM(args, 0));
+	}
+	else if (count == 2)
+	{
+		lo = PyLong_AsLongLong(PyTuple_GET_ITEM(args, 0));
+		hi = PyLong_AsLongLong(PyTuple_GET_ITEM(args, 1));
+	}
+	else
+	{
+		PyErr_SetString(PyExc_TypeError, "randrange expects randrange(hi) or randrange(lo, hi)");
+		return nullptr;
+	}
+	if (PyErr_Occurred()) return nullptr;
+	if (!CheckEngineThread()) return nullptr;
+	if (hi <= lo)
+	{
+		PyErr_SetString(PyExc_ValueError, "randrange requires hi > lo");
+		return nullptr;
+	}
+	const uint64_t range = static_cast<uint64_t>(hi) - static_cast<uint64_t>(lo);
+	const uint64_t value = range <= 0x7fffffffu
+		? static_cast<uint32_t>(s_pyRandom(static_cast<int>(range)))
+		: s_pyRandom.GenRand64() % range;
+	return PyLong_FromLongLong(static_cast<long long>(static_cast<uint64_t>(lo) + value));
+}
+
+PyObject* PyBdRandInt(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	long long lo, hi;
+	static const char* keywords[] = { "lo", "hi", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "LL:randint",
+		const_cast<char**>(keywords), &lo, &hi)) return nullptr;
+	if (!CheckEngineThread()) return nullptr;
+	if (lo > hi)
+	{
+		PyErr_SetString(PyExc_ValueError, "lo must not exceed hi");
+		return nullptr;
+	}
+	const uint64_t range = static_cast<uint64_t>(hi) - static_cast<uint64_t>(lo) + 1u;
+	uint64_t value;
+	if (range == 0) value = s_pyRandom.GenRand64(); // range spans the full int64 domain
+	else if (range <= 0x7fffffffu) value = static_cast<uint32_t>(s_pyRandom(static_cast<int>(range)));
+	else value = s_pyRandom.GenRand64() % range;
+	return PyLong_FromLongLong(static_cast<long long>(static_cast<uint64_t>(lo) + value));
+}
+
+PyObject* PyBdChoice(PyObject*, PyObject* args)
+{
+	PyObject* sequenceObject = nullptr;
+	if (!PyArg_ParseTuple(args, "O:choice", &sequenceObject)) return nullptr;
+	if (!CheckEngineThread()) return nullptr;
+	PyObject* sequence = PySequence_Fast(sequenceObject, "choice requires a non-empty sequence");
+	if (sequence == nullptr) return nullptr;
+	const Py_ssize_t size = PySequence_Fast_GET_SIZE(sequence);
+	if (size == 0)
+	{
+		Py_DECREF(sequence);
+		PyErr_SetString(PyExc_ValueError, "cannot choose from an empty sequence");
+		return nullptr;
+	}
+	PyObject* item = PySequence_Fast_GET_ITEM(sequence, s_pyRandom(static_cast<int>(size)));
+	Py_INCREF(item);
+	Py_DECREF(sequence);
+	return item;
+}
+
 PyMethodDef EngineMethods[] = {
 	{ "log", BD_PY_KEYWORD_FUNCTION(PyBdLog), METH_VARARGS | METH_KEYWORDS, "log(message, level='info') -> None" },
 	{ "_write_output", PyBdWriteOutput, METH_VARARGS, nullptr },
 	{ "_register_callback", BD_PY_KEYWORD_FUNCTION(PyBdRegisterCallback), METH_VARARGS | METH_KEYWORDS, nullptr },
 	{ "current_map", PyBdCurrentMap, METH_NOARGS, "Return the current map lump name or None." },
 	{ "level_time", PyBdLevelTime, METH_NOARGS, "Return elapsed level time in 35 Hz tics." },
+	{ "headless", PyBdHeadless, METH_NOARGS, "Return True when the engine runs on the null video driver (nothing renders; imgui_frame never fires)." },
 	{ "players", PyBdPlayers, METH_NOARGS, "Return snapshots of all active players." },
 	{ "actors", BD_PY_KEYWORD_FUNCTION(PyBdActors), METH_VARARGS | METH_KEYWORDS, "Return actor snapshots, optionally filtered by class or TID." },
 	{ "_actor_class_info", PyBdActorClassInfo, METH_NOARGS, nullptr },
@@ -1624,12 +1989,19 @@ PyMethodDef EngineMethods[] = {
 	{ "execute", PyBdExecute, METH_VARARGS, "Queue an engine console command." },
 	{ "execute_acs", BD_PY_KEYWORD_FUNCTION(PyBdExecuteACS), METH_VARARGS | METH_KEYWORDS, "Start a numeric or named ACS script." },
 	{ "read_text", PyBdReadText, METH_VARARGS, "Read a UTF-8 resource from the current mod." },
+	{ "read_bytes", PyBdReadBytes, METH_VARARGS, "Read a binary resource from the current mod, capped at 32 MiB." },
 	{ "import_script", BD_PY_KEYWORD_FUNCTION(PyBdImportScript), METH_VARARGS | METH_KEYWORDS, "Execute and return another Python module from the current mod." },
 	{ "profile", PyBdProfile, METH_NOARGS, "Return per-callback timing and budget statistics." },
 	{ "reset_profile", PyBdResetProfile, METH_NOARGS, "Reset callback timing and budget statistics." },
 	{ "schedule", BD_PY_KEYWORD_FUNCTION(PyBdSchedule), METH_VARARGS | METH_KEYWORDS, "Schedule a one-shot or repeating callable in engine tics." },
 	{ "cancel_task", PyBdCancelTask, METH_VARARGS, "Cancel a scheduled task by ID." },
 	{ "task_count", PyBdTaskCount, METH_NOARGS, "Return the number of active scheduled tasks." },
+	{ "assert_true", BD_PY_KEYWORD_FUNCTION(PyBdAssertTrue), METH_VARARGS | METH_KEYWORDS, "Fail the script test with a message when the condition is false." },
+	{ "warn", PyBdWarn, METH_VARARGS, "Print a rate-limited script warning without failing the script test." },
+	{ "random", PyBdRandom, METH_NOARGS, "Return the next deterministic float in [0, 1)." },
+	{ "randrange", PyBdRandRange, METH_VARARGS, "Return the next deterministic integer in [lo, hi); randrange(hi) uses [0, hi)." },
+	{ "randint", BD_PY_KEYWORD_FUNCTION(PyBdRandInt), METH_VARARGS | METH_KEYWORDS, "Return the next deterministic integer in [lo, hi] inclusive." },
+	{ "choice", PyBdChoice, METH_VARARGS, "Return a deterministic item from a non-empty sequence." },
 	{ nullptr, nullptr, 0, nullptr },
 };
 
@@ -1690,8 +2062,6 @@ class _EngineWriter:
 
 _sys.stdout = _EngineWriter(0)
 _sys.stderr = _EngineWriter(1)
-
-import random as _random
 
 def _actor_const_name(class_name):
     # "DoomImp" -> "DOOM_IMP", "MBFHelperDog" -> "MBF_HELPER_DOG"
@@ -1822,7 +2192,7 @@ class _ActorsRegistry:
             pool = self._kind_names(mask) if mask is not None else self.children_of(kind)
         if not pool:
             raise ValueError(f"no actor classes match {kind!r}")
-        return _random.choice(pool)
+        return choice(pool)
 
     def spawn_random(self, x, y, z, kind="monsters", **kwargs):
         """Spawn a random actor of the given category at (x, y, z)."""
@@ -2270,6 +2640,15 @@ void RegisterNamedCallbacks(PyObject* module, int container, const std::string& 
 		{ "on_engine_shutdown", "engine_shutdown" },
 		{ "on_item_picked", "item_picked" },
 		{ "on_secret_found", "secret_found" },
+		{ "on_item_dropped", "item_dropped" },
+		{ "on_weapon_changed", "weapon_changed" },
+		{ "on_sector_entered", "sector_entered" },
+		{ "on_sector_exited", "sector_exited" },
+		{ "on_imgui_frame", "imgui_frame" },
+		{ "on_conversation_started", "conversation_started" },
+		{ "on_conversation_reply", "conversation_reply" },
+		{ "on_ui_command", "ui_command" },
+		{ "on_actor_before_damage", "actor_before_damage" },
 	};
 
 	for (const auto& names : callbackNames)
@@ -2454,6 +2833,97 @@ bool InitializeInterpreter()
 	return true;
 }
 
+// Deterministic per-map seed for the script RNG: the run's global rngseed
+// mixed with the level number; FRandom::Init additionally mixes the stream's
+// name CRC, exactly like every other engine RNG seeded by StaticClearRandom.
+void SeedPythonRandom()
+{
+	const uint32_t levelPart = primaryLevel != nullptr
+		? static_cast<uint32_t>(primaryLevel->levelnum) : 0u;
+	s_pyRandom.Init(rngseed ^ (levelPart * 0x9E3779B9u));
+}
+
+// JSON-ready snapshot of the script RNG stream (reserved bd.state key).
+PyObject* CaptureRngState()
+{
+	std::vector<uint32_t> words(static_cast<size_t>(FRandom::StateWordCount));
+	int index = 0;
+	s_pyRandom.GetState(words.data(), index);
+	PyObject* list = PyList_New(FRandom::StateWordCount);
+	if (list == nullptr) return nullptr;
+	for (int i = 0; i < FRandom::StateWordCount; ++i)
+	{
+		PyObject* word = PyLong_FromUnsignedLong(words[static_cast<size_t>(i)]);
+		if (word == nullptr)
+		{
+			Py_DECREF(list);
+			return nullptr;
+		}
+		PyList_SET_ITEM(list, i, word);
+	}
+	PyObject* dict = PyDict_New();
+	if (dict == nullptr)
+	{
+		Py_DECREF(list);
+		return nullptr;
+	}
+	PyObject* indexObject = PyLong_FromLong(index);
+	int ok = indexObject != nullptr ? PyDict_SetItemString(dict, "index", indexObject) : -1;
+	Py_XDECREF(indexObject);
+	if (ok == 0) ok = PyDict_SetItemString(dict, "state", list);
+	Py_DECREF(list);
+	if (ok != 0)
+	{
+		Py_DECREF(dict);
+		return nullptr;
+	}
+	return dict;
+}
+
+// Restore the script RNG stream from a previously captured snapshot. Any
+// format problem (or a legacy save without the key, handled by the caller)
+// falls back to the deterministic map seed; no SAVEVER bump.
+void RestoreRngState(PyObject* stateObject)
+{
+	bool restored = false;
+	if (stateObject != nullptr && PyDict_Check(stateObject))
+	{
+		PyObject* indexObject = PyDict_GetItemString(stateObject, "index");
+		PyObject* wordsObject = PyDict_GetItemString(stateObject, "state");
+		const long index = indexObject != nullptr ? PyLong_AsLong(indexObject) : -1;
+		if (!PyErr_Occurred() && indexObject != nullptr && wordsObject != nullptr &&
+			PyList_Check(wordsObject) &&
+			PyList_GET_SIZE(wordsObject) == FRandom::StateWordCount &&
+			index >= 0 && index <= FRandom::StateWordCount)
+		{
+			std::vector<uint32_t> words(static_cast<size_t>(FRandom::StateWordCount));
+			bool valid = true;
+			for (int i = 0; i < FRandom::StateWordCount; ++i)
+			{
+				PyObject* item = PyList_GET_ITEM(wordsObject, i);
+				if (!PyLong_Check(item))
+				{
+					valid = false;
+					break;
+				}
+				words[static_cast<size_t>(i)] =
+					static_cast<uint32_t>(PyLong_AsUnsignedLongMask(item));
+			}
+			if (valid)
+			{
+				s_pyRandom.SetState(words.data(), static_cast<int>(index));
+				restored = true;
+			}
+		}
+	}
+	PyErr_Clear();
+	if (!restored)
+	{
+		Printf(TEXTCOLOR_YELLOW "Python: saved script RNG state is missing or corrupt; reseeding from the level seed.\n");
+		SeedPythonRandom();
+	}
+}
+
 std::string DumpStateJson()
 {
 	if (!active || stateDictionary == nullptr) return {};
@@ -2468,6 +2938,22 @@ std::string DumpStateJson()
 		ReportPythonError("state serialization", "import json");
 		return {};
 	}
+
+	// Merge the script RNG stream state under a reserved key so savegames
+	// restore deterministic bd.random() sequences; popped back out right
+	// after the dump so user scripts never observe it.
+	bool rngMerged = false;
+	PyObject* rngState = CaptureRngState();
+	if (rngState != nullptr)
+	{
+		rngMerged = PyDict_SetItemString(stateDictionary, "__rng_state__", rngState) == 0;
+		Py_DECREF(rngState);
+	}
+	else
+	{
+		ReportPythonError("state serialization", "biaseddoom rng state");
+	}
+
 	PyObject* dumps = PyObject_GetAttrString(json, "dumps");
 	PyObject* kwargs = Py_BuildValue("{s:O,s:O,s:O}",
 		"sort_keys", Py_True, "ensure_ascii", Py_False, "allow_nan", Py_False);
@@ -2480,6 +2966,10 @@ std::string DumpStateJson()
 		if (text != nullptr) result = text;
 	}
 	else ReportPythonError("state serialization", "biaseddoom.state");
+	if (rngMerged && PyDict_DelItemString(stateDictionary, "__rng_state__") != 0)
+	{
+		PyErr_Clear();
+	}
 	Py_XDECREF(encoded);
 	Py_DECREF(args);
 	Py_DECREF(kwargs);
@@ -2505,6 +2995,24 @@ bool LoadStateJson(const std::string& encoded)
 	{
 		PyDict_Clear(stateDictionary);
 		success = PyDict_Update(stateDictionary, decoded) == 0;
+		if (success)
+		{
+			// Consume the reserved RNG snapshot before the "load" event fires
+			// and before user scripts can observe it.
+			PyObject* rngState = PyDict_GetItemString(stateDictionary, "__rng_state__");
+			if (rngState != nullptr)
+			{
+				RestoreRngState(rngState);
+				PyDict_DelItemString(stateDictionary, "__rng_state__");
+			}
+			else
+			{
+				// Saves written before the deterministic stream existed carry
+				// no state; reseed from the level seed instead.
+				SeedPythonRandom();
+			}
+			s_rngStateLoaded = true;
+		}
 	}
 	else if (decoded != nullptr)
 	{
@@ -2540,6 +3048,17 @@ void SetErrorLogPath(const char* path)
 	s_pythonErrorLogPath = path != nullptr ? path : "";
 }
 
+void ReportScriptWarning(const char* fmt, ...)
+{
+	if (!active) return;
+	va_list args;
+	va_start(args, fmt);
+	FString message;
+	message.VFormat(fmt, args);
+	va_end(args);
+	EmitScriptWarning(message.GetChars());
+}
+
 void DumpStub(const char* path)
 {
 	if (!IsActive())
@@ -2570,6 +3089,11 @@ void DumpStub(const char* path)
 bool CheckSessionMutation()
 {
 	return CheckSessionMutationAllowed();
+}
+
+bool CheckLocalPresentation()
+{
+	return CheckLocalPresentationAllowed();
 }
 
 bool IsCompiled()
@@ -2650,6 +3174,9 @@ void Shutdown()
 	Py_CLEAR(engineModule);
 	GameApi::Shutdown();
 	loadCallbackPending = false;
+	s_rngStateLoaded = false;
+	s_lastPythonWarning = "";
+	s_repeatPythonWarningCount = 0;
 	currentContainer = -1;
 	currentSource.clear();
 	Py_FinalizeEx();
@@ -2669,6 +3196,12 @@ bool Reload()
 void OnWorldLoaded()
 {
 	++mapSerial;
+	// Savegame and hub-snapshot restores already restored (or reseeded) the
+	// script RNG inside LoadStateJson; only fresh map entries seed here, so a
+	// loaded stream position is never clobbered.
+	if (s_rngStateLoaded) s_rngStateLoaded = false;
+	else SeedPythonRandom();
+	std::fill(std::begin(s_lastPlayerSector), std::end(s_lastPlayerSector), -1);
 	if (!HasCallbacks("map_load")) return;
 	PyObject* event = BuildEvent("map_load");
 	DictSetBool(event, "from_savegame", savegamerestore);
@@ -2677,6 +3210,7 @@ void OnWorldLoaded()
 
 void OnWorldUnloaded(const char* nextMap)
 {
+	std::fill(std::begin(s_lastPlayerSector), std::end(s_lastPlayerSector), -1);
 	if (!HasCallbacks("map_unload"))
 	{
 		CancelMapLocalTasks();
@@ -2716,8 +3250,72 @@ void OnWorldTick()
 	InvokeEvent("tick", event);
 }
 
+namespace
+{
+// Fires one sector_entered/sector_exited event for a player. sectorIndex must
+// be a valid sector index in the primary level.
+void FireSectorEvent(const char* eventName, int playerIndex, int sectorIndex)
+{
+	if (!HasCallbacks(eventName)) return;
+	PyObject* event = BuildEvent(eventName);
+	DictSetInt(event, "sector", sectorIndex);
+	// Same tag source as the Sector handle's "tags" getset in
+	// python_game_api.cpp: the level tag manager.
+	PyObject* tagList = PyList_New(0);
+	if (tagList != nullptr)
+	{
+		if (primaryLevel != nullptr && sectorIndex >= 0 && sectorIndex < static_cast<int>(primaryLevel->sectors.Size()))
+		{
+			sector_t* sector = &primaryLevel->sectors[sectorIndex];
+			const int count = primaryLevel->tagManager.CountSectorTags(sector);
+			for (int index = 0; index < count; ++index)
+			{
+				PyObject* tag = PyLong_FromLong(primaryLevel->tagManager.GetSectorTag(sector, index));
+				if (tag == nullptr || PyList_Append(tagList, tag) < 0)
+				{
+					Py_XDECREF(tag);
+					break;
+				}
+				Py_DECREF(tag);
+			}
+		}
+		DictSet(event, "tags", tagList);
+	}
+	DictSetInt(event, "player_index", playerIndex);
+	AActor* actor = playerIndex >= 0 && playerIndex < static_cast<int>(MAXPLAYERS)
+		? players[playerIndex].mo : nullptr;
+	DictSet(event, "actor_ref", GameApi::MakeActorRef(actor));
+	InvokeEvent(eventName, event, actor, playerIndex);
+}
+
+// Compares each in-game player's current sector against the last known one and
+// fires sector_exited/sector_entered on changes. Runs from OnWorldPostTick;
+// fully skipped unless a script subscribed to either event.
+void UpdatePlayerSectorTracking()
+{
+	if (!active || primaryLevel == nullptr) return;
+	if (!HasCallbacks("sector_entered") && !HasCallbacks("sector_exited")) return;
+	for (int i = 0; i < static_cast<int>(MAXPLAYERS); ++i)
+	{
+		if (!playeringame[i])
+		{
+			s_lastPlayerSector[i] = -1;
+			continue;
+		}
+		AActor* mo = players[i].mo;
+		const int current = mo != nullptr && mo->Sector != nullptr ? mo->Sector->Index() : -1;
+		const int previous = s_lastPlayerSector[i];
+		if (current == previous) continue;
+		if (previous != -1) FireSectorEvent("sector_exited", i, previous);
+		if (current != -1) FireSectorEvent("sector_entered", i, current);
+		s_lastPlayerSector[i] = current;
+	}
+}
+} // namespace
+
 void OnWorldPostTick()
 {
+	UpdatePlayerSectorTracking();
 	if (!HasCallbacks("post_tick")) return;
 	PyObject* event = BuildEvent("post_tick");
 	DictSetBool(event, "paused", paused != 0);
@@ -2734,7 +3332,7 @@ void OnActorSpawned(AActor* actor)
 	InvokeEvent("actor_spawned", event, actor, ActorPlayerNumber(actor));
 }
 
-void OnActorDied(AActor* actor, AActor* inflictor)
+void OnActorDied(AActor* actor, AActor* inflictor, AActor* source)
 {
 	if (!HasCallbacks("actor_died")) return;
 	PyObject* event = BuildEvent("actor_died");
@@ -2742,6 +3340,18 @@ void OnActorDied(AActor* actor, AActor* inflictor)
 	DictSet(event, "inflictor", ActorSnapshot(inflictor));
 	DictSet(event, "actor_ref", GameApi::MakeActorRef(actor));
 	DictSet(event, "inflictor_ref", GameApi::MakeActorRef(inflictor));
+	// Killer attribution: source is AActor::Die's first argument. For missile
+	// kills it is the shooter (P_DamageMobj receives missile->target as the
+	// source, see p_map.cpp; the missile itself stays in inflictor), for
+	// hitscan and melee the attacker itself, for explosions the bomb owner.
+	// It is null for environmental deaths (crushers, falling damage, damaging
+	// terrain) and for bd.damage_actor / Actor.damage calls without a source.
+	DictSet(event, "attacker_ref", GameApi::MakeActorRef(source));
+	if (source != nullptr) DictSetString(event, "attacker_class", source->GetClass()->TypeName.GetChars());
+	else DictSet(event, "attacker_class", Py_NewRef(Py_None));
+	const int attackerPlayer = ActorPlayerNumber(source);
+	if (attackerPlayer >= 0) DictSetInt(event, "attacker_player_index", attackerPlayer);
+	else DictSet(event, "attacker_player_index", Py_NewRef(Py_None));
 	InvokeEvent("actor_died", event, actor, ActorPlayerNumber(actor));
 }
 
@@ -2758,6 +3368,93 @@ void OnActorDamaged(AActor* actor, AActor* inflictor, AActor* source,
 	DictSetInt(event, "flags", flags);
 	DictSetFloat(event, "angle", angle);
 	InvokeEvent("actor_damaged", event, actor, ActorPlayerNumber(actor));
+}
+
+bool OnBeforeDamage(AActor* target, AActor* inflictor, AActor* source,
+	int& damage, FName& mod, int flags, double angle)
+{
+	if (!HasCallbacks("actor_before_damage")) return false;
+	// Pre-damage filters mutate gameplay outcomes, so they are offline-only
+	// like every other gameplay mutation: skip dispatch in multiplayer and
+	// demo sessions to protect determinism. Same condition as
+	// CheckSessionMutationAllowed, but silent: this runs per damage event on
+	// the hottest gameplay path, not per explicit script call. (Note that the
+	// read-only actor_damaged event, dispatched from EventManager::
+	// WorldThingDamaged, is NOT gated this way; only the filter is.)
+	if (netgame || multiplayer || demoplayback || demorecording) return false;
+	PyObject* event = BuildEvent("actor_before_damage");
+	DictSet(event, "actor_ref", GameApi::MakeActorRef(target));
+	DictSet(event, "inflictor_ref", GameApi::MakeActorRef(inflictor));
+	DictSet(event, "attacker_ref", GameApi::MakeActorRef(source));
+	if (source != nullptr) DictSetString(event, "attacker_class", source->GetClass()->TypeName.GetChars());
+	else DictSet(event, "attacker_class", Py_NewRef(Py_None));
+	const int attackerPlayer = ActorPlayerNumber(source);
+	if (attackerPlayer >= 0) DictSetInt(event, "attacker_player_index", attackerPlayer);
+	else DictSet(event, "attacker_player_index", Py_NewRef(Py_None));
+	DictSetInt(event, "damage", damage);
+	DictSetString(event, "damage_type", mod.GetChars());
+	DictSetInt(event, "flags", flags);
+	DictSetFloat(event, "angle", angle);
+	DictSetBool(event, "cancel", false);
+	// InvokeEvent passes this same dict object to every handler and handlers
+	// mutate it in place; keep our own reference so the write-backs can be
+	// read after dispatch (InvokeEvent releases the reference it is given).
+	Py_INCREF(event);
+	InvokeEvent("actor_before_damage", event, target, ActorPlayerNumber(target));
+
+	// Mutable contract read-back. All reads are defensive: a missing or
+	// wrongly typed key keeps the original value. A handler that raised was
+	// already disabled by InvokeEvent; whatever it wrote before raising
+	// simply survives here.
+	PyObject* cancelValue = PyDict_GetItemString(event, "cancel"); // borrowed
+	if (cancelValue != nullptr)
+	{
+		const int truth = PyObject_IsTrue(cancelValue);
+		if (truth < 0) PyErr_Clear(); // a hostile __bool__ cancels nothing
+		else if (truth == 1)
+		{
+			Py_DECREF(event);
+			return true;
+		}
+	}
+	PyObject* damageValue = PyDict_GetItemString(event, "damage"); // borrowed
+	if (damageValue != nullptr)
+	{
+		if (PyLong_Check(damageValue))
+		{
+			const long long value = PyLong_AsLongLong(damageValue);
+			if (PyErr_Occurred()) PyErr_Clear();
+			else damage = static_cast<int>(std::clamp<long long>(value, 0, 0x7fffffff));
+		}
+		else if (PyFloat_Check(damageValue))
+		{
+			const double value = PyFloat_AsDouble(damageValue);
+			if (PyErr_Occurred()) PyErr_Clear();
+			else if (value <= 0.0) damage = 0; // NaN included: no damage
+			else damage = value >= 2147483647.0 ? 0x7fffffff : static_cast<int>(value);
+		}
+		else
+		{
+			ReportScriptWarning("actor_before_damage: ignoring non-numeric damage write-back");
+		}
+	}
+	PyObject* typeValue = PyDict_GetItemString(event, "damage_type"); // borrowed
+	if (typeValue != nullptr)
+	{
+		if (PyUnicode_Check(typeValue))
+		{
+			const char* text = PyUnicode_AsUTF8(typeValue);
+			if (text == nullptr) PyErr_Clear();
+			else if (text[0] != '\0') mod = FName(text);
+			else ReportScriptWarning("actor_before_damage: ignoring empty damage_type write-back");
+		}
+		else
+		{
+			ReportScriptWarning("actor_before_damage: ignoring non-string damage_type write-back");
+		}
+	}
+	Py_DECREF(event);
+	return false;
 }
 
 void OnActorDestroyed(AActor* actor)
@@ -2787,7 +3484,7 @@ void OnLineActivated(int lineIndex, AActor* actor, int activationType)
 	InvokeEvent("line_activated", event, actor, ActorPlayerNumber(actor));
 }
 
-void OnLineActivationFailed(int lineIndex, int special, const int* args, AActor* actor, int activationType)
+void OnLineActivationFailed(int lineIndex, int special, const int* args, AActor* actor, int activationType, int reason)
 {
 	if (!HasCallbacks("line_activation_failed")) return;
 	PyObject* event = BuildEvent("line_activation_failed");
@@ -2802,6 +3499,9 @@ void OnLineActivationFailed(int lineIndex, int special, const int* args, AActor*
 	}
 	DictSet(event, "actor_ref", GameApi::MakeActorRef(actor));
 	DictSetInt(event, "activation_type", activationType);
+	// Why the activation failed: stable string + numeric ESpecialFailReason code.
+	DictSetString(event, "reason", P_SpecialFailReasonName(reason));
+	DictSetInt(event, "reason_code", reason);
 	InvokeEvent("line_activation_failed", event, actor, ActorPlayerNumber(actor));
 }
 
@@ -2830,6 +3530,49 @@ void OnItemPicked(AActor* item, AActor* toucher, int amount)
 	InvokeEvent("item_picked", event, item, playerNumber);
 }
 
+void OnItemDropped(AActor* item, AActor* dropper, int amount)
+{
+	if (item == nullptr || !HasCallbacks("item_dropped")) return;
+	PyObject* event = BuildEvent("item_dropped");
+	DictSet(event, "actor_ref", GameApi::MakeActorRef(item));
+	DictSet(event, "dropper_ref", GameApi::MakeActorRef(dropper));
+	const int playerNumber = ActorPlayerNumber(dropper);
+	if (playerNumber >= 0) DictSetInt(event, "player_index", playerNumber);
+	else DictSet(event, "player_index", Py_NewRef(Py_None));
+	DictSetString(event, "class_name", item->GetClass()->TypeName.GetChars());
+	DictSetInt(event, "amount", amount);
+	InvokeEvent("item_dropped", event, item, playerNumber);
+}
+
+void OnWeaponChanged(AActor* pawn, AActor* weapon)
+{
+	if (!HasCallbacks("weapon_changed")) return;
+	const int playerIndex = ActorPlayerNumber(pawn);
+	PyObject* event = BuildEvent("weapon_changed");
+	DictSetInt(event, "player_index", playerIndex);
+	if (weapon != nullptr)
+	{
+		DictSetString(event, "weapon", weapon->GetClass()->TypeName.GetChars());
+		DictSet(event, "actor_ref", GameApi::MakeActorRef(weapon));
+	}
+	else
+	{
+		DictSet(event, "weapon", Py_NewRef(Py_None));
+		DictSet(event, "actor_ref", Py_NewRef(Py_None));
+	}
+	if (playerIndex >= 0 && playerIndex < static_cast<int>(MAXPLAYERS) && playeringame[playerIndex])
+	{
+		DictSet(event, "player_ref", GameApi::MakePlayerRef(playerIndex));
+	}
+	else
+	{
+		DictSet(event, "player_ref", Py_NewRef(Py_None));
+	}
+	AActor* actor = playerIndex >= 0 && playerIndex < static_cast<int>(MAXPLAYERS)
+		? players[playerIndex].mo : nullptr;
+	InvokeEvent("weapon_changed", event, actor, playerIndex);
+}
+
 void OnSecretFound(int playernum)
 {
 	if (!HasCallbacks("secret_found")) return;
@@ -2840,6 +3583,68 @@ void OnSecretFound(int playernum)
 	AActor* actor = playernum >= 0 && playernum < static_cast<int>(MAXPLAYERS)
 		? players[playernum].mo : nullptr;
 	InvokeEvent("secret_found", event, actor, playernum);
+}
+
+// Dispatched once per rendered frame from the Dear ImGui overlay layer
+// (BdImGui::Frame), between ImGui::NewFrame() and ImGui::Render(), so that
+// Python widgets can emit ImGui draw calls. BuildEvent already enriches the
+// dict with name/map/level_time.
+void OnImguiFrame()
+{
+	if (!HasCallbacks("imgui_frame")) return;
+	InvokeEvent("imgui_frame", BuildEvent("imgui_frame"));
+}
+
+// Dispatched from P_StartConversation once the conversation is successfully
+// entered (all early-out checks passed). pc is guaranteed non-null by the
+// call site, npc as well; MakeActorRef still maps nullptr to None.
+void OnConversationStarted(AActor* npc, AActor* pc, int playerIndex)
+{
+	if (!HasCallbacks("conversation_started")) return;
+	PyObject* event = BuildEvent("conversation_started");
+	DictSet(event, "npc_ref", GameApi::MakeActorRef(npc));
+	DictSet(event, "pc_ref", GameApi::MakeActorRef(pc));
+	if (playerIndex >= 0) DictSetInt(event, "player_index", playerIndex);
+	else DictSet(event, "player_index", Py_NewRef(Py_None));
+	if (npc != nullptr) DictSetString(event, "npc_class", npc->GetClass()->TypeName.GetChars());
+	else DictSet(event, "npc_class", Py_NewRef(Py_None));
+	InvokeEvent("conversation_started", event, npc, playerIndex);
+}
+
+// Dispatched from HandleReply (p_conversation.cpp), the single commit point
+// for conversation replies: it is only reachable from P_ConversationCommand,
+// which the netcode/demo stream runs exactly once per reply on each machine.
+void OnConversationReply(int playerIndex, AActor* npc, int nodeNumber, int replyIndex,
+	int logNumber, const char* logString, int nextNode, bool itemChanged)
+{
+	if (!HasCallbacks("conversation_reply")) return;
+	PyObject* event = BuildEvent("conversation_reply");
+	if (playerIndex >= 0) DictSetInt(event, "player_index", playerIndex);
+	else DictSet(event, "player_index", Py_NewRef(Py_None));
+	DictSet(event, "npc_ref", GameApi::MakeActorRef(npc));
+	DictSetInt(event, "node", nodeNumber);
+	DictSetInt(event, "reply_index", replyIndex);
+	DictSetInt(event, "log_number", logNumber);
+	if (logString != nullptr && logString[0] != '\0') DictSetString(event, "log_string", logString);
+	else DictSet(event, "log_string", Py_NewRef(Py_None));
+	DictSetInt(event, "next_node", nextNode);
+	DictSetBool(event, "item_changed", itemChanged);
+	AActor* subject = playerIndex >= 0 && playerIndex < static_cast<int>(MAXPLAYERS)
+		? players[playerIndex].mo : npc;
+	InvokeEvent("conversation_reply", event, subject, playerIndex);
+}
+
+// Dispatched from the pyui console command. This is the bridge that lets
+// console aliases and key bindings drive script UI: an alias like
+// `alias toggle_journal "pyui journal"` reaches Python as a ui_command event
+// whose command field is "journal". Pure notification; the handler decides
+// what to toggle.
+void OnUiCommand(const char* name)
+{
+	if (name == nullptr || name[0] == '\0' || !HasCallbacks("ui_command")) return;
+	PyObject* event = BuildEvent("ui_command");
+	DictSetString(event, "command", name);
+	InvokeEvent("ui_command", event);
 }
 
 void SerializeState(FSerializer& arc)
@@ -2921,17 +3726,25 @@ void OnWorldPreTick() {}
 void OnWorldTick() {}
 void OnWorldPostTick() {}
 void OnActorSpawned(AActor*) {}
-void OnActorDied(AActor*, AActor*) {}
+void OnActorDied(AActor*, AActor*, AActor*) {}
 void OnActorDamaged(AActor*, AActor*, AActor*, int, const char*, int, double) {}
+bool OnBeforeDamage(AActor*, AActor*, AActor*, int&, FName&, int, double) { return false; }
 void OnActorDestroyed(AActor*) {}
 void OnActorRevived(AActor*) {}
 void OnLineActivated(int, AActor*, int) {}
-void OnLineActivationFailed(int, int, const int*, AActor*, int) {}
+void OnLineActivationFailed(int, int, const int*, AActor*, int, int) {}
 void OnPlayerEvent(const char*, int, bool) {}
 void OnItemPicked(AActor*, AActor*, int) {}
+void OnItemDropped(AActor*, AActor*, int) {}
+void OnWeaponChanged(AActor*, AActor*) {}
 void OnSecretFound(int) {}
+void OnImguiFrame() {}
+void OnConversationStarted(AActor*, AActor*, int) {}
+void OnConversationReply(int, AActor*, int, int, int, const char*, int, bool) {}
+void OnUiCommand(const char*) {}
 unsigned int GetErrorCount() { return 0; }
 void SetErrorLogPath(const char*) {}
+void ReportScriptWarning(const char*, ...) {}
 void DumpStub(const char*)
 {
 	Printf("Python scripting is not compiled into this executable.\n");
@@ -2941,6 +3754,7 @@ void FinishLoadState() {}
 bool CheckApiThread() { return false; }
 bool CheckGameplayMutation() { return false; }
 bool CheckSessionMutation() { return false; }
+bool CheckLocalPresentation() { return false; }
 void PrintStatus()
 {
 	Printf("Python scripting: not compiled into this executable. Configure with -DBIASEDDOOM_ENABLE_PYTHON=ON and CPython 3.10+ development files.\n");
@@ -2957,6 +3771,22 @@ CCMD(py_status)
 CCMD(dumppystub)
 {
 	PythonRuntime::DumpStub(argv.argc() > 1 ? argv[1] : nullptr);
+}
+
+// pyui is a plain CCMD like py_status: it only dispatches a ui_command
+// notification event and never mutates world state, so it does not need the
+// UNSAFE_CCMD netplay/demo treatment py_reload gets. Being blocked during
+// demo playback is acceptable for a UI toggle. It is registered even in
+// stub builds (same as the other py_ commands); PythonRuntime::OnUiCommand
+// is then a no-op.
+CCMD(pyui)
+{
+	if (argv.argc() != 2)
+	{
+		Printf("usage: pyui <name> - dispatch a ui_command event to Python scripts (for console aliases and key binds)\n");
+		return;
+	}
+	PythonRuntime::OnUiCommand(argv[1]);
 }
 
 UNSAFE_CCMD(py_reload)

@@ -1908,8 +1908,15 @@ class PlayerPawn : Actor
 		}
 
 		player.PendingWeapon = WP_NOCHANGE;
+		let oldweapon = player.ReadyWeapon;
 		player.ReadyWeapon = weapon;
 		player.mo.weaponspecial = 0;
+
+		// BiasedDoom Python hook: fire weapon_changed at the real switch point.
+		if (weapon != oldweapon)
+		{
+			Inventory.PythonNotifyWeaponChanged(self, weapon);
+		}
 
 		if (weapon != null)
 		{

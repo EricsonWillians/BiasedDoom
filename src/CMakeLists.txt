@@ -1122,6 +1122,7 @@ set (PCH_SOURCES
 	
 	common/rendering/v_framebuffer.cpp
 	common/rendering/v_video.cpp
+	common/rendering/nullvideo/null_video.cpp
 	common/rendering/r_thread.cpp
 	common/rendering/r_videoscale.cpp
 	common/rendering/stb_include.cpp
@@ -1282,6 +1283,8 @@ target_sources(zdoom PRIVATE
 	python/python_displaylist.h
 	python/python_game_api.cpp
 	python/python_game_api.h
+	python/python_imgui.cpp
+	python/python_imgui.h
 	python/python_runtime.cpp
 	python/python_runtime.h
 )
@@ -1292,8 +1295,24 @@ endif()
 set_source_files_properties(
 	python/python_displaylist.cpp
 	python/python_game_api.cpp
+	python/python_imgui.cpp
 	python/python_runtime.cpp
 	PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE)
+
+# bd_imgui.cpp is always compiled: it provides no-op stubs when
+# BIASEDDOOM_IMGUI is not defined.
+target_sources(zdoom PRIVATE
+	common/imgui/bd_imgui.cpp
+	common/imgui/bd_imgui.h
+)
+set_source_files_properties(
+	common/imgui/bd_imgui.cpp
+	PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE)
+
+if(BIASEDDOOM_IMGUI_AVAILABLE)
+	target_compile_definitions(zdoom PRIVATE BIASEDDOOM_IMGUI=1)
+	target_link_libraries(zdoom imgui)
+endif()
 
 if(BIASEDDOOM_PYTHON_AVAILABLE)
 	target_compile_definitions(zdoom PRIVATE BIASEDDOOM_PYTHON=1)
@@ -1326,6 +1345,24 @@ if(BIASEDDOOM_PYTHON_AVAILABLE)
 			PATTERN "test" EXCLUDE
 			PATTERN "__pycache__" EXCLUDE
 			PATTERN "config-*" EXCLUDE)
+
+		# Engine-shipped Python framework packages live in src/python/lib/ and are
+		# staged into the same directory as the private standard library, so mods
+		# can `import bd_quests` (and friends) with no sys.path setup. Guarded so a
+		# missing python/lib tree never breaks the build. An always-run custom
+		# target (not a POST_BUILD step) so editing a package re-stages it even
+		# when zdoom itself does not relink.
+		if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/lib")
+			add_custom_target(stage_python_frameworks ALL
+				COMMAND ${CMAKE_COMMAND} -E copy_directory
+					"${CMAKE_CURRENT_SOURCE_DIR}/python/lib"
+					$<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}
+				COMMENT "Staging engine-shipped Python packages from python/lib")
+			install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/python/lib/"
+				DESTINATION ${BIASEDDOOM_PYTHON_INSTALL_ROOT}/${BIASEDDOOM_PYTHON_LIBDIR}
+				COMPONENT "Python runtime"
+				PATTERN "__pycache__" EXCLUDE)
+		endif()
 
 		file(GLOB BIASEDDOOM_PYTHON_CONFIG_DIRS "${Python3_STDLIB}/config-*")
 		foreach(BIASEDDOOM_PYTHON_CONFIG_DIR IN LISTS BIASEDDOOM_PYTHON_CONFIG_DIRS)

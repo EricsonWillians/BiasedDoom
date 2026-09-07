@@ -83,6 +83,7 @@
 #include "model.h"
 
 #include "v_video.h"
+#include "i_video.h"
 #include "g_hub.h"
 #include "g_levellocals.h"
 #include "events.h"
@@ -2431,7 +2432,9 @@ static void PutSaveComment (FSerializer &arc)
 
 static void PutSavePic (FileWriter *file, int width, int height)
 {
-	if (width <= 0 || height <= 0 || !storesavepic)
+	// No renderer exists in headless mode; write the placeholder like other
+	// paths that cannot produce a picture.
+	if (width <= 0 || height <= 0 || !storesavepic || I_IsHeadless())
 	{
 		M_CreateDummyPNG (file);
 	}

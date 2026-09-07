@@ -61,6 +61,7 @@
 #include "v_draw.h"
 #include "doommenu.h"
 #include "g_game.h"
+#include "python/python_runtime.h"
 
 static FCRandom pr_randomspeech("RandomSpeech");
 
@@ -434,6 +435,11 @@ void P_StartConversation (AActor *npc, AActor *pc, bool facetalker, bool saveang
 		M_ActivateMenu((DMenu*)cmenu);
 		menuactive = MENU_OnNoPause;
 	}
+
+	// The conversation is successfully entered at this point (all early-out
+	// checks are above), so the Python event fires for both console and
+	// remote players, including continuation nodes shown by HandleReply.
+	PythonRuntime::OnConversationStarted(npc, pc, static_cast<int>(pc->player - players));
 }
 
 //============================================================================
@@ -600,6 +606,18 @@ static void HandleReply(player_t *player, bool isconsole, int nodenum, int reply
 	{
 		player->SetLogNumber(reply->LogNumber);
 	}
+
+	// Python event hook. HandleReply is static and only reachable from
+	// P_ConversationCommand (the netcode/demo dispatcher, d_net.cpp), which
+	// runs exactly once per committed reply on each machine, so the event
+	// fires exactly once per reply locally. The early returns above (default
+	// reply, missing requisite items) are uncommitted and do not fire it.
+	PythonRuntime::OnConversationReply(
+		static_cast<int>(player - players), npc, nodenum, replynum,
+		reply->LogNumber != 0 ? reply->LogNumber : -1,
+		reply->LogString.IsNotEmpty() ? reply->LogString.GetChars() : nullptr,
+		reply->NextNode != 0 ? reply->NextNode : -1,
+		takestuff && (reply->GiveType != nullptr || reply->ItemCheck.Size() > 0));
 
 	if (nullptr != replyText && '\0' != replyText[0] && isconsole)
 	{
