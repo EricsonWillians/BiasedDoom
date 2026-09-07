@@ -7,7 +7,9 @@ is the deterministic autotest (``BD_EXAMPLE_AUTOTEST=1``) and the
 screenshot pose (``BD_EXAMPLE_SCREENSHOT=1``).
 
 The autotest drives the framework headlessly with scripted RNG doubles and
-asserts: model validation, the talk ui_command path, smalltalk routing,
+asserts: model validation, the talk ui_command path plus the synthetic
+Custom Action 1 press path (event payload, session start, release edge),
+smalltalk routing,
 the faction gate locked/unlocked, both persuasion and both intimidation
 branches (shells/rounds only on success, dread bump on a successful
 threat), the attitude ctx keys with failed threats eroding the
@@ -107,23 +109,26 @@ def schedule_run_modes(event):
         bd.schedule(autotest_spawned, delay=25)
         bd.schedule(autotest_talk_command, delay=40)
         bd.schedule(autotest_talk_asserts, delay=50)
-        bd.schedule(autotest_smalltalk, delay=62)
-        bd.schedule(autotest_gate_locked, delay=70)
-        bd.schedule(autotest_no_character, delay=85)
-        bd.schedule(autotest_check_success, delay=105)
-        bd.schedule(autotest_check_fail_and_quest, delay=130)
-        bd.schedule(autotest_quest_condition, delay=155)
-        bd.schedule(autotest_pickup, delay=175)
-        bd.schedule(autotest_quest_done, delay=200)
-        bd.schedule(autotest_gate_open, delay=220)
-        bd.schedule(autotest_session_guard, delay=250)
-        bd.schedule(autotest_intimidation_success, delay=270)
-        bd.schedule(autotest_intimidation_fail, delay=300)
-        bd.schedule(autotest_attitude, delay=315)
-        bd.schedule(autotest_hidden_choice, delay=330)
-        bd.schedule(autotest_candle_and_stalker, delay=365)
-        bd.schedule(autotest_stale_npc, delay=395)
-        bd.schedule(autotest_finish, delay=425)
+        bd.schedule(autotest_custom_action_press, delay=62)
+        bd.schedule(autotest_custom_action_asserts, delay=74)
+        bd.schedule(autotest_custom_action_release, delay=86)
+        bd.schedule(autotest_smalltalk, delay=102)
+        bd.schedule(autotest_gate_locked, delay=110)
+        bd.schedule(autotest_no_character, delay=125)
+        bd.schedule(autotest_check_success, delay=145)
+        bd.schedule(autotest_check_fail_and_quest, delay=170)
+        bd.schedule(autotest_quest_condition, delay=195)
+        bd.schedule(autotest_pickup, delay=215)
+        bd.schedule(autotest_quest_done, delay=240)
+        bd.schedule(autotest_gate_open, delay=260)
+        bd.schedule(autotest_session_guard, delay=290)
+        bd.schedule(autotest_intimidation_success, delay=310)
+        bd.schedule(autotest_intimidation_fail, delay=340)
+        bd.schedule(autotest_attitude, delay=355)
+        bd.schedule(autotest_hidden_choice, delay=370)
+        bd.schedule(autotest_candle_and_stalker, delay=405)
+        bd.schedule(autotest_stale_npc, delay=435)
+        bd.schedule(autotest_finish, delay=465)
     if SCREENSHOT:
         bd.schedule(screenshot_pose, delay=bd.TICRATE, map_local=False)
         # A *failed* persuasion attempt, then back to the start node: the
@@ -254,6 +259,46 @@ def autotest_talk_asserts():
     bd.assert_true(all(text != content.MARK_CHOICE_TEXT
                        for text, _en, _ann in labels),
                    "mark choice hidden while dread is low")
+
+
+def autotest_custom_action_press():
+    """End the console-path session, then synthetically press Custom
+    Action 1 (the engine surfaces the press on the next gametic's scan)."""
+    active = bd_dialogue.active_session()
+    bd.assert_true(active is not None and active.active,
+                   "session active before the custom action press")
+    if active is not None:
+        active.end()
+    bd.assert_true(bd_dialogue.active_session() is None,
+                   "ending cleared the session before the synthetic press")
+    bd.set_custom_action(1, True)
+
+
+def autotest_custom_action_asserts():
+    """The press fired the documented payload and started a fresh session
+    through the same handler the console alias uses."""
+    active = bd_dialogue.active_session()
+    bd.assert_true((1, True) in systems.action_log,
+                   "the custom_action event carried "
+                   "{'action': 1, 'pressed': True}")
+    bd.assert_true(active is not None and active.active,
+                   "custom action 1 press started a session")
+    if active is None:
+        return
+    bd.assert_true(active.active_node is not None
+                   and active.active_node.id == "start",
+                   "the custom-action session opens at the start node")
+    bd.set_custom_action(1, False)
+
+
+def autotest_custom_action_release():
+    """The release edge fired too and left the pressed-open session alone."""
+    bd.assert_true((1, False) in systems.action_log,
+                   "the release edge fired with "
+                   "{'action': 1, 'pressed': False}")
+    active = bd_dialogue.active_session()
+    bd.assert_true(active is not None and active.active,
+                   "the release edge left the session open")
 
 
 def autotest_smalltalk():

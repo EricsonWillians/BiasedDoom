@@ -11,9 +11,13 @@ Owns the rules and every engine hook of the fixture:
   word (same thresholds as ``bd_npcs``, reimplemented locally so this
   example never imports the pack just for the mapping), and a
   ``shift_attitude`` callable for effects. Composition over framework edits.
-- **Talk interaction.** ``bind e talk`` → ``pyui talk`` → ``ui_command`` →
-  :func:`start_talk` opens a session when the player is within
-  ``TALK_RANGE`` of the Inquisitor.
+- **Talk interaction.** Custom Action 1 (``+pyaction1``, auto-bound to Q
+  at ``engine_start`` unless the player already bound it under Options ->
+  Customize Controls, Custom Actions) fires the ``custom_action`` event ->
+  :func:`talk_command`, which opens a session when the player is within
+  ``TALK_RANGE`` of the Inquisitor. The ``talk`` console alias
+  (``pyui talk`` -> ``ui_command``) routes into the same function, and the
+  "no one near" feedback names the live binding.
 - **Dusk ambience.** On ``map_load`` the horror state starts (dread tick +
   stalker windows + persistence), a slow candle
   :class:`PositionCandle` dresses the Inquisitor's (untagged) sector —
@@ -250,6 +254,58 @@ def current_session():
     return session
 
 
+# --- custom actions -------------------------------------------------------------------
+
+
+#: Every custom_action payload the example saw, as (action, pressed) pairs.
+#: The autotest asserts on the exact transitions.
+action_log = []
+
+
+def ensure_custom_action_binding(n, default_key):
+    """Bind ``default_key`` to ``+pyactionN`` when the player has not.
+
+    Custom Actions are ordinary engine buttons, so a binding set through
+    Options -> Customize Controls, Custom Actions always wins; this only
+    fills in a stock-unbound default so the example is playable out of the
+    box. Safe from ``engine_start`` (console commands queue pre-map).
+    """
+    try:
+        if bd.input_binding(f"+pyaction{n}") is None:
+            bd.execute(f"bind {default_key} +pyaction{n}")
+    except Exception as exc:
+        bd.warn(f"inquisition: could not bind +pyaction{n}: {exc!r}")
+
+
+def action_key_hint(n):
+    """The live display name of the ``+pyactionN`` binding (or a fallback)."""
+    try:
+        name = bd.input_binding(f"+pyaction{n}")
+    except Exception:
+        name = None
+    return name or f"Custom Action {n} (bind in Customize Controls)"
+
+
+def talk_command():
+    """The talk interaction shared by the console alias and Custom Action 1."""
+    if bd_dialogue.active_session() is not None:
+        return
+    if start_talk() is None:
+        bd.center_message(f"[{action_key_hint(1)}] {content.NO_ONE_NEAR}")
+
+
+@bd.on("custom_action")
+def on_custom_action(event):
+    try:
+        action = int(event.get("action") or 0)
+        pressed = bool(event.get("pressed"))
+        action_log.append((action, pressed))
+        if action == 1 and pressed:
+            talk_command()
+    except Exception as exc:
+        bd.warn(f"inquisition: custom action failed: {exc!r}")
+
+
 # --- event wiring -------------------------------------------------------------------
 
 
@@ -267,19 +323,18 @@ def setup_example(event):
     bd_quests.log.track_pickup(content.QUEST_ID, "fetch_reliquary",
                                content.CRATE_CLASS, 1)
 
-    # Console alias + key bind through the pyui/ui_command bridge.
+    # Console alias through the pyui/ui_command bridge; the key itself lives
+    # on Custom Action 1 (auto-bound below, rebindable in Customize Controls
+    # -> Custom Actions).
     bd.execute('alias talk "pyui talk"')
-    bd.execute("bind e talk")
+    ensure_custom_action_binding(1, "q")
 
 
 @bd.on("ui_command")
 def on_ui_command(event):
     if event.get("command") != "talk":
         return
-    if bd_dialogue.active_session() is not None:
-        return
-    if start_talk() is None:
-        bd.center_message(content.NO_ONE_NEAR)
+    talk_command()
 
 
 @bd.on("map_load")

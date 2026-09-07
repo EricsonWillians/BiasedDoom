@@ -482,6 +482,7 @@ Scoping rules:
 | `conversation_started` | `npc_ref`, `pc_ref`, `player_index`, `npc_class` |
 | `conversation_reply` | `player_index`, `npc_ref`, `node`, `reply_index`, `log_number`, `log_string`, `next_node`, `item_changed` |
 | `ui_command` | `command` |
+| `custom_action` | `action`, `pressed` |
 
 `item_picked` and `secret_found` are part of the
 [gameplay director API](#gameplay-director-api).
@@ -629,6 +630,26 @@ def ui_command(event):
 state, and it is a no-op when no script subscribed to `ui_command` or when
 Python is not active.
 
+#### `custom_action`
+
+Fires on every press and release of the 32 generic custom action buttons
+(`+pyaction1` .. `+pyaction32`), including synthetic
+[`bd.set_custom_action`](#custom-actions) changes. See
+[Custom Actions](#custom-actions) for the full input API.
+
+Extra fields:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `action` | `int` | Action number, 1..32. |
+| `pressed` | `bool` | `True` on the press edge, `False` on the release edge. |
+
+Events are scanned once per gametic before `pre_tick` dispatch, after the
+engine has latched that tic's input edges, so each transition fires exactly
+once and `bd.custom_action_down()`/`bd.custom_action_mask()` already reflect
+the new state when a handler runs. A press or release caused by a handler
+(e.g. from `pre_tick`) surfaces on the **next** gametic's scan.
+
 `line_activated` only fires when the line's special **succeeds** — a marker
 special like `ACS_Execute` with no backing script fails silently. Subscribe
 to `line_activation_failed` to debug dead triggers: it fires for any line
@@ -762,6 +783,7 @@ leave the screen edge.
 | `bd.API_VERSION` | `int` | Public API revision; currently `2`. |
 | `bd.TICRATE` | `int` | Engine tic rate; currently `35`. |
 | `bd.RUNTIME` | `str` | Runtime label; currently `"CPython"`. |
+| `bd.PYACTION_COUNT` | `int` | Number of generic custom action buttons; currently `32`. See [Custom Actions](#custom-actions). |
 | `bd.state` | `dict` | Shared JSON-persisted state dictionary. |
 | `bd.on(name)` | decorator | Registers a callback. |
 
@@ -971,6 +993,89 @@ for player in bd.players():
     if pawn is not None:
         bd.log(f"{player['name']} has {pawn['health']} health")
 ```
+
+## Custom Actions
+
+The engine ships 32 generic "Custom Action" buttons reserved for Python mods:
+`+pyaction1` .. `+pyaction32` (`bd.PYACTION_COUNT` is `32`). They are
+ordinary engine buttons, so they get conflict-free user key bindings, the
+`bind` console command, and a Customize Controls page, and they are consumed
+from Python through the [`custom_action`](#custom_action) event plus the
+query/synthesis APIs below. They are **local-only input state**: they are
+never added to the network usercmd, so they work headless, only drive the
+local player's scripts, and are **not recorded in demos**.
+
+Binding, from the console or a script:
+
+```
+bind q +pyaction1
+```
+
+or through the menu: **Options -> Customize Controls -> Custom Actions**.
+All 32 actions are unbound by default; mods may suggest binds (for example
+from `on_engine_start` with `bd.execute("bind ...")`) but must not overwrite
+a binding the user already set without asking.
+
+Event payload and ordering: `{"action": n, "pressed": bool}` (plus the
+[common fields](#common-event-fields)); both edges fire, press first.
+`bd.on("custom_action")` handlers run once per gametic before `pre_tick`
+dispatch, after the engine latched that tic's key input, so state queries in
+a handler already see the new state, and a synthetic change made by a handler
+surfaces on the next gametic.
+
+### `bd.custom_action_down(n) -> bool`
+
+`True` while custom action `n` (1..32) is held. Raises `ValueError` when `n`
+is outside 1..32.
+
+### `bd.custom_action_mask() -> int`
+
+Bitmask of the currently held actions: bit `n-1` is set while action `n` is
+down. Useful for one-call polling of several actions inside a `tick` handler.
+
+### `bd.set_custom_action(n, down) -> None`
+
+Synthetically presses (`down=True`) or releases (`down=False`) action `n`,
+driving the same button state as the bound key (or typing `+pyactionN` /
+`-pyactionN` at the console), so the per-tic scan emits the same
+`custom_action` event on the next gametic. Calls are idempotent: requesting
+the current state is a no-op, so a mod may "ensure held" every tick without
+re-firing events. Raises `ValueError` when `n` is outside 1..32.
+
+### `bd.input_binding(command) -> str | None`
+
+Reverse binding lookup: returns the display name of the first key bound to
+the given console command, using the engine's canonical key names (for
+example `"+pyaction3"` returns `"Q"` after `bind q +pyaction3`, or
+`"Mouse1"`/`"Space"` for those keys), or `None` when the command is unbound.
+The result stays valid until the binding changes.
+
+```python
+import biaseddoom as bd
+
+
+@bd.on("custom_action")
+def custom_action(event):
+    if event["action"] == 1 and event["pressed"]:
+        bd.log("custom action 1 pressed")
+    if not event["pressed"] and bd.custom_action_mask() == 0:
+        bd.log("all custom actions released")
+
+
+@bd.on("engine_start")
+def engine_start(event):
+    if bd.input_binding("+pyaction1") is None:
+        bd.execute("bind q +pyaction1")  # only suggest; respect user binds
+    bd.set_custom_action(2, True)  # press; event fires on the next gametic
+    bd.schedule(release_action_2, delay=35)
+
+
+def release_action_2():
+    bd.set_custom_action(2, False)  # release; event fires on the next gametic
+```
+
+A press and its release must happen in different gametics: both calls in the
+same handler cancel out before the next scan runs, and no event is emitted.
 
 ## Live Actor Handles (API v2)
 

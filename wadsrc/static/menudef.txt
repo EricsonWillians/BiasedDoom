@@ -864,6 +864,7 @@ OptionMenu "CustomizeControls" protected
 
 	Submenu    "$CNTRLMNU_ACTION"      , "ActionControlsMenu"
 	Submenu    "$CNTRLMNU_WEAPONS"     , "WeaponsControlMenu"
+	Submenu    "Custom Actions"      , "PythonCustomActionsMenu"
 	Submenu    "$CNTRLMNU_INVENTORY"   , "InventoryControlsMenu"
 	Submenu    "$MAPCNTRLMNU_CONTROLS" , "MapControlsMenu"
 	Submenu    "$CNTRLMNU_OTHER"       , "OtherControlsMenu"
@@ -962,6 +963,47 @@ OptionMenu "WeaponsControlMenu" protected
 	Control    "$CNTRLMNU_USER2"            , "+user2"
 	Control    "$CNTRLMNU_USER3"            , "+user3"
 	Control    "$CNTRLMNU_USER4"            , "+user4"
+}
+
+OptionMenu "PythonCustomActionsMenu" protected
+{
+	Title "Custom Actions"
+	ScrollTop 2
+	StaticTextSwitchable "$CNTRLMNU_SWITCHTEXT1", "$CNTRLMNU_SWITCHTEXT2", "ControlMessage"
+
+	StaticText ""
+	Control    "Custom Action 1"  , "+pyaction1"
+	Control    "Custom Action 2"  , "+pyaction2"
+	Control    "Custom Action 3"  , "+pyaction3"
+	Control    "Custom Action 4"  , "+pyaction4"
+	Control    "Custom Action 5"  , "+pyaction5"
+	Control    "Custom Action 6"  , "+pyaction6"
+	Control    "Custom Action 7"  , "+pyaction7"
+	Control    "Custom Action 8"  , "+pyaction8"
+	Control    "Custom Action 9"  , "+pyaction9"
+	Control    "Custom Action 10" , "+pyaction10"
+	Control    "Custom Action 11" , "+pyaction11"
+	Control    "Custom Action 12" , "+pyaction12"
+	Control    "Custom Action 13" , "+pyaction13"
+	Control    "Custom Action 14" , "+pyaction14"
+	Control    "Custom Action 15" , "+pyaction15"
+	Control    "Custom Action 16" , "+pyaction16"
+	Control    "Custom Action 17" , "+pyaction17"
+	Control    "Custom Action 18" , "+pyaction18"
+	Control    "Custom Action 19" , "+pyaction19"
+	Control    "Custom Action 20" , "+pyaction20"
+	Control    "Custom Action 21" , "+pyaction21"
+	Control    "Custom Action 22" , "+pyaction22"
+	Control    "Custom Action 23" , "+pyaction23"
+	Control    "Custom Action 24" , "+pyaction24"
+	Control    "Custom Action 25" , "+pyaction25"
+	Control    "Custom Action 26" , "+pyaction26"
+	Control    "Custom Action 27" , "+pyaction27"
+	Control    "Custom Action 28" , "+pyaction28"
+	Control    "Custom Action 29" , "+pyaction29"
+	Control    "Custom Action 30" , "+pyaction30"
+	Control    "Custom Action 31" , "+pyaction31"
+	Control    "Custom Action 32" , "+pyaction32"
 }
 
 OptionMenu "InventoryControlsMenu" protected

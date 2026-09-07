@@ -35,8 +35,10 @@ path on line 111 (an unreachable DC first, then a trivial one),
 controlled trap springs (full vs. halved damage) that also spike the
 dread meter, the sanctuary/nightmare rest branches under forced light
 levels, then a checkpoint round-trip asserting the script RNG stream,
-the whole CharacterState, the PartyState (companions included), and the
-``toggle_sheet`` console alias. Because the candle/fluorescent light
+the whole CharacterState, the PartyState (companions included), the
+``toggle_sheet`` console alias, and the synthetic Custom Action presses
+(sheet toggle round-trip, then a controlled sanctuary rest through
+Custom Action 2 with the outcome read back). Because the candle/fluorescent light
 programs draw from the script RNG on every step and their post-load
 task phase cannot reproduce the saved stream position (probe-verified),
 the autotest quiesces them just before the save and re-arms them after
@@ -130,6 +132,33 @@ def raises_value_error(fn):
     return False
 
 
+# --- custom actions ------------------------------------------------------------
+
+
+#: Every custom_action payload the example saw, as (action, pressed)
+#: pairs. The autotest asserts on the exact transitions.
+action_log = []
+
+#: The outcome dict of the last rest Custom Action 2 (or the
+#: `crypt_rest` alias) ran; the autotest reads it back.
+last_rest_outcome = None
+
+
+def ensure_custom_action_binding(n, default_key):
+    """Bind ``default_key`` to ``+pyactionN`` when the player has not.
+
+    Custom Actions are ordinary engine buttons, so a binding set through
+    Options -> Customize Controls, Custom Actions always wins; this only
+    fills in a stock-unbound default so the example is playable out of the
+    box. Safe from ``engine_start`` (console commands queue pre-map).
+    """
+    try:
+        if bd.input_binding(f"+pyaction{n}") is None:
+            bd.execute(f"bind {default_key} +pyaction{n}")
+    except Exception as exc:
+        bd.warn(f"sunken crypt: could not bind +pyaction{n}: {exc!r}")
+
+
 # --- scenario setup ------------------------------------------------------------
 
 
@@ -185,12 +214,15 @@ def setup_dungeon(event):
     # player_index=None for the legacy any-death policy.
     bd_dnd.track_xp_from_kills(character, player_index=0)
 
-    # Console/key toggles through the pyui/ui_command bridge: K or
-    # `toggle_sheet` flips the reliquary; R or `crypt_rest` attempts a
-    # sanctuary rest.
-    bind_sheet_toggle(sheet, key="k")
+    # Console aliases through the pyui/ui_command bridge: `toggle_sheet`
+    # flips the reliquary, `crypt_rest` attempts a sanctuary rest. The
+    # keys live on Custom Actions 1 (sheet) and 2 (rest), auto-bound
+    # below and rebindable in Options -> Customize Controls, Custom
+    # Actions.
+    bind_sheet_toggle(sheet)
     bd.execute('alias crypt_rest "pyui crypt_rest"')
-    bd.execute("bind r crypt_rest")
+    ensure_custom_action_binding(1, "q")
+    ensure_custom_action_binding(2, "v")
 
     systems.wire_level_up(character)
     ui.ctx.update(sheet=sheet, sheet_drawn_ok=False)
@@ -213,6 +245,13 @@ def on_map(event):
             bd.schedule(autotest_sheet_toggle_off, delay=20)
             bd.schedule(autotest_sheet_toggle_on, delay=32)
             bd.schedule(autotest_sheet_toggle_assert, delay=44)
+            bd.schedule(autotest_custom_action_sheet_press, delay=56)
+            bd.schedule(autotest_custom_action_sheet_assert, delay=68)
+            bd.schedule(autotest_custom_action_sheet_restore, delay=80)
+            bd.schedule(autotest_custom_action_sheet_back, delay=92)
+            bd.schedule(autotest_custom_action_rest_press, delay=105)
+            bd.schedule(autotest_custom_action_rest_assert, delay=118)
+            bd.schedule(autotest_custom_action_rest_release, delay=130)
         else:
             horror.start()
         return
@@ -298,19 +337,48 @@ def drive_door_use(event):
     bd.player(0).set_input(buttons=buttons)
 
 
-@bd.on("ui_command")
-def on_ui_command(event):
-    if event.get("command") != "crypt_rest":
-        return
-    if AUTOTEST:
-        return  # the autotest drives try_long_rest directly
+def _run_crypt_rest():
+    """The crypt_rest body shared by the console alias and Custom Action 2.
+
+    Records the outcome dict so the autotest can read back which rest
+    branch ran."""
+    global last_rest_outcome
     outcome = systems.try_long_rest(character)
+    last_rest_outcome = outcome
     if outcome["kind"] == "sanctuary":
         bd.center_message("You rest in the light.")
     elif outcome["kind"] == "fitful":
         bd.center_message("You sleep badly, and wake worse.")
     else:
         bd.center_message("The dark dreams with you.")
+    return outcome
+
+
+@bd.on("ui_command")
+def on_ui_command(event):
+    if event.get("command") != "crypt_rest":
+        return
+    if AUTOTEST:
+        return  # the scripted rest assertions drive try_long_rest directly
+    _run_crypt_rest()
+
+
+@bd.on("custom_action")
+def on_custom_action(event):
+    """Action 1 toggles the reliquary, action 2 attempts a rest; both run
+    the same bodies as the `toggle_sheet` / `crypt_rest` aliases."""
+    try:
+        action = int(event.get("action") or 0)
+        pressed = bool(event.get("pressed"))
+        action_log.append((action, pressed))
+        if not pressed:
+            return
+        if action == 1:
+            sheet.toggle()
+        elif action == 2:
+            _run_crypt_rest()
+    except Exception as exc:
+        bd.warn(f"sunken crypt: custom action failed: {exc!r}")
 
 
 # --- party / companion helpers -------------------------------------------------
@@ -1256,6 +1324,70 @@ def autotest_sheet_toggle_on():
 def autotest_sheet_toggle_assert():
     bd.assert_true(sheet.visible,
                    "toggle_sheet showed the sheet again (idempotent binding)")
+
+
+# --- custom actions (synthetic presses) -----------------------------------------------
+
+
+def autotest_custom_action_sheet_press():
+    """Synthetic Custom Action 1 press flips the reliquary sheet."""
+    # The alias round-trip above left the sheet visible again.
+    bd.assert_true(sheet.visible, "sheet visible before the custom action press")
+    bd.set_custom_action(1, True)
+
+
+def autotest_custom_action_sheet_assert():
+    bd.assert_true((1, True) in action_log,
+                   "the sheet press fired {'action': 1, 'pressed': True}")
+    bd.assert_true(not sheet.visible,
+                   "custom action 1 hid the sheet")
+    bd.set_custom_action(1, False)
+
+
+def autotest_custom_action_sheet_restore():
+    bd.assert_true((1, False) in action_log,
+                   "the sheet release fired {'action': 1, 'pressed': False}")
+    bd.assert_true(not sheet.visible,
+                   "the release edge left the sheet hidden")
+    bd.set_custom_action(1, True)
+
+
+def autotest_custom_action_sheet_back():
+    bd.assert_true(sheet.visible,
+                   "the second press showed the sheet again")
+    bd.set_custom_action(1, False)
+
+
+def autotest_custom_action_rest_press():
+    """Synthetic Custom Action 2 press runs the rest path in a controlled
+    sanctuary: force the light, wound Morrow, then press."""
+    pawn = player_pawn()
+    bd.assert_true(pawn is not None, "rest: pawn available")
+    if pawn is None:
+        return
+    sector = bd.sector_at(pawn.x, pawn.y)
+    bd.assert_true(sector is not None, "rest: sector resolvable")
+    if sector is None:
+        return
+    sector.light = 200  # forced sanctuary light (the fixture sector is untagged)
+    character.set_hp(10)  # max_hp 20: a sanctuary rest must heal 10
+    bd.set_custom_action(2, True)
+
+
+def autotest_custom_action_rest_assert():
+    bd.assert_true((2, True) in action_log,
+                   "the rest press fired {'action': 2, 'pressed': True}")
+    outcome = last_rest_outcome or {}
+    bd.assert_true(outcome.get("kind") == "sanctuary",
+                   "custom action 2 ran the rest path (sanctuary branch)")
+    bd.assert_true(character.hp == character.max_hp,
+                   "the custom-action rest healed Morrow fully")
+    bd.set_custom_action(2, False)
+
+
+def autotest_custom_action_rest_release():
+    bd.assert_true((2, False) in action_log,
+                   "the rest release fired {'action': 2, 'pressed': False}")
 
 
 # --- screenshot helper ---------------------------------------------------------

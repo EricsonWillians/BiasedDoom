@@ -12,10 +12,13 @@ Owns the behavior of the suite:
   events and applied live through the any-event ``bd.imgui`` accessors.
 - **Event wiring.** ``engine_start`` registers the font catalog from
   ``bd.read_bytes`` bytes plus the vector default sizes, restores the
-  settings, applies theme/accent/scale, and arms ``bind esc menu_toggle``
-  through the ``pyui``/``ui_command`` bridge (the frame also polls
-  ``is_key_pressed(Escape)``; both paths collapse through a per-tic
-  debounce). ``map_load`` spawns three calm fixture monsters and takes a
+  settings, applies theme/accent/scale, auto-binds Custom Action 4 (the
+  menu toggle) to its stock-unbound default, and arms the ``menu_toggle``
+  console alias through the ``pyui``/``ui_command`` bridge. The primary
+  toggle path is the ``custom_action`` event (Custom Action 4); the
+  frame's Esc poll stays only as a defensive fallback for when Custom
+  Action 4 is unbound, and both paths collapse through a per-tic
+  debounce. ``map_load`` spawns three calm fixture monsters and takes a
   health reading so the pause menu and the monitor have something to show.
   ``ui_command`` accepts ``menu_toggle``, ``menu_open <screen>`` and
   ``menu_close`` from the console.
@@ -26,6 +29,7 @@ Manifest entry 2 of 4 (after content.py).
 """
 
 from collections import deque
+import time
 
 import biaseddoom as bd
 
@@ -498,6 +502,85 @@ def _on_menu_activate(screen_id, item_id):
 model.on_activate = _on_menu_activate
 
 
+# --- custom actions ---------------------------------------------------------------------
+
+
+#: Every custom_action payload the example saw, as (action, pressed)
+#: pairs. The autotest asserts on the exact transitions.
+action_log = []
+
+#: The Custom Action 4 binding cache: ``input_binding`` is queried at
+#: most once per second, never per frame.
+_ca4_cache_at = -1.0e9
+_ca4_cache_value = False
+
+
+def ensure_custom_action_binding(n, default_key):
+    """Bind ``default_key`` to ``+pyactionN`` when the player has not.
+
+    Custom Actions are ordinary engine buttons, so a binding set through
+    Options -> Customize Controls, Custom Actions always wins; this only
+    fills in a stock-unbound default so the example is playable out of the
+    box. Safe from ``engine_start`` (console commands queue pre-map).
+    """
+    try:
+        if bd.input_binding(f"+pyaction{n}") is None:
+            bd.execute(f"bind {default_key} +pyaction{n}")
+    except Exception as exc:
+        bd.warn(f"overture: could not bind +pyaction{n}: {exc!r}")
+
+
+def action_key_hint(n):
+    """The live display name of the ``+pyactionN`` binding (or a fallback)."""
+    try:
+        name = bd.input_binding(f"+pyaction{n}")
+    except Exception:
+        name = None
+    return name or f"Custom Action {n} (bind in Customize Controls)"
+
+
+def custom_action4_bound():
+    """True while ``+pyaction4`` carries a binding (cached one second)."""
+    global _ca4_cache_at, _ca4_cache_value
+    now = time.monotonic()
+    if now - _ca4_cache_at >= 1.0:
+        _ca4_cache_at = now
+        try:
+            _ca4_cache_value = bd.input_binding("+pyaction4") is not None
+        except Exception:
+            _ca4_cache_value = False
+    return _ca4_cache_value
+
+
+def esc_fallback_active():
+    """True while Esc may drive the menu: only when Custom Action 4 is
+    unbound (the fallback exists so the example stays usable if the
+    default binding is cleared)."""
+    return not custom_action4_bound()
+
+
+def menu_toggle_hint():
+    """The footer toggle hint naming the live Custom Action 4 binding."""
+    try:
+        return content.FOOTER_ESCAPE_HINT % action_key_hint(4)
+    except Exception:
+        return "Custom Action 4: back"
+
+
+@bd.on("custom_action")
+def on_custom_action(event):
+    """Custom Action 4 toggles the menu through the same debounced
+    function the console alias calls."""
+    try:
+        action = int(event.get("action") or 0)
+        pressed = bool(event.get("pressed"))
+        action_log.append((action, pressed))
+        if action == 4 and pressed:
+            request_menu_toggle()
+    except Exception as exc:
+        bd.warn(f"overture: custom action failed: {exc!r}")
+
+
 # --- the map fixture ------------------------------------------------------------------------
 
 
@@ -534,14 +617,16 @@ def setup_example(event):
     restore_settings()
     apply_settings()
 
-    # Esc fallback: bind esc -> menu_toggle alias -> pyui -> ui_command.
-    # The frame-level is_key_pressed(Escape) poll is primary; the debounce
-    # in request_menu_toggle() collapses the two paths per tic.
+    # Console alias through the pyui/ui_command bridge. The key itself
+    # lives on Custom Action 4 (auto-bound below, rebindable in Options ->
+    # Customize Controls, Custom Actions); the frame's Esc poll is only a
+    # fallback for when that binding is cleared, so Esc keeps its normal
+    # engine behavior here (the engine menu).
     try:
         bd.execute('alias menu_toggle "pyui menu_toggle"')
-        bd.execute("bind esc menu_toggle")
     except Exception as exc:
-        bd.warn(f"overture: could not arm the Esc alias: {exc!r}")
+        bd.warn(f"overture: could not arm the menu_toggle alias: {exc!r}")
+    ensure_custom_action_binding(4, "t")
     log_event("engine_start: fonts registered, settings applied")
 
 

@@ -21,6 +21,11 @@ API_VERSION: int
 TICRATE: int
 RUNTIME: str
 
+# Number of generic custom action buttons (+pyaction1..+pyaction32); see the
+# custom_action event and the custom_action_*/set_custom_action/input_binding
+# functions below.
+PYACTION_COUNT: int
+
 # Persistent per-session dictionary shared by all scripts.
 state: dict
 
@@ -217,8 +222,8 @@ def on(event_name: str, *, every: int = 1, priority: int = 0,
     line_activated, line_activation_failed, player_entered, player_spawned,
     player_respawned, player_died, player_disconnected, item_picked,
     secret_found, item_dropped, weapon_changed, sector_entered, sector_exited,
-    conversation_started, conversation_reply, ui_command, save, load,
-    engine_shutdown.
+    conversation_started, conversation_reply, ui_command, custom_action, save,
+    load, engine_shutdown.
 
     actor_died event fields: actor, actor_ref, inflictor, inflictor_ref,
     attacker_ref, attacker_class, attacker_player_index. attacker_* report the
@@ -243,6 +248,10 @@ def on(event_name: str, *, every: int = 1, priority: int = 0,
     log_number, log_string, next_node, item_changed.
     ui_command event fields: command. Fired by the `pyui <name>` console
     command; bridge for console aliases/key binds driving script UI.
+    custom_action event fields: action (1..PYACTION_COUNT), pressed (bool).
+    Fired on every press and release of the generic custom action buttons
+    (+pyaction1..+pyaction32), including synthetic set_custom_action changes;
+    scanned once per gametic before pre_tick dispatch.
     line_activation_failed event fields: line_index, special, args, actor_ref,
     activation_type, reason, reason_code. reason is one of "none",
     "unknown_special", "script_not_found", "locked", "activation_filtered",
@@ -334,6 +343,29 @@ def randint(lo: int, hi: int) -> int:
 
 def choice(sequence: Union[list, tuple]) -> Any:
     """Return a deterministic item from a non-empty sequence."""
+
+
+# --- custom action buttons (local-only input; not recorded in demos) --------
+
+def custom_action_down(n: int) -> bool:
+    """True while custom action n (1..PYACTION_COUNT) is held. Raises
+    ValueError when n is outside 1..PYACTION_COUNT."""
+
+def custom_action_mask() -> int:
+    """Bitmask of the held custom actions; bit n-1 is set while action n is
+    down."""
+
+def set_custom_action(n: int, down: bool) -> None:
+    """Synthetically press (down=True) or release (down=False) custom action
+    n, driving the same button state as the bound key, so the per-tic scan
+    emits the same custom_action event on the next gametic. Idempotent:
+    requesting the current state is a no-op. Raises ValueError when n is
+    outside 1..PYACTION_COUNT."""
+
+def input_binding(command: str) -> Optional[str]:
+    """Display name of the first key bound to a console command like
+    '+pyaction1' (engine-canonical names: 'Q', 'Mouse1', 'Space', ...), or
+    None when unbound."""
 
 
 # --- snapshots --------------------------------------------------------------

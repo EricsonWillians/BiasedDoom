@@ -18,9 +18,10 @@ scale round trip with 0.5/4.0 clamping; the style accessors (round trips
 when the overlay has a context, the documented "no frame has run yet"
 RuntimeError when headless, range validation); the pyui/ui_command bridge
 (menu_open/menu_close/menu_toggle with the per-tic debounce, the live
-activation wiring, the quit handshake, the mute toggle); and the map
-fixture (three live monsters, the health reading, the event log). The run
-ends via ``-scripttest``'s own PASS/FAIL accounting.
+activation wiring, the quit handshake, the mute toggle); the synthetic
+Custom Action 4 press path (payload, pause-menu open, release edge); and
+the map fixture (three live monsters, the health reading, the event log).
+The run ends via ``-scripttest``'s own PASS/FAIL accounting.
 
 Manifest entry 4 of 4 (runs after its siblings have self-registered).
 """
@@ -77,8 +78,11 @@ def schedule_run_modes(event):
         bd.schedule(autotest_bridge_asserts, delay=200)
         bd.schedule(autotest_bridge_toggle_close, delay=215)
         bd.schedule(autotest_bridge_retoggle_close, delay=225)
-        bd.schedule(autotest_fixture, delay=245)
-        bd.schedule(autotest_finish, delay=265)
+        bd.schedule(autotest_custom_action_toggle_press, delay=235)
+        bd.schedule(autotest_custom_action_toggle_asserts, delay=247)
+        bd.schedule(autotest_custom_action_release_asserts, delay=259)
+        bd.schedule(autotest_fixture, delay=275)
+        bd.schedule(autotest_finish, delay=295)
     if SCREENSHOT:
         bd.schedule(screenshot_pose_title, delay=bd.TICRATE,
                     map_local=False)
@@ -496,6 +500,34 @@ def autotest_bridge_retoggle_close():
     bd.assert_true(not systems.model.is_open(),
                    "the retoggle unwound the pause menu")
     systems.force_title_menu = False
+    systems.close_menu()
+
+
+def autotest_custom_action_toggle_press():
+    """Synthetic Custom Action 4 press: the menu toggle without a key."""
+    bd.assert_true(not systems.model.is_open(),
+                   "menu closed before the custom action press")
+    bd.set_custom_action(4, True)
+
+
+def autotest_custom_action_toggle_asserts():
+    """The press fired the documented payload and opened the pause menu
+    through the same debounced toggle the console alias calls."""
+    bd.assert_true((4, True) in systems.action_log,
+                   "the toggle press fired {'action': 4, 'pressed': True}")
+    bd.assert_true(systems.model.is_open()
+                   and systems.model.top() == "pause",
+                   "custom action 4 opened the pause menu")
+    bd.set_custom_action(4, False)
+
+
+def autotest_custom_action_release_asserts():
+    """The release edge fired too and left the opened menu alone."""
+    bd.assert_true((4, False) in systems.action_log,
+                   "the release edge fired with "
+                   "{'action': 4, 'pressed': False}")
+    bd.assert_true(systems.model.is_open(),
+                   "the release edge left the pause menu open")
     systems.close_menu()
 
 

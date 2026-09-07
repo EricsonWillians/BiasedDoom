@@ -148,9 +148,12 @@ Or directly:
     -file examples/python/29_dnd_dungeon +map MAP02
 ```
 
-Controls: **K** (or `toggle_sheet` at the console) opens/closes the
-reliquary sheet; **R** (or `crypt_rest`) attempts a rest — find light
-≥ 160 for a true sanctuary rest. Kill the welcoming committee for XP
+Controls: **Custom Action 1** (auto-bound to **Q**; or `toggle_sheet`
+at the console) opens/closes the reliquary sheet; **Custom Action 2**
+(auto-bound to **V**; or `crypt_rest`) attempts a rest: find light
+>= 160 for a true sanctuary rest. Both appear as "Custom Action N" under
+Options -> Customize Controls, Custom Actions, and any binding you set
+there is respected. Kill the welcoming committee for XP
 (watch the reliquary's Omens and the ember level-up flash), walk south
 out of the entrance chamber and back in to brave the dart trap, then
 follow the corridor and **use the sealed door**: the bash check rolls in

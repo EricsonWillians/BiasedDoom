@@ -169,7 +169,9 @@ HELP_TITLE = "Help"
 SETTINGS_RESET_LABEL = "Reset to defaults"
 SETTINGS_BACK_LABEL = "Back"
 SETTINGS_DIRTY_MARKER = " *"
-FOOTER_ESCAPE_HINT = "Esc: back   F1: help   F2: tools   Ctrl+M: mute"
+#: The menu toggle footer hint; the "%s" is the live display name of the
+#: Custom Action 4 binding (see systems.menu_toggle_hint).
+FOOTER_ESCAPE_HINT = "%s: back   F1: help   F2: tools   Ctrl+M: mute"
 FOOTER_DIGIT_HINT = "1-%d: activate   Up/Down: select   Enter: confirm"
 FOOTER_TITLE_HINT = "A mod menu drawn by bd.imgui every frame"
 LOG_CAPACITY = 64

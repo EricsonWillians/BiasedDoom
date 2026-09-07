@@ -143,7 +143,14 @@ if [[ -n "${iwad_path}" ]]; then
         'import biaseddoom as bd' \
         '' \
         '' \
+        '_done = [False]' \
+        '_frames = [0]' \
+        '' \
+        '' \
         'def finish_smoke_test():' \
+        '    if _done[0]:' \
+        '        return False' \
+        '    _done[0] = True' \
         '    bd.log("PYTHON_EXAMPLE_SMOKE_DONE")' \
         '    bd.execute("quit")' \
         '    return False' \
@@ -152,6 +159,15 @@ if [[ -n "${iwad_path}" ]]; then
         '@bd.on("map_load", priority=-100000)' \
         'def map_loaded(event):' \
         '    bd.schedule(finish_smoke_test, delay=8)' \
+        '' \
+        '' \
+        '@bd.on("imgui_frame")' \
+        'def frame_fallback(event):' \
+        '    # A mod may engine-pause the world (frozen gametics stall the' \
+        '    # scheduled quit); quit after ~2s of rendered frames instead.' \
+        '    _frames[0] += 1' \
+        '    if _frames[0] >= 120:' \
+        '        finish_smoke_test()' \
         > "${harness_dir}/pyscripts/main.py"
     (
         cd "${harness_dir}"

@@ -11,8 +11,9 @@ per frame at worst and a balanced begin/end even when a draw raises.
   the model's selection pinned with ``set_item_default_focus``, digit
   hotkeys 1-9, Up/Down/Enter navigation, footer hints.
 - **Pause menu**: dims the game with a full-screen window, then the same
-  stacked-button treatment. Esc closes a popup first, then unwinds the
-  stack (see systems.request_menu_toggle for the console-alias debounce).
+  stacked-button treatment. Custom Action 4 (primary) closes a popup
+  first, then unwinds the stack (see systems.request_menu_toggle for the
+  debounce); the Esc poll runs only when Custom Action 4 is unbound.
 - **Settings**: UI scale, font family (registry combo), font size (applied
   per window through ``push_font`` + ``set_window_font_scale``), theme,
   accent (persistent ``set_style_color`` on Button/ButtonHovered/FrameBg),
@@ -97,7 +98,8 @@ def _hotkeys(imgui):
         systems.request_help()
 
     popups_open = _popup_open(imgui)
-    if imgui.is_key_pressed(imgui.Key.Escape):
+    if systems.esc_fallback_active() \
+            and imgui.is_key_pressed(imgui.Key.Escape):
         if popups_open:
             # A popup outranks the stack: Esc closes it first. Cancel the
             # quit handshake when its popup is the one closing.
@@ -187,7 +189,7 @@ def _draw_menu_window(imgui, screen_id, title, pos):
                         imgui.text_colored(*_SELECT_COLOR, "<-")
                 imgui.spacing()
                 imgui.separator()
-                imgui.text_disabled(content.FOOTER_ESCAPE_HINT)
+                imgui.text_disabled(systems.menu_toggle_hint())
                 imgui.text_disabled(
                     content.FOOTER_DIGIT_HINT % min(9, len(items)))
             finally:

@@ -13,10 +13,13 @@
 #include "python_displaylist.h"
 
 #include "actor.h"
+#include "c_bind.h"
+#include "c_buttons.h"
 #include "c_console.h"
 #include "c_cvars.h"
 #include "c_dispatch.h"
 #include "cmdlib.h"
+#include "d_buttons.h"
 #include "d_player.h"
 #include "doomstat.h"
 #include "filesystem.h"
@@ -170,6 +173,17 @@ bool s_rngStateLoaded = false;
 // Per-player last-known sector index backing the sector_entered/sector_exited
 // events. -1 means "unknown/not in a sector"; reset on map load and unload.
 int s_lastPlayerSector[MAXPLAYERS] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+// Number of generic custom action buttons (Button_PyAction1..32 in
+// d_buttons.h, console names +pyaction1..+pyaction32 registered through
+// DoomButtons in d_main.cpp). They are local-only input state: they never
+// enter usercmd, demos, or network traffic.
+constexpr int PyActionCount = 32;
+// Last down-state reported by the custom action per-tic scan, bit n-1 for
+// action n. Drives transition detection so each press/release fires exactly
+// one custom_action event; the raw bWentDown/bWentUp edge flags cannot be
+// used for this (they are only reset per tic on Windows; SDL builds never
+// call ResetButtonTriggers).
+uint32_t s_pyActionDownMask = 0;
 std::vector<ScriptEntry> discoveredScripts;
 std::vector<ScriptModule> modules;
 std::vector<Callback> callbacks;
@@ -213,6 +227,7 @@ const char* const EventNames[] = {
 	// position in this table.
 	"ui_command",
 	"actor_before_damage",
+	"custom_action",
 };
 constexpr size_t EventCount = sizeof(EventNames) / sizeof(EventNames[0]);
 std::array<bool, EventCount> eventHasCallbacks{};
@@ -889,7 +904,7 @@ bool CallbackMatches(Callback& callback, AActor* subject, int playerIndex)
 bool IsTickEvent(const char* eventName)
 {
 	return strcmp(eventName, "pre_tick") == 0 || strcmp(eventName, "tick") == 0 ||
-		strcmp(eventName, "post_tick") == 0;
+		strcmp(eventName, "post_tick") == 0 || strcmp(eventName, "custom_action") == 0;
 }
 
 void InvokeEvent(const char* eventName, PyObject* event, AActor* subject = nullptr, int playerIndex = -1)
@@ -1969,6 +1984,83 @@ PyObject* PyBdChoice(PyObject*, PyObject* args)
 	return item;
 }
 
+//---------------------------------------------------------------------------
+// bd.custom_action_down(n) / bd.custom_action_mask() / bd.set_custom_action(n,
+// down) / bd.input_binding(command) - the 32 generic custom action buttons
+// (Button_PyAction1..32, console names +pyaction1..+pyaction32). These are
+// local-only input state: they are never added to usercmd, so they work
+// headless, are not recorded in demos, and are not transmitted in
+// multiplayer. Python mods get conflict-free, user-bindable inputs that show
+// up in Options -> Customize Controls -> Custom Actions.
+//---------------------------------------------------------------------------
+
+PyObject* PyBdCustomActionDown(PyObject*, PyObject* args)
+{
+	int n = 0;
+	if (!PyArg_ParseTuple(args, "i:custom_action_down", &n)) return nullptr;
+	if (!CheckEngineThread()) return nullptr;
+	if (n < 1 || n > PyActionCount)
+	{
+		PyErr_Format(PyExc_ValueError, "custom action index must be 1..%d", PyActionCount);
+		return nullptr;
+	}
+	return PyBool_FromLong(buttonMap.ButtonDown(Button_PyAction1 + n - 1) ? 1 : 0);
+}
+
+PyObject* PyBdCustomActionMask(PyObject*, PyObject*)
+{
+	if (!CheckEngineThread()) return nullptr;
+	uint32_t mask = 0;
+	for (int i = 0; i < PyActionCount; ++i)
+	{
+		if (buttonMap.ButtonDown(Button_PyAction1 + i)) mask |= 1u << i;
+	}
+	return PyLong_FromUnsignedLong(mask);
+}
+
+PyObject* PyBdSetCustomAction(PyObject*, PyObject* args)
+{
+	int n = 0;
+	int down = 0;
+	if (!PyArg_ParseTuple(args, "ip:set_custom_action", &n, &down)) return nullptr;
+	if (!CheckEngineThread()) return nullptr;
+	if (n < 1 || n > PyActionCount)
+	{
+		PyErr_Format(PyExc_ValueError, "custom action index must be 1..%d", PyActionCount);
+		return nullptr;
+	}
+	FButtonStatus* button = buttonMap.GetButton(Button_PyAction1 + n - 1);
+	// Idempotent: a request matching the current state is a no-op, so a mod
+	// may "ensure held" every tick without re-firing events. PressKey/
+	// ReleaseKey with keynum 0 are the same code path as typing +pyactionN /
+	// -pyactionN at the console, so synthetic and bound input share one
+	// button state and the per-tic scan cannot miss or double-fire the edge.
+	if (down)
+	{
+		if (!button->bDown) button->PressKey(0);
+	}
+	else if (button->bDown)
+	{
+		button->ReleaseKey(0);
+	}
+	Py_RETURN_NONE;
+}
+
+PyObject* PyBdInputBinding(PyObject*, PyObject* args)
+{
+	const char* command = nullptr;
+	if (!PyArg_ParseTuple(args, "s:input_binding", &command)) return nullptr;
+	if (!CheckEngineThread()) return nullptr;
+	for (int i = 0; i < NUM_KEYS; ++i)
+	{
+		const char* bind = Bindings.GetBind(i);
+		if (bind == nullptr || stricmp(bind, command) != 0) continue;
+		const char* name = KeyNames[i];
+		return PyUnicode_FromString(name != nullptr ? name : "Unknown");
+	}
+	Py_RETURN_NONE;
+}
+
 PyMethodDef EngineMethods[] = {
 	{ "log", BD_PY_KEYWORD_FUNCTION(PyBdLog), METH_VARARGS | METH_KEYWORDS, "log(message, level='info') -> None" },
 	{ "_write_output", PyBdWriteOutput, METH_VARARGS, nullptr },
@@ -2002,6 +2094,10 @@ PyMethodDef EngineMethods[] = {
 	{ "randrange", PyBdRandRange, METH_VARARGS, "Return the next deterministic integer in [lo, hi); randrange(hi) uses [0, hi)." },
 	{ "randint", BD_PY_KEYWORD_FUNCTION(PyBdRandInt), METH_VARARGS | METH_KEYWORDS, "Return the next deterministic integer in [lo, hi] inclusive." },
 	{ "choice", PyBdChoice, METH_VARARGS, "Return a deterministic item from a non-empty sequence." },
+	{ "custom_action_down", PyBdCustomActionDown, METH_VARARGS, "custom_action_down(n) -> bool; True while custom action n (1..32) is held. Local-only input state; not recorded in demos." },
+	{ "custom_action_mask", PyBdCustomActionMask, METH_NOARGS, "custom_action_mask() -> int; bitmask of held custom actions; bit n-1 set while action n is held." },
+	{ "set_custom_action", PyBdSetCustomAction, METH_VARARGS, "set_custom_action(n, down) -> None; synthetic press/release of custom action n, surfaced as a custom_action event on the next tick." },
+	{ "input_binding", PyBdInputBinding, METH_VARARGS, "input_binding(command) -> str | None; display name (engine-canonical, e.g. 'Q', 'Mouse1') of the key bound to a command like '+pyaction1', or None when unbound." },
 	{ nullptr, nullptr, 0, nullptr },
 };
 
@@ -2024,6 +2120,7 @@ PyMODINIT_FUNC PyInit_biaseddoom()
 	}
 	PyModule_AddIntConstant(module, "API_VERSION", PythonApiVersion);
 	PyModule_AddIntConstant(module, "TICRATE", TICRATE);
+	PyModule_AddIntConstant(module, "PYACTION_COUNT", PyActionCount);
 	PyModule_AddStringConstant(module, "RUNTIME", "CPython");
 	return module;
 }
@@ -2649,6 +2746,7 @@ void RegisterNamedCallbacks(PyObject* module, int container, const std::string& 
 		{ "on_conversation_reply", "conversation_reply" },
 		{ "on_ui_command", "ui_command" },
 		{ "on_actor_before_damage", "actor_before_damage" },
+		{ "on_custom_action", "custom_action" },
 	};
 
 	for (const auto& names : callbackNames)
@@ -3230,9 +3328,57 @@ void OnWorldUnloaded(const char* nextMap)
 	PythonDisplayList::PurgeWorldItems();
 }
 
+namespace
+{
+// Scans the 32 generic custom action buttons once per gametic and dispatches
+// a custom_action event for every down/up transition. Runs at the top of
+// OnWorldPreTick: bDown was latched by the input events of this tic (and by
+// any bd.set_custom_action call since the previous scan), and dispatching
+// before scheduled tasks and pre_tick means handlers observe a stable,
+// already-reported input state for the rest of the tic. Ordering per
+// gametic: input latch -> custom_action -> pre_tick -> P_PlayerThink ->
+// tick -> post_tick. A transition caused by a handler (e.g. from pre_tick)
+// therefore surfaces on the next gametic's scan.
+// Transitions are derived from bDown alone, compared against the remembered
+// mask: the bWentDown/bWentUp edge flags are NOT per-tic on SDL builds
+// (only the Windows I_StartTic calls ResetButtonTriggers), so honoring them
+// would re-fire stale edges every tic. bDown is the state every platform
+// maintains correctly. When no script subscribed to custom_action the scan
+// is skipped entirely except for resyncing the remembered mask, so late
+// subscriptions never see a spurious edge for input that changed while
+// nobody listened.
+void ScanCustomActions()
+{
+	if (!HasCallbacks("custom_action"))
+	{
+		uint32_t sync = 0;
+		for (int i = 0; i < PyActionCount; ++i)
+		{
+			if (buttonMap.ButtonDown(Button_PyAction1 + i)) sync |= 1u << i;
+		}
+		s_pyActionDownMask = sync;
+		return;
+	}
+	for (int i = 0; i < PyActionCount; ++i)
+	{
+		const uint32_t bit = 1u << i;
+		const bool down = buttonMap.ButtonDown(Button_PyAction1 + i);
+		const bool remembered = (s_pyActionDownMask & bit) != 0;
+		if (down == remembered) continue;
+		if (down) s_pyActionDownMask |= bit;
+		else s_pyActionDownMask &= ~bit;
+		PyObject* event = BuildEvent("custom_action");
+		DictSetInt(event, "action", i + 1);
+		DictSetBool(event, "pressed", down);
+		InvokeEvent("custom_action", event);
+	}
+}
+} // namespace
+
 void OnWorldPreTick()
 {
 	if (!active) return;
+	ScanCustomActions();
 	tickBudgetMicroseconds = 0;
 	++taskClock;
 	ProcessScheduledTasks();

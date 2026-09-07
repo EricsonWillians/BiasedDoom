@@ -12,15 +12,17 @@ guard discipline: one ``bd.warn`` per frame at worst and always a balanced
   class-skill list with its quota, a Finish button (``systems.finish_creation``),
   and a validation error line fed by the wizard's ``ValueError``.
 - **The talk prompt** renders ``manager.prompt(pawn)`` each frame while no
-  conversation is active.
+  conversation is active, with the framework's hardcoded ``[E]`` prefix
+  swapped for the live Custom Action 1 binding.
 - **The dialogue window** renders the active session like the sibling
   fixture: speaker colored by standing, wrapped prose, the skill-check flash,
   and numbered selectable choices with their annotations.
 - **The shop window** embeds the shipped ``bd_npcs.ShopUI`` bound to Dobb's
   shop; the "Show me your wares." choice sets ``systems.shop_open`` and the
   window mirrors that flag.
-- **Sheet + journal**: ``bd_dnd.sheet.CharacterSheet`` (created once the hero
-  exists, toggle on **K**) and ``bd_quests.journal_ui.JournalUI`` (toggle on
+- **Sheet + journal**: ``bd_dnd.sheet.CharacterSheet`` (created by
+  systems at the founding so it exists headless too; toggle on **K** or
+  Custom Action 2) and ``bd_quests.journal_ui.JournalUI`` (toggle on
   **J**).
 
 Manifest entry 3 of 4.
@@ -30,7 +32,6 @@ import biaseddoom as bd
 import bd_dialogue
 import bd_dnd
 import bd_quests
-from bd_dnd.sheet import CharacterSheet
 from bd_npcs.services import ShopUI
 from bd_quests.journal_ui import JournalUI, bind_journal_toggle
 
@@ -47,7 +48,6 @@ _autowarp_done = False
 _name_buf = ""
 _creation_error = ""
 _journal = None
-_sheet = None
 _sheet_bound = False
 _shop_ui = None
 
@@ -198,6 +198,11 @@ def _draw_prompt(imgui):
         return
     if not prompt:
         return
+    # The framework prompt hardcodes its own "[E] " prefix; swap in the
+    # live Custom Action 1 binding so the hint names the actual key.
+    if prompt.startswith("[E] "):
+        prompt = prompt[4:]
+    prompt = f"[{systems.action_key_hint(1)}] {prompt}"
     imgui.set_next_window_pos(660.0, 620.0, imgui.Cond.FirstUseEver)
     expanded = imgui.begin(content.PROMPT_WINDOW_ID,
                            flags=imgui.WindowFlags.NoTitleBar)
@@ -311,19 +316,15 @@ def _draw_shop(imgui):
 
 
 def _draw_sheet_and_journal(imgui):
-    global _sheet, _sheet_bound
+    global _sheet_bound
     if _journal is not None:
         _journal.draw()
-    if systems.hero is not None and _sheet is None:
-        _sheet = CharacterSheet(
-            systems.hero, title=f"{content.SHEET_TITLE} - "
-                                f"{systems.hero.class_id} "
-                                f"{systems.hero.level}")
-    if _sheet is not None:
+    sheet = systems.ensure_hero_sheet()
+    if sheet is not None:
         if not _sheet_bound:
             _sheet_bound = True
-            bd_dnd.bind_sheet_toggle(_sheet, key="k")
-        _sheet.draw()
+            bd_dnd.bind_sheet_toggle(sheet, key="k")
+        sheet.draw()
 
 
 # --- frame -----------------------------------------------------------------------------------------

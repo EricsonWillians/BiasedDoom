@@ -4,7 +4,8 @@ A **branching horror dialogue** fixture built on the engine-shipped
 `bd_dialogue` framework, reskinned with the `bd_horror` pack. In the
 candle-dim entrance of Doom II MAP01, **The Inquisitor** — an
 occult quartermaster of the Hollow Choir — waits in the ash-light. Walk
-up to him and press **E**: a blood-framed ImGui window opens with his
+up to him and press **Q** (Custom Action 1): a blood-framed ImGui window
+opens with his
 live portrait, faction-colored name, wrapped prose, judgment lines for
 every skill check, and numbered choices annotated with their locks and
 DCs. While you talk, the dark holds its breath — end the conversation
@@ -21,7 +22,7 @@ same sibling-import mechanics `hello_world` gets via `bd.import_script`.
 | Module | Role |
 |---|---|
 | `pyscripts/content.py` | **Pure data + factories** — fixture constants, every player-visible string, and the factories: `build_dialogue()` (the whole tree), `build_quest()`, `build_factions()` (bd_vtm), `build_character()` (bd_dnd), plus the choice `condition`/`effect` callables. No engine calls at import. |
-| `pyscripts/systems.py` | **Rules and event wiring** — the `InquisitionSession` wrapper (a `DialogueSession` subclass whose ctx carries the live `dread` level, the `HorrorState`, and the example-local Inquisitor attitude: `attitude`, `attitude_standing`, and a `shift_attitude` callable, persisted under its own `bd.state` key), the E-key talk interaction, the NPC/crate spawns, and the dusk ambience: a `PositionCandle` (a `LightProgram` subclass bound to the Inquisitor's untagged sector by position via `bd.sector_at`) and the `StalkerDirector` enabled only while no session is active. |
+| `pyscripts/systems.py` | **Rules and event wiring**: the `InquisitionSession` wrapper (a `DialogueSession` subclass whose ctx carries the live `dread` level, the `HorrorState`, and the example-local Inquisitor attitude: `attitude`, `attitude_standing`, and a `shift_attitude` callable, persisted under its own `bd.state` key), the Custom Action 1 talk interaction (auto-bound to Q, rebindable under Options -> Customize Controls, Custom Actions), the NPC/crate spawns, and the dusk ambience: a `PositionCandle` (a `LightProgram` subclass bound to the Inquisitor's untagged sector by position via `bd.sector_at`) and the `StalkerDirector` enabled only while no session is active. |
 | `pyscripts/ui.py` | **The Interrogation window** — a fully `bd_horror.theme`-skinned dialogue UI composed in the example (reading `session.choices()` / `session.choose()` rather than subclassing the framework's `DialogueUI`): `frame_image` portrait plate, faction-colored speaker, bone body text, judgment lines ("The Inquisitor is swayed." sickly / "He sees the lie." in text-safe wound red), annotated choice rows, and a pulsing Dread bar. No-op under `-headless`. |
 | `pyscripts/main.py` | **Thin bootstrap** — the `BD_EXAMPLE_AUTOTEST=1` schedule (every assertion, reading state out of `systems`) and the `BD_EXAMPLE_SCREENSHOT=1` pose. |
 
@@ -65,10 +66,14 @@ same sibling-import mechanics `hello_world` gets via `bd.import_script`.
   Inquisitor's sector, and the `StalkerDirector` hunts at dread ≥ 75 —
   suppressed while a session is active, resumed from the session's
   `on_end` callback.
-- **Interaction via the console bridge.** `bind e talk` → `pyui talk` →
-  `ui_command`; the handler starts a session within 128 units. Choices
-  activate by mouse click or ImGui keyboard navigation (arrow keys +
-  ENTER); the `1.`/`2.` prefixes are visual hints only.
+- **Interaction through a Custom Action.** Custom Action 1
+  (`+pyaction1`, auto-bound to Q unless you bound it under Options ->
+  Customize Controls, Custom Actions) fires the `custom_action` event;
+  the handler starts a session within 128 units. The `talk` console
+  alias (`pyui talk` -> `ui_command`) routes into the same handler, and
+  the "no one near" feedback names the live binding. Choices activate by
+  mouse click or ImGui keyboard navigation (arrow keys + ENTER); the
+  `1.`/`2.` prefixes are visual hints only.
 
 ## The tree
 
@@ -102,8 +107,9 @@ engine-native ZSDF/`DIALOGxx` approach.
     -python -stdout +map MAP01
 ```
 
-Walk up to the Inquisitor and press **E**. Click choices or use the
-arrow keys and ENTER.
+Walk up to the Inquisitor and press **Q** (Custom Action 1; rebindable
+under Options -> Customize Controls, Custom Actions). Click choices or
+use the arrow keys and ENTER.
 
 Headless autotest (deterministic, scripted RNG doubles):
 
@@ -115,7 +121,9 @@ BD_EXAMPLE_AUTOTEST=1 ./build/biaseddoom -headless \
 ```
 
 The autotest asserts: model validation errors, the `talk` ui_command
-path, smalltalk routing, the faction gate locked (pre-rep) and unlocked
+path plus the synthetic Custom Action 1 press path (event payload,
+session start, release edge), smalltalk routing, the faction gate locked
+(pre-rep) and unlocked
 (post-rep), both persuasion and both intimidation branches (ammo only on
 success, dread bump on a landed threat), the attitude ctx keys with three
 failed threats eroding the Inquisitor 0 → -20 → -40 → -60 and the "You

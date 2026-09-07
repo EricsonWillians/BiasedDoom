@@ -13,9 +13,14 @@ Owns the campaign's behavior:
 - **Quest wiring.** Trackers, the xp sink into the hero, the disposition
   sink into the store, the yard-zombie spawn on acceptance, and the
   prove-worth completion that rides on clear_yard.
-- **Talk interaction.** ``bind e talk`` -> ``pyui talk`` -> ``ui_command``
-  -> :func:`start_talk`, which opens a disposition-injecting
-  ``bd_dialogue.DialogueSession`` with the nearest talkable NPC.
+- **Talk interaction.** Custom Action 1 (``+pyaction1``, auto-bound to Q
+  at ``engine_start`` unless the player already bound it under Options ->
+  Customize Controls, Custom Actions) fires the ``custom_action`` event ->
+  :func:`talk`; the ``talk`` console alias (``pyui talk`` ->
+  ``ui_command``) routes into the same function. Custom Action 2
+  (``+pyaction2``, auto-bound to V) toggles the hero sheet through the
+  same ``sheet.toggle()`` the ``toggle_sheet`` alias uses; the K bind from
+  ``bind_sheet_toggle`` stays as well.
 
 Manifest entry 2 of 4 (after content.py).
 """
@@ -25,6 +30,7 @@ import bd_dialogue
 import bd_dnd
 import bd_npcs
 import bd_quests
+from bd_dnd.sheet import CharacterSheet
 
 try:
     import ashvale_content as content
@@ -44,6 +50,7 @@ manager = None              # bd_npcs.NPCManager
 dobb_shop = None            # bd_npcs.Shop on the quartermaster
 _services = {}              # npc_id -> tuple of Service objects
 session = None              # the example's live DialogueSession
+hero_sheet = None           # the hero's CharacterSheet (created at founding)
 shop_open = False           # the ShopUI window toggle (set by Dobb's trade)
 korr_recruited = False      # plain flag; recruit_korr is idempotent
 currency_class = content.CURRENCY_CLASSES[0]
@@ -155,7 +162,23 @@ def finish_creation(wiz=None):
     else:
         bd.log("ashvale: no pawn yet; starting equipment waits for the map")
     bd.log(f"ashvale: {hero.name} the {hero.class_id} walks into Ashvale")
+    ensure_hero_sheet()
     return hero
+
+
+def ensure_hero_sheet():
+    """Create (once) the hero's CharacterSheet; the UI draws it.
+
+    Lives here rather than in the UI so the sheet exists even when no
+    frame ever renders: the Custom Action 2 toggle and the autotest drive
+    it headlessly, where ``imgui_frame`` never fires.
+    """
+    global hero_sheet
+    if hero_sheet is None and hero is not None:
+        hero_sheet = CharacterSheet(
+            hero, title=f"{content.SHEET_TITLE} - {hero.class_id} "
+                        f"{hero.level}")
+    return hero_sheet
 
 
 # --- recruitment ------------------------------------------------------------------------
@@ -280,7 +303,58 @@ def talk():
     if bd_dialogue.active_session() is not None:
         return
     if start_talk() is None:
-        bd.center_message(content.NO_ONE_NEAR)
+        bd.center_message(f"[{action_key_hint(1)}] {content.NO_ONE_NEAR}")
+
+
+# --- custom actions ---------------------------------------------------------------------
+
+
+#: Every custom_action payload the example saw, as (action, pressed) pairs.
+#: The autotest asserts on the exact transitions.
+action_log = []
+
+
+def ensure_custom_action_binding(n, default_key):
+    """Bind ``default_key`` to ``+pyactionN`` when the player has not.
+
+    Custom Actions are ordinary engine buttons, so a binding set through
+    Options -> Customize Controls, Custom Actions always wins; this only
+    fills in a stock-unbound default so the example is playable out of the
+    box. Safe from ``engine_start`` (console commands queue pre-map).
+    """
+    try:
+        if bd.input_binding(f"+pyaction{n}") is None:
+            bd.execute(f"bind {default_key} +pyaction{n}")
+    except Exception as exc:
+        bd.warn(f"ashvale: could not bind +pyaction{n}: {exc!r}")
+
+
+def action_key_hint(n):
+    """The live display name of the ``+pyactionN`` binding (or a fallback)."""
+    try:
+        name = bd.input_binding(f"+pyaction{n}")
+    except Exception:
+        name = None
+    return name or f"Custom Action {n} (bind in Customize Controls)"
+
+
+@bd.on("custom_action")
+def on_custom_action(event):
+    """Action 1 talks (the ui_command alias path), action 2 toggles the
+    hero sheet through the same ``toggle()`` the K key and the
+    ``toggle_sheet`` alias use."""
+    try:
+        action = int(event.get("action") or 0)
+        pressed = bool(event.get("pressed"))
+        action_log.append((action, pressed))
+        if not pressed:
+            return
+        if action == 1:
+            talk()
+        elif action == 2 and hero_sheet is not None:
+            hero_sheet.toggle()
+    except Exception as exc:
+        bd.warn(f"ashvale: custom action failed: {exc!r}")
 
 
 # --- the yard ------------------------------------------------------------------------------
@@ -576,9 +650,12 @@ def setup_campaign(event):
             bd.warn(f"ashvale: shop restore failed: {exc!r}")
         _cold_restore()
 
-    # Console alias + key bind through the pyui/ui_command bridge.
+    # Console alias through the pyui/ui_command bridge; the keys live on
+    # Custom Actions 1 (talk) and 2 (sheet), auto-bound below and
+    # rebindable in Options -> Customize Controls, Custom Actions.
     bd.execute('alias talk "pyui talk"')
-    bd.execute("bind e talk")
+    ensure_custom_action_binding(1, "q")
+    ensure_custom_action_binding(2, "v")
 
 
 @bd.on("ui_command")

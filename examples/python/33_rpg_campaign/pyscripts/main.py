@@ -20,9 +20,11 @@ trainer (scripted mastery advancement); the quest flow (pawn-sourced kills
 complete the yard, XP lands, the level-2 class feature applies, Sera shifts
 +20, prove_worth completes on clear_yard's coattails, the cache pickup
 finishes the fetch quest); recruitment (party of two, companion actor bound
-and hp-synced); and a checkpoint round-trip (RNG stream, hero, dispositions,
-shop stock, party, companion rebind, NPC TIDs). The run ends via
-``-scripttest``'s own PASS/FAIL accounting.
+and hp-synced); a checkpoint round-trip (RNG stream, hero, dispositions,
+shop stock, party, companion rebind, NPC TIDs); and the synthetic Custom
+Action path (action 1 press starts a talk session with the documented
+event payload, action 2 press/release flips the hero sheet both ways).
+The run ends via ``-scripttest``'s own PASS/FAIL accounting.
 
 Manifest entry 4 of 4 (runs after its siblings have self-registered).
 """
@@ -113,7 +115,14 @@ def _teleport_to(npc_id, offset=None):
 def schedule_run_modes(event):
     if AUTOTEST and event.get("from_savegame"):
         bd.schedule(autotest_post_load, delay=10)
-        bd.schedule(autotest_finish, delay=30)
+        bd.schedule(autotest_custom_action_talk_press, delay=45)
+        bd.schedule(autotest_custom_action_talk_asserts, delay=57)
+        bd.schedule(autotest_custom_action_talk_release, delay=69)
+        bd.schedule(autotest_custom_action_sheet_press, delay=81)
+        bd.schedule(autotest_custom_action_sheet_asserts, delay=93)
+        bd.schedule(autotest_custom_action_sheet_restore, delay=105)
+        bd.schedule(autotest_custom_action_sheet_back, delay=117)
+        bd.schedule(autotest_finish, delay=135)
         return
     if not event.get("from_savegame"):
         if AUTOTEST:
@@ -775,6 +784,78 @@ def autotest_post_load():
 
 def autotest_finish():
     bd.log("ASHVALE CROSSING AUTOTEST assertions complete")
+
+
+# --- custom actions (synthetic presses) ---------------------------------------------------
+
+
+def autotest_custom_action_talk_press():
+    """Synthetic Custom Action 1 press: the talk path without the console.
+
+    The world is not creation-paused here (the autotest disabled the
+    pause), so the press surfaces on the next gametic's scan."""
+    _teleport_to("sera")
+    bd.assert_true(bd_dialogue.active_session() is None,
+                   "no session open before the custom action press")
+    bd.set_custom_action(1, True)
+
+
+def autotest_custom_action_talk_asserts():
+    """The press fired the documented payload and opened a session."""
+    active = bd_dialogue.active_session()
+    bd.assert_true((1, True) in systems.action_log,
+                   "the custom_action event carried "
+                   "{'action': 1, 'pressed': True}")
+    bd.assert_true(active is not None and active.active,
+                   "custom action 1 press started a session")
+    if active is not None:
+        bd.assert_true(active.active_node is not None
+                       and active.active_node.id == "start",
+                       "the custom-action session opens at the start node")
+        active.end()
+    bd.set_custom_action(1, False)
+
+
+def autotest_custom_action_talk_release():
+    """The release edge fired too, without starting another session."""
+    bd.assert_true((1, False) in systems.action_log,
+                   "the release edge fired with "
+                   "{'action': 1, 'pressed': False}")
+    bd.assert_true(bd_dialogue.active_session() is None,
+                   "the release edge did not start a session")
+
+
+def autotest_custom_action_sheet_press():
+    """Synthetic Custom Action 2 press flips the hero sheet."""
+    bd.assert_true(systems.hero_sheet is not None
+                   and systems.hero_sheet.visible,
+                   "the hero sheet is visible before the toggle press")
+    bd.set_custom_action(2, True)
+
+
+def autotest_custom_action_sheet_asserts():
+    bd.assert_true((2, True) in systems.action_log,
+                   "the sheet press fired {'action': 2, 'pressed': True}")
+    bd.assert_true(systems.hero_sheet is not None
+                   and not systems.hero_sheet.visible,
+                   "custom action 2 hid the sheet")
+    bd.set_custom_action(2, False)
+
+
+def autotest_custom_action_sheet_restore():
+    bd.assert_true((2, False) in systems.action_log,
+                   "the sheet release fired {'action': 2, 'pressed': False}")
+    bd.assert_true(systems.hero_sheet is not None
+                   and not systems.hero_sheet.visible,
+                   "the release edge left the sheet hidden")
+    bd.set_custom_action(2, True)
+
+
+def autotest_custom_action_sheet_back():
+    bd.assert_true(systems.hero_sheet is not None
+                   and systems.hero_sheet.visible,
+                   "the second press showed the sheet again")
+    bd.set_custom_action(2, False)
 
 
 # --- sibling-import registration ----------------------------------------------------

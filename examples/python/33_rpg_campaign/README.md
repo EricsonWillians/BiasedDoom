@@ -33,8 +33,8 @@ mechanics `hello_world` gets via `bd.import_script`.
 | Module | Role |
 |---|---|
 | `pyscripts/content.py` | **Pure data + factories**: the three `CharacterClass` definitions (hit dice, class skills, level 1/2 features with apply lambdas, starting equipment), the `GAME_CONTENT` spawn-class table with cross-game notes, probe-verified MAP01 fixture constants, NPC spawn offsets/tints, the shop stock and service parameters, the three quests, all four dialogue trees with their condition/effect callables, and every string. No engine calls at import. |
-| `pyscripts/systems.py` | **Rules and event wiring**: the shared `CreationWizard` and `finish_creation` (hero + `CharacterState` + equipment + level-up feedback), the `NPCManager` registration, the currency spawn probe with fallback, quest wiring (kill/pickup trackers, the xp sink into the hero, the disposition sink into the store, yard spawn on accept, prove-worth on clear), `recruit_korr()`, the service ctx builder + `run_service`, `bind e talk` -> `pyui talk` -> `ui_command` -> `start_talk`, savegame cold-restore for hero/party, and the shop stock snapshot persistence. |
-| `pyscripts/ui.py` | **The interface**: the founding window (name, class radios, score method radios, +/- ability buttons with the point-buy budget line, class-skill list with quota, Finish + validation error line), the live-sprite dialogue window with standing-colored speaker and annotated choices, the talk prompt overlay (`manager.prompt` each frame while no session is active), the `ShopUI` embed bound to Dobb (the "Show me your wares." choice sets `systems.shop_open`), plus `CharacterSheet` (K) and `JournalUI` (J). All inert headless; one `bd.warn` per frame at worst, balanced begin/end. |
+| `pyscripts/systems.py` | **Rules and event wiring**: the shared `CreationWizard` and `finish_creation` (hero + `CharacterState` + equipment + level-up feedback), the `NPCManager` registration, the currency spawn probe with fallback, quest wiring (kill/pickup trackers, the xp sink into the hero, the disposition sink into the store, yard spawn on accept, prove-worth on clear), `recruit_korr()`, the service ctx builder + `run_service`, Custom Action 1 (auto-bound to Q, rebindable under Options -> Customize Controls, Custom Actions) -> the `custom_action` event / `pyui talk` -> `ui_command` -> `start_talk`, savegame cold-restore for hero/party, and the shop stock snapshot persistence. |
+| `pyscripts/ui.py` | **The interface**: the founding window (name, class radios, score method radios, +/- ability buttons with the point-buy budget line, class-skill list with quota, Finish + validation error line), the live-sprite dialogue window with standing-colored speaker and annotated choices, the talk prompt overlay (`manager.prompt` each frame while no session is active, with the live Custom Action 1 key swapped in), the `ShopUI` embed bound to Dobb (the "Show me your wares." choice sets `systems.shop_open`), plus `CharacterSheet` (K or Custom Action 2) and `JournalUI` (J). All inert headless; one `bd.warn` per frame at worst, balanced begin/end. |
 | `pyscripts/main.py` | **Thin bootstrap**: the `BD_EXAMPLE_AUTOTEST=1` schedule (twelve stages of assertions reading state out of `systems`) and the `BD_EXAMPLE_SCREENSHOT=1` pose. |
 
 ## What it teaches
@@ -48,7 +48,7 @@ mechanics `hello_world` gets via `bd.import_script`.
   points on `character.pending_asi` through `apply_class_level`.
 - **Registered NPCs.** `NPCDefinition` + `NPCManager.spawn_all` (friendly,
   still, tinted, facing the player) with stable `tid_base` TIDs, savegame
-  re-bind by TID, `nearest()`/`prompt()` targeting, and disposition
+re-bind by TID, `nearest()`/`prompt()` targeting, and disposition
   standings that never regress on load.
 - **Every dialogue gate kind.** `skill_check` (persuasion rumor with both
   branches scripted through `session.rng`), `condition` (the handout hides
@@ -109,18 +109,27 @@ holds the Doom II table with commented Heretic/Hexen substitutions
 Found your character in the gate window: the world is engine-paused while
 it is open, so you can read every option unmolested (the pause lifts the
 moment Finish validates; the autotest and screenshot drivers disable this
-so their scheduled steps keep ticking). Then: **E** talks to whoever is
-closest (the prompt names them and their
-standing), **J** opens the journal, **K** the character sheet. Sera hands
+so their scheduled steps keep ticking). Then: **Q** (Custom Action 1)
+talks to whoever is closest (the prompt names them, their standing, and
+the live binding), **J** opens the journal, **K** or **V** (Custom
+Action 2) the character sheet. Sera hands
 out the yard job; Dobb's "Show me your wares." opens the shop; Wren patches
 and trains from the dialogue tree; Korr signs on once you have proven
 yourself. The yard zombies hold (AMBUSH) until you walk their hall.
 
 Closed or hidden windows come back the same way they opened: the journal
-and sheet re-toggle with **J** / **K** (console aliases `toggle_journal` /
-`toggle_sheet`), the shop reopens through Dobb's dialogue (**E**), and the
+and sheet re-toggle with **J** / **K** or Custom Action 2 (console
+aliases `toggle_journal` / `toggle_sheet`), the shop reopens through
+Dobb's dialogue (**Q**), and the
 console cvar `py_imgui true` (or `bd.imgui.set_master_visible(True)` from a
 script) brings back the whole overlay if you turned it off.
+
+**Custom Actions**: this example uses **Custom Action 1** (talk,
+auto-bound to **Q**) and **Custom Action 2** (character sheet,
+auto-bound to **V**). They appear as "Custom Action 1/2" under Options ->
+Customize Controls, Custom Actions; the auto-bind only fills in when the
+slot is unbound, so your own rebinds always win and are shown live in the
+talk prompt.
 
 Headless autotest (deterministic, scripted RNG doubles):
 
@@ -143,7 +152,9 @@ restock scheduling); the healer (heal, fee, broke refusal); the trainer
 level-up feature, +20 disposition, prove-worth on coattails, cache pickup);
 recruitment (party of two, hp-synced companion, toast); and the checkpoint
 round-trip (RNG stream, hero, dispositions, shop stock, party, companion
-rebind, NPC TIDs, quest states).
+rebind, NPC TIDs, quest states); and the synthetic Custom Action path
+(action 1 press starts a talk session with the documented event payload,
+action 2 press/release flips the hero sheet both ways).
 
 Documentation capture (poses the creation wizard beside a live Sera
 conversation):
