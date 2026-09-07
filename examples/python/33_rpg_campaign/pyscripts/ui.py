@@ -7,10 +7,14 @@ guard discipline: one ``bd.warn`` per frame at worst and always a balanced
 ``begin``/``end`` (same contract as ``bd_dnd.sheet.CharacterSheet``).
 
 - **The founding window** drives the shared ``systems.wizard``: name input,
-  three class radios, a score-method radio (standard / point buy / rolled),
-  per-ability + and - buttons with the point-buy budget line, a selectable
-  class-skill list with its quota, a Finish button (``systems.finish_creation``),
-  and a validation error line fed by the wizard's ``ValueError``.
+  three class radios, a per-class briefing panel (concept, hit die, saves,
+  trained skills, starting gear, and the level-by-level features, all derived
+  from the live class), one-click ``CLASS_PRESETS`` buttons that fill scores
+  and skills through ``content.apply_preset``, a score-method radio
+  (standard / point buy / rolled), per-ability + and - buttons annotated with
+  the derived modifier and what each ability governs, a class-skill checklist
+  with per-skill blurbs, a Finish button (``systems.finish_creation``), and a
+  validation error line fed by the wizard's ``ValueError``.
 - **The talk prompt** renders ``manager.prompt(pawn)`` each frame while no
   conversation is active, with the framework's hardcoded ``[E]`` prefix
   swapped for the live Custom Action 1 binding.
@@ -47,6 +51,7 @@ except ImportError:  # loaded outside the manifest (bd.import_script direct)
 _autowarp_done = False
 _name_buf = ""
 _creation_error = ""
+_preset_note = ""
 _journal = None
 _sheet_bound = False
 _shop_ui = None
@@ -77,14 +82,146 @@ def setup_ui(event):
 # --- creation wizard --------------------------------------------------------------------
 
 
+def _draw_class_briefing(imgui, cls):
+    """The "how this class plays" panel: concept, facts, and features.
+
+    Every fact is derived from the live CharacterClass (through
+    ``content.class_briefing``), so the briefing always matches what the
+    wizard will enforce at Finish.
+    """
+    concept = content.CLASS_CONCEPTS.get(cls.name, {})
+    if concept.get("concept"):
+        imgui.text_wrapped(concept["concept"])
+    if concept.get("tip"):
+        imgui.push_style_color(imgui.Col.Text, *_ANNOTATION_COLOR)
+        try:
+            imgui.text_wrapped("Tip: " + concept["tip"])
+        finally:
+            imgui.pop_style_color()
+    briefing = content.class_briefing(cls)
+    imgui.text(f"Hit die {briefing['hit_die']}   Primary "
+               f"{briefing['primary']}   Saves {briefing['saves']}")
+    imgui.text_wrapped(f"Trained skills: {briefing['skills']}")
+    imgui.text_wrapped(f"Starting gear: {briefing['equipment']}")
+    if briefing["features"]:
+        imgui.text("Class features:")
+        for level, name, description in briefing["features"]:
+            imgui.bullet_text(f"Lv{level} {name}")
+            if description:
+                imgui.push_style_color(imgui.Col.Text, *_ANNOTATION_COLOR)
+                try:
+                    imgui.text_wrapped(f"    {description}")
+                finally:
+                    imgui.pop_style_color()
+
+
+def _draw_presets(imgui, wizard):
+    """One-click builds for the chosen class (standard array + skills)."""
+    global _preset_note, _creation_error
+    presets = content.CLASS_PRESETS.get(wizard.class_.name, ())
+    if not presets:
+        return
+    imgui.text("Presets (fill scores and skills in one click):")
+    for preset in presets:
+        if imgui.small_button(f"{preset['name']}###ashvale_preset_"
+                              f"{wizard.class_.name}_{preset['id']}"):
+            try:
+                content.apply_preset(wizard, preset)
+                _preset_note = f"{preset['name']}: {preset['concept']}"
+                _creation_error = ""
+            except ValueError as exc:
+                _creation_error = str(exc)
+    if _preset_note:
+        imgui.push_style_color(imgui.Col.Text, *_ANNOTATION_COLOR)
+        try:
+            imgui.text_wrapped(_preset_note)
+        finally:
+            imgui.pop_style_color()
+
+
+def _draw_ability_scores(imgui, wizard):
+    """The score method radios and the per-ability steppers, annotated.
+
+    Each row shows the derived modifier next to the score and a one-line
+    blurb naming what the ability governs, so the numbers read as rules,
+    not trivia.
+    """
+    global _creation_error
+    imgui.push_style_color(imgui.Col.Text, *_ANNOTATION_COLOR)
+    try:
+        imgui.text_wrapped(content.MODIFIER_HINT)
+    finally:
+        imgui.pop_style_color()
+    for method, label in (("standard_array", "Standard array"),
+                          ("point_buy", "Point buy"),
+                          ("rolled", "Rolled")):
+        if imgui.radio_button(f"{label}###ashvale_method_{method}",
+                              wizard.method == method):
+            if method == "standard_array":
+                wizard.use_standard_array()
+            elif method == "point_buy":
+                wizard.use_point_buy()
+            else:
+                wizard.use_rolled()
+            _creation_error = ""
+
+    scores = wizard.scores
+    for ability in bd_dnd.ABILITIES:
+        value = scores.get(ability)
+        if value is None:
+            label = f"{ability.upper():>3}:  -"
+        else:
+            label = f"{ability.upper():>3}: {value:2d}  " \
+                    f"({bd_dnd.modifier(value):+d})"
+        imgui.text(label)
+        imgui.same_line(150.0)
+        if imgui.small_button(f"-###ashvale_minus_{ability}"):
+            wizard.set_score(ability, (value or 10) - 1)
+        imgui.same_line()
+        if imgui.small_button(f"+###ashvale_plus_{ability}"):
+            wizard.set_score(ability, (value or 10) + 1)
+        imgui.same_line()
+        imgui.text_disabled(content.ABILITY_BLURBS.get(ability, ""))
+    if wizard.method == "point_buy":
+        imgui.text(f"Points remaining: {wizard.points_remaining}")
+    elif wizard.method == "standard_array":
+        imgui.text_disabled("Standard array: 15 14 13 12 10 8, used once")
+
+
+def _draw_skill_picks(imgui, wizard):
+    """The class-skill checklist, each pick annotated with its blurb."""
+    global _creation_error
+    quota = min(3, len(wizard.class_.class_skills))
+    imgui.text(f"Class skills ({len(wizard.skills)}/{quota})")
+    for skill in wizard.class_.class_skills:
+        pretty = skill.replace("_", " ").title()
+        ability = bd_dnd.SKILLS.get(skill, "?").upper()
+        selected = skill in wizard.skills
+        if imgui.selectable(f"{pretty} ({ability})###ashvale_skill_{skill}",
+                            selected):
+            try:
+                if selected:
+                    wizard.unassign_skill(skill)
+                else:
+                    wizard.assign_skill(skill)
+                _creation_error = ""
+            except ValueError as exc:
+                _creation_error = str(exc)
+        blurb = content.SKILL_BLURBS.get(skill)
+        if blurb:
+            imgui.same_line()
+            imgui.text_disabled(blurb)
+
+
 def _draw_creation(imgui):
     wizard = systems.wizard
     if wizard is None or systems.hero is not None:
         return
     # The founding window keeps to the right half; the journal sits at
-    # (40, 60) and Dobb's ShopUI at (420, 60).
-    imgui.set_next_window_pos(800.0, 40.0, imgui.Cond.FirstUseEver)
-    imgui.set_next_window_size(400.0, 0.0, imgui.Cond.FirstUseEver)
+    # (40, 60) and Dobb's ShopUI at (420, 60). Width and position fit the
+    # 1280-wide documentation capture (720 + 540 = 1260).
+    imgui.set_next_window_pos(720.0, 40.0, imgui.Cond.FirstUseEver)
+    imgui.set_next_window_size(540.0, 0.0, imgui.Cond.FirstUseEver)
     expanded = imgui.begin(content.WIZARD_TITLE)
     # Interactive only: freeze the world while the wizard is up on a live
     # map (headless autotest never renders, and main.py disables this for
@@ -119,56 +256,21 @@ def _draw_creation(imgui):
                     _creation_error = str(exc)
 
         if wizard.class_ is None:
-            imgui.text_disabled("Pick a class to see its skills.")
+            imgui.text_disabled("Pick a class to see how it plays.")
             return
 
         imgui.separator()
-        imgui.text("Ability scores")
-        for method, label in (("standard_array", "Standard array"),
-                              ("point_buy", "Point buy"),
-                              ("rolled", "Rolled")):
-            if imgui.radio_button(f"{label}###ashvale_method_{method}",
-                                  wizard.method == method):
-                if method == "standard_array":
-                    wizard.use_standard_array()
-                elif method == "point_buy":
-                    wizard.use_point_buy()
-                else:
-                    wizard.use_rolled()
-                _creation_error = ""
-
-        scores = wizard.scores
-        for ability in bd_dnd.ABILITIES:
-            value = scores.get(ability)
-            label = f"{ability.upper():>3}: {value if value is not None else '-'}"
-            imgui.text(label)
-            imgui.same_line(120.0)
-            if imgui.small_button(f"-###ashvale_minus_{ability}"):
-                wizard.set_score(ability, (value or 10) - 1)
-            imgui.same_line()
-            if imgui.small_button(f"+###ashvale_plus_{ability}"):
-                wizard.set_score(ability, (value or 10) + 1)
-        if wizard.method == "point_buy":
-            imgui.text(f"Points remaining: {wizard.points_remaining}")
-        elif wizard.method == "standard_array":
-            imgui.text_disabled("Standard array: 15 14 13 12 10 8, used once")
+        _draw_class_briefing(imgui, wizard.class_)
 
         imgui.separator()
-        quota = min(3, len(wizard.class_.class_skills))
-        imgui.text(f"Class skills ({len(wizard.skills)}/{quota})")
-        for skill in wizard.class_.class_skills:
-            pretty = skill.replace("_", " ").title()
-            selected = skill in wizard.skills
-            if imgui.selectable(f"{pretty}###ashvale_skill_{skill}",
-                                selected):
-                try:
-                    if selected:
-                        wizard.unassign_skill(skill)
-                    else:
-                        wizard.assign_skill(skill)
-                    _creation_error = ""
-                except ValueError as exc:
-                    _creation_error = str(exc)
+        _draw_presets(imgui, wizard)
+
+        imgui.separator()
+        imgui.text("Ability scores")
+        _draw_ability_scores(imgui, wizard)
+
+        imgui.separator()
+        _draw_skill_picks(imgui, wizard)
 
         imgui.separator()
         if imgui.button(content.WIZARD_FINISH_LABEL):

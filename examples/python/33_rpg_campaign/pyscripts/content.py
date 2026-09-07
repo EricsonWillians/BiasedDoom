@@ -16,7 +16,11 @@ The capstone combines every shipped RPG framework in one mini-campaign on
 Doom II MAP01:
 
 - **bd_dnd**: three ``CharacterClass`` definitions and the ``CreationWizard``
-  the systems layer drives at the start of the run.
+  the systems layer drives at the start of the run, plus the creation
+  guidance layer: ``CLASS_CONCEPTS``/``ABILITY_BLURBS``/``SKILL_BLURBS``/
+  ``MODIFIER_HINT`` explain the rules in the wizard window, ``CLASS_PRESETS``
+  ships three one-click builds per class, and ``apply_preset``/
+  ``class_briefing`` are the shared helpers the UI and the autotest both use.
 - **bd_npcs**: four ``NPCDefinition`` entries (spawn offsets probe-verified on
   MAP01), a ``Shop``, a ``HealerService``, and a ``TrainerService``.
 - **bd_dialogue**: one validated ``Dialogue`` tree per talkable NPC with
@@ -55,12 +59,12 @@ COIN_PROBE_POS = (2048.0, 2048.0, 0.0)   # far corner of the void, never seen
 #: mod picks the table for its game (or runs try/except spawn probes per name).
 #: Heretic/Hexen substitutions are noted per entry.
 GAME_CONTENT = {
-    "yard_monster": "ZombieMan",     # Heretic: "Gargoyle"; Hexen: "Ettin"
-    "sera_class": "ZombieMan",       # Heretic: "Disciple";  Hexen: "Zombie"
-    "dobb_class": "ShotgunGuy",      # Heretic: "UndeadWarrior"; Hexen: "Afrit"
-    "wren_class": "DoomImp",         # Heretic: "SabreClink"; Hexen: "Afrit"
-    "korr_class": "Demon",           # Heretic: "Weredragon"; Hexen: "Centaur"
-    "companion_class": "Demon",      # Heretic: "Weredragon"; Hexen: "Centaur"
+    "yard_monster": "ZombieMan",     # Heretic: "HereticImp"; Hexen: "Ettin"
+    "sera_class": "ZombieMan",       # Heretic: "Wizard";  Hexen: "Ettin"
+    "dobb_class": "ShotgunGuy",      # Heretic: "Knight"; Hexen: "FireDemon"
+    "wren_class": "DoomImp",         # Heretic: "Clink"; Hexen: "FireDemon"
+    "korr_class": "Demon",           # Heretic: "Beast"; Hexen: "Centaur"
+    "companion_class": "Demon",      # Heretic: "Beast"; Hexen: "Centaur"
     "cache_class": "ClipBox",        # Heretic: "CrossbowAmmo"; Hexen: "Mana1"
 }
 
@@ -197,6 +201,168 @@ SUGGESTED_ARRAYS = {
     "Lightkeeper": {"str": 8, "dex": 12, "con": 13, "int": 10, "wis": 15,
                     "cha": 14},
 }
+
+# --- creation guidance (what the rules mean, in this mod) ----------------------------
+
+#: One line per ability score: what it governs at Ashvale's table. Kept
+#: short enough to ride the wizard's ability rows unclipped.
+ABILITY_BLURBS = {
+    "str": "Melee muscle; bashing and forcing.",
+    "dex": "Speed and nerve; stealth and locks.",
+    "con": "Toughness; feeds hit points.",
+    "int": "Lore and reason; hexes and history.",
+    "wis": "Senses; traps, wounds, the hidden.",
+    "cha": "Presence; every negotiation.",
+}
+
+#: How a score becomes a modifier, and how a check works.
+MODIFIER_HINT = ("Modifier = (score - 10) / 2, rounded down: 8 is -1, "
+                 "10 is +0, 14 and 15 are +2, 16 is +3. A check rolls "
+                 "d20 + modifier (+2 when trained in the skill) against "
+                 "the DC.")
+
+#: One line per class skill: what it does here and (its ability).
+SKILL_BLURBS = {
+    "athletics": "Force doors, climb, grapple.",
+    "intimidation": "Cow the unwilling into talking or backing down.",
+    "perception": "Spot traps, ambushes, and the hidden.",
+    "stealth": "Move unseen past the dead.",
+    "sleight_of_hand": "Pick locks and pockets.",
+    "acrobatics": "Keep footing and slip hazards.",
+    "insight": "Read a liar before he finishes lying.",
+    "medicine": "Stabilize and treat wounds; Wren can train it.",
+    "religion": "Know the rites of the old faiths.",
+    "arcana": "Know the workings of hexes.",
+}
+
+#: Per class: a concept line and a build tip for the wizard's briefing.
+CLASS_CONCEPTS = {
+    "Mercenary": {
+        "concept": "A paid blade of the watch, first through the gate.",
+        "tip": "Put the best scores in STR and CON; Intimidation runs "
+               "on CHA.",
+    },
+    "Scout": {
+        "concept": "The crossing's eyes, lockpicks, and quiet knife.",
+        "tip": "DEX first, always; WIS keeps a Scout alive between "
+               "fights.",
+    },
+    "Lightkeeper": {
+        "concept": "Carrier of the kindled light against the dark.",
+        "tip": "WIS first; CHA carries every negotiation the light "
+               "cannot.",
+    },
+}
+
+#: One-click builds per class. Each preset is a complete, valid standard
+#: array assignment plus the class skill picks; ``apply_preset`` drives
+#: the wizard through one, so the UI's preset buttons and the autotest
+#: share exactly the same path. Scores stay inside the standard array
+#: multiset on purpose: a preset never beats what a careful player could
+#: build by hand.
+CLASS_PRESETS = {
+    "Mercenary": (
+        {"id": "pit_fighter", "name": "Pit Fighter",
+         "concept": "Lead with the blade: the best Athletics checks and "
+                    "the most hit points.",
+         "scores": {"str": 15, "dex": 13, "con": 14, "int": 8, "wis": 12,
+                    "cha": 10},
+         "skills": ("athletics", "intimidation", "perception")},
+        {"id": "watch_sergeant", "name": "Watch Sergeant",
+         "concept": "Command presence: Intimidation (CHA) lands harder, "
+                    "and the front line still holds.",
+         "scores": {"str": 15, "dex": 10, "con": 13, "int": 8, "wis": 12,
+                    "cha": 14},
+         "skills": ("athletics", "intimidation", "perception")},
+        {"id": "old_survivor", "name": "Old Survivor",
+         "concept": "The hardest to bury: top CON for hit points, sharp "
+                    "Perception for what waits in the yard.",
+         "scores": {"str": 14, "dex": 12, "con": 15, "int": 8, "wis": 13,
+                    "cha": 10},
+         "skills": ("athletics", "intimidation", "perception")},
+    ),
+    "Scout": (
+        {"id": "ghost", "name": "Ghost",
+         "concept": "Unseen and alert: the best Stealth and Perception "
+                    "in the crossing.",
+         "scores": {"str": 10, "dex": 15, "con": 12, "int": 13, "wis": 14,
+                    "cha": 8},
+         "skills": ("stealth", "perception", "acrobatics")},
+        {"id": "lockpick", "name": "Lockpick",
+         "concept": "Fingers first: Sleight of Hand for locks and lifts, "
+                    "with the wits to case the mark.",
+         "scores": {"str": 10, "dex": 15, "con": 12, "int": 14, "wis": 13,
+                    "cha": 8},
+         "skills": ("stealth", "sleight_of_hand", "perception")},
+        {"id": "skirmisher_scout", "name": "Skirmisher",
+         "concept": "Fights in the open: more hit points, Acrobatics to "
+                    "slip what cannot be dodged.",
+         "scores": {"str": 10, "dex": 15, "con": 14, "int": 13, "wis": 12,
+                    "cha": 8},
+         "skills": ("acrobatics", "perception", "sleight_of_hand")},
+    ),
+    "Lightkeeper": (
+        {"id": "chirurgeon", "name": "Chirurgeon",
+         "concept": "The field medic: Medicine keeps the watch "
+                    "breathing.",
+         "scores": {"str": 8, "dex": 10, "con": 12, "int": 13, "wis": 15,
+                    "cha": 14},
+         "skills": ("insight", "medicine", "religion")},
+        {"id": "exorcist", "name": "Exorcist",
+         "concept": "Student of the hex: Arcana and Religion name the "
+                    "enemy before it speaks.",
+         "scores": {"str": 8, "dex": 10, "con": 12, "int": 14, "wis": 15,
+                    "cha": 13},
+         "skills": ("arcana", "religion", "insight")},
+        {"id": "confessor", "name": "Confessor",
+         "concept": "Reads every soul in the room: Insight first, a warm "
+                    "voice second.",
+         "scores": {"str": 8, "dex": 10, "con": 13, "int": 12, "wis": 15,
+                    "cha": 14},
+         "skills": ("insight", "medicine", "arcana")},
+    ),
+}
+
+
+def apply_preset(wizard, preset):
+    """Drive ``wizard`` through one preset (standard array + skills).
+
+    Shared by the UI's preset buttons and the autotest. The class must
+    already be chosen (``wizard.choose_class``); the method is reset to
+    the standard array, every score is assigned from the preset, and the
+    skill picks are replaced with the preset's. Returns the wizard.
+    """
+    wizard.use_standard_array()
+    for ability, value in preset["scores"].items():
+        wizard.set_score(ability, value)
+    for skill in list(wizard.skills):
+        wizard.unassign_skill(skill)
+    for skill in preset["skills"]:
+        wizard.assign_skill(skill)
+    return wizard
+
+
+def class_briefing(cls):
+    """Derived fact lines about one class, for the wizard's briefing panel.
+
+    Reads everything off the live ``CharacterClass`` object, so the panel
+    can never drift from the rules the ``CreationWizard`` will enforce.
+    """
+    equipment = ", ".join(f"{count}x {name}"
+                          for name, count in cls.starting_equipment)
+    features = []
+    for level in sorted(cls.features):
+        for feature in cls.features[level]:
+            features.append((level, feature["name"], feature["description"]))
+    return {
+        "hit_die": f"d{cls.hit_die}",
+        "primary": ", ".join(a.upper() for a in cls.primary_abilities),
+        "saves": ", ".join(a.upper() for a in cls.proficient_saves),
+        "skills": ", ".join(s.replace("_", " ").title()
+                            for s in cls.class_skills),
+        "equipment": equipment or "none",
+        "features": features,
+    }
 
 
 def build_korr():

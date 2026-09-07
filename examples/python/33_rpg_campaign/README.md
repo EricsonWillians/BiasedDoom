@@ -32,10 +32,10 @@ mechanics `hello_world` gets via `bd.import_script`.
 
 | Module | Role |
 |---|---|
-| `pyscripts/content.py` | **Pure data + factories**: the three `CharacterClass` definitions (hit dice, class skills, level 1/2 features with apply lambdas, starting equipment), the `GAME_CONTENT` spawn-class table with cross-game notes, probe-verified MAP01 fixture constants, NPC spawn offsets/tints, the shop stock and service parameters, the three quests, all four dialogue trees with their condition/effect callables, and every string. No engine calls at import. |
+| `pyscripts/content.py` | **Pure data + factories**: the three `CharacterClass` definitions (hit dice, class skills, level 1/2 features with apply lambdas, starting equipment), the creation guidance layer (`CLASS_CONCEPTS`, `ABILITY_BLURBS`, `SKILL_BLURBS`, `MODIFIER_HINT`), three one-click `CLASS_PRESETS` per class with the shared `apply_preset`/`class_briefing` helpers, the `GAME_CONTENT` spawn-class table with cross-game notes, probe-verified MAP01 fixture constants, NPC spawn offsets/tints, the shop stock and service parameters, the three quests, all four dialogue trees with their condition/effect callables, and every string. No engine calls at import. |
 | `pyscripts/systems.py` | **Rules and event wiring**: the shared `CreationWizard` and `finish_creation` (hero + `CharacterState` + equipment + level-up feedback), the `NPCManager` registration, the currency spawn probe with fallback, quest wiring (kill/pickup trackers, the xp sink into the hero, the disposition sink into the store, yard spawn on accept, prove-worth on clear), `recruit_korr()`, the service ctx builder + `run_service`, Custom Action 1 (auto-bound to Q, rebindable under Options -> Customize Controls, Custom Actions) -> the `custom_action` event / `pyui talk` -> `ui_command` -> `start_talk`, savegame cold-restore for hero/party, and the shop stock snapshot persistence. |
-| `pyscripts/ui.py` | **The interface**: the founding window (name, class radios, score method radios, +/- ability buttons with the point-buy budget line, class-skill list with quota, Finish + validation error line), the live-sprite dialogue window with standing-colored speaker and annotated choices, the talk prompt overlay (`manager.prompt` each frame while no session is active, with the live Custom Action 1 key swapped in), the `ShopUI` embed bound to Dobb (the "Show me your wares." choice sets `systems.shop_open`), plus `CharacterSheet` (K or Custom Action 2) and `JournalUI` (J). All inert headless; one `bd.warn` per frame at worst, balanced begin/end. |
-| `pyscripts/main.py` | **Thin bootstrap**: the `BD_EXAMPLE_AUTOTEST=1` schedule (twelve stages of assertions reading state out of `systems`) and the `BD_EXAMPLE_SCREENSHOT=1` pose. |
+| `pyscripts/ui.py` | **The interface**: the founding window (name, class radios, a per-class briefing panel derived from the live class object, one-click preset buttons, score method radios, +/- ability buttons annotated with the derived modifier and per-ability blurbs, class-skill list with quota and per-skill blurbs, Finish + validation error line), the live-sprite dialogue window with standing-colored speaker and annotated choices, the talk prompt overlay (`manager.prompt` each frame while no session is active, with the live Custom Action 1 key swapped in), the `ShopUI` embed bound to Dobb (the "Show me your wares." choice sets `systems.shop_open`), plus `CharacterSheet` (K or Custom Action 2) and `JournalUI` (J). All inert headless; one `bd.warn` per frame at worst, balanced begin/end. |
+| `pyscripts/main.py` | **Thin bootstrap**: the `BD_EXAMPLE_AUTOTEST=1` schedule (thirteen stages of assertions reading state out of `systems`) and the `BD_EXAMPLE_SCREENSHOT=1` pose. |
 
 ## What it teaches
 
@@ -43,6 +43,15 @@ mechanics `hello_world` gets via `bd.import_script`.
   score method, standard-array multiset, point-buy budget, class-skill
   quota) surfaces as the UI's error line; `finish()` binds the class and
   applies the level-1 feature package automatically.
+- **Legible character creation.** Picking a class opens a briefing panel
+  (concept, hit die, primary ability, save proficiencies, trained skills,
+  starting gear, and every level feature with its description) derived from
+  the live `CharacterClass` via `content.class_briefing`, so the panel can
+  never drift from the rules. Three one-click `CLASS_PRESETS` per class
+  (e.g. Pit Fighter / Watch Sergeant / Old Survivor) fill the standard
+  array and the skill picks through `content.apply_preset`, the same helper
+  the autotest exercises; every ability row shows its derived modifier and
+  a one-line blurb, and every skill pick names its governing ability.
 - **Class progression as data.** Features at levels 1 and 2 are dicts with
   `apply` lambdas (grant a resource, set a mod note); level 4 queues ASI
   points on `character.pending_asi` through `apply_class_level`.
@@ -96,7 +105,7 @@ y 800**, and the cache ClipBox at **(-416, 800, 56)**. Pillars reject
 spawns at e.g. (-64, 800) and (-192, 800); probe before you move the
 fixture. The engine exposes no IWAD query: `GAME_CONTENT` in `content.py`
 holds the Doom II table with commented Heretic/Hexen substitutions
-(`Gargoyle`, `Ettin`, ...), so porting the example is a table swap.
+(`HereticImp`, `Ettin`, ...), so porting the example is a table swap.
 
 ## Running it
 
@@ -109,7 +118,11 @@ holds the Doom II table with commented Heretic/Hexen substitutions
 Found your character in the gate window: the world is engine-paused while
 it is open, so you can read every option unmolested (the pause lifts the
 moment Finish validates; the autotest and screenshot drivers disable this
-so their scheduled steps keep ticking). Then: **Q** (Custom Action 1)
+so their scheduled steps keep ticking). Picking a class opens its briefing
+(concept, hit die, saves, trained skills, gear, and features), and the
+preset buttons (Pit Fighter, Ghost, Chirurgeon, ...) fill the standard
+array and skill picks in one click; every ability row explains itself.
+Then: **Q** (Custom Action 1)
 talks to whoever is closest (the prompt names them, their standing, and
 the live binding), **J** opens the journal, **K** or **V** (Custom
 Action 2) the character sheet. Sera hands
@@ -141,7 +154,9 @@ BD_EXAMPLE_AUTOTEST=1 ./build/biaseddoom -headless \
 ```
 
 The autotest asserts: wizard validation errors and a full Mercenary
-founding; unit-level progression through level 4 (level 2 feature, ASI
+founding; every class preset applied through the shared `apply_preset`
+helper and finished into a valid hero (scores, skills, class binding);
+unit-level progression through level 4 (level 2 feature, ASI
 queue); the spawned hub (four friendly tinted NPCs with stable TIDs, the
 cache, an empty yard); nearest-NPC targeting; the real console `talk` path
 into a disposition-carrying session; the handout (quest active, Sera +10,
@@ -168,8 +183,9 @@ BD_EXAMPLE_SCREENSHOT=1 xvfb-run -a ./build/biaseddoom \
 
 ## Expanding it
 
-- **New classes**: add a `CharacterClass` in `content.py`; the wizard UI,
-  sheet, and progression pick it up automatically.
+- **New classes**: add a `CharacterClass` in `content.py` (plus a
+  `CLASS_CONCEPTS` entry and `CLASS_PRESETS` row); the wizard UI, briefing
+  panel, preset buttons, sheet, and progression pick it up automatically.
 - **New NPCs**: one `NPCDefinition` row (offset probed!) plus a dialogue
   factory; the manager, prompt, and persistence handle the rest.
 - **New quests**: one `Quest` in `build_quests()` plus a tracker line in

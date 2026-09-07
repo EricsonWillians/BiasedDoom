@@ -8,9 +8,11 @@ engine wiring in :mod:`ashvale_systems`, and every window in
 
 The autotest drives the real engine paths headlessly with scripted RNG
 doubles and asserts, in order: creation validation errors and a full
-Mercenary founding; unit-level class progression through level 4 with the ASI
-queue; the spawned hub (four friendly tinted NPCs in talk range, the cache,
-no yard before the quest); nearest-NPC targeting; the real
+Mercenary founding; every class preset round-tripping through
+``content.apply_preset`` into a valid founding; unit-level class progression
+through level 4 with the ASI queue; the spawned hub (four friendly tinted
+NPCs in talk range, the cache, no yard before the quest); nearest-NPC
+targeting; the real
 ``bind e talk -> pyui talk -> ui_command`` path into a disposition-carrying
 session; the quest handout (quest active, Sera +10, five AMBUSH zombies up);
 both persuasion branches through ``session.rng`` (the rumor starts the hidden
@@ -130,6 +132,7 @@ def schedule_run_modes(event):
             if pawn is not None:
                 pawn.damage_factor = 0.0  # nothing may kill the test driver
             bd.schedule(autotest_creation, delay=10)
+            bd.schedule(autotest_presets, delay=18)
             bd.schedule(autotest_class_progression, delay=25)
             bd.schedule(autotest_spawns, delay=40)
             bd.schedule(autotest_nearest_talk, delay=55)
@@ -146,6 +149,7 @@ def schedule_run_modes(event):
             bd.schedule(autotest_pre_save, delay=395)
             bd.schedule(autotest_load, delay=430)
         if SCREENSHOT:
+            screenshot_wizard_pose()
             bd.schedule(screenshot_pose, delay=bd.TICRATE,
                         map_local=False)
             bd.schedule(lambda: bd.execute("screenshot /tmp/ashvale"),
@@ -158,6 +162,21 @@ def screenshot_pose():
     """Pose the documentation shot: creation wizard + a live conversation."""
     _teleport_to("sera")
     bd.execute("talk")
+
+
+def screenshot_wizard_pose():
+    """Drive the shared wizard into a photogenic state before the first
+    frame: a chosen class renders the briefing panel and the preset row,
+    and the applied preset shows the annotated scores. Runs at map_load so
+    the founding window's first-use autosize fits the full content."""
+    if systems.hero is not None or systems.wizard is None:
+        return
+    try:
+        systems.wizard.choose_class(content.MERCENARY)
+        content.apply_preset(systems.wizard, content.CLASS_PRESETS[
+            content.MERCENARY.name][0])
+    except Exception:
+        pass
 
 
 # --- autotest steps ---------------------------------------------------------------------
@@ -251,6 +270,56 @@ def autotest_creation():
         bd.assert_true(pawn.inventory_count("Clip") == clips_before + 2
                        and pawn.inventory_count("Shell") == shells_before + 4,
                        "Mercenary starting ammo was handed out")
+
+
+def autotest_presets():
+    """Every class preset applies through the shared helper and finishes.
+
+    The UI's preset buttons call ``content.apply_preset`` on the shared
+    wizard; this drives the same helper over fresh wizards, so a broken
+    preset (a bad multiset, a non-class skill, an over-quota pick) fails
+    here before a player can click it.
+    """
+    bd.assert_true(set(content.CLASS_PRESETS)
+                   == {cls.name for cls in content.CLASS_LIST},
+                   "every class ships presets")
+    for cls in content.CLASS_LIST:
+        presets = content.CLASS_PRESETS[cls.name]
+        bd.assert_true(len(presets) >= 2,
+                       f"{cls.name} offers a real choice of presets")
+        briefing = content.class_briefing(cls)
+        bd.assert_true(briefing["hit_die"] == f"d{cls.hit_die}"
+                       and briefing["features"],
+                       f"{cls.name} briefing matches the live class")
+        seen_ids = set()
+        for preset in presets:
+            bd.assert_true(preset["id"] not in seen_ids,
+                           f"{cls.name}/{preset['id']}: unique preset id")
+            seen_ids.add(preset["id"])
+            bd.assert_true(sorted(preset["scores"].values())
+                           == sorted(content.STANDARD_ARRAY),
+                           f"{cls.name}/{preset['id']}: standard array used "
+                           "exactly once")
+            bd.assert_true(all(skill in cls.class_skills
+                               for skill in preset["skills"]),
+                           f"{cls.name}/{preset['id']}: preset skills are "
+                           "class skills")
+            wiz = bd_dnd.CreationWizard()
+            wiz.set_name("P")
+            wiz.choose_class(cls)
+            content.apply_preset(wiz, preset)
+            bd.assert_true(wiz.method == "standard_array",
+                           f"{cls.name}/{preset['id']}: preset sets the "
+                           "standard array method")
+            built = wiz.finish()  # raises ValueError on an invalid preset
+            bd.assert_true(built.abilities.serialize()
+                           == dict(preset["scores"]),
+                           f"{cls.name}/{preset['id']}: preset scores landed")
+            bd.assert_true(set(preset["skills"])
+                           == set(built.proficient_skills),
+                           f"{cls.name}/{preset['id']}: preset skills landed")
+            bd.assert_true(built.class_id == cls.name,
+                           f"{cls.name}/{preset['id']}: the class bound")
 
 
 def autotest_class_progression():
