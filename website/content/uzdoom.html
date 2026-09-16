@@ -20,9 +20,10 @@ line</td><td>Community continuation of ZDoom and GZDoom, own 5.x line</td></tr>
 <tr><td><b>Models</b></td><td>Native <b>glTF 2.0</b> (skeletal animation,
 PBR) + MD2/MD3/IQM/OBJ/UE1/voxels</td><td>MD2/MD3/IQM/OBJ/UE1/voxels —
 no glTF</td></tr>
-<tr><td><b>Graphics</b></td><td>GL/Vulkan/GLES + a deep menu-driven
-post-processing stack (bloom, tonemapping, color grading, CRT/VHS/NTSC,
-film grain, SSAO, FXAA…), lighting-style presets, first-class
+<tr><td><b>Graphics</b></td><td>GL/Vulkan/GLES with live backend
+switching + a deep menu-driven post-processing stack (bloom, tonemapping,
+color grading, CRT/VHS/NTSC, film grain, SSAO, FXAA…), searchable
+64/38/16 graphics/lighting/fog preset browsers, first-class
 third-person camera</td><td>GL/Vulkan/GLES with the inherited GZDoom
 post-processing stack</td></tr>
 <tr><td><b>Scripting</b></td><td>Embedded <b>CPython 3.12</b> as the
@@ -58,14 +59,16 @@ Blender export — alongside the classic MD2/MD3/IQM/OBJ/UE1/voxel formats.
 UZDoom supports the classic formats only and has no glTF loader at all.</p>
 
 <h3>Graphics and post-processing</h3>
-<p>Both render through OpenGL, Vulkan and GLES. BiasedDoom then goes much
-further into image control, all menu-driven
-(<code>Options → Display Options → Advanced</code>): bloom, lens effects,
+<p>Both render through OpenGL, Vulkan and GLES; BiasedDoom switches between
+them live, without a restart. BiasedDoom then goes much further into image
+control, all menu-driven (<code>Options → Display Options → Advanced</code>):
+bloom with threshold, soft-knee and intensity controls, lens effects,
 vignette, chromatic aberration, film grain, sharpening, retro pixelation,
-CRT/VHS/NTSC output modes, tonemapping, color grading, SSAO and FXAA —
-plus thirteen named lighting-style presets (Warm Cinematic, Horror
-Contrast, Neon Glow, Hellfire Glow, Void Dread…) and a menu-driven
-third-person camera with presets, shoulder offsets and collision padding.
+CRT/VHS/NTSC output modes, tonemapping, color grading, SSAO and FXAA — plus
+searchable browsers for 38 lighting-style, 64 graphics, and 16 fog presets
+(Warm Cinematic, Horror Contrast, Neon Glow, Hellfire Glow, Void Dread…),
+optional sector-edge light bleed, and a menu-driven third-person camera with
+presets, shoulder offsets and collision padding.
 UZDoom carries the inherited GZDoom post-processing stack and does not
 prioritize this area.</p>
 

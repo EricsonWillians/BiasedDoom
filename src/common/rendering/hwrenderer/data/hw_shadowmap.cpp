@@ -26,6 +26,7 @@
 #include "buffers.h"
 #include "shaderuniforms.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
 /*
 	The 1D shadow maps are stored in a 1024x1024 texture as float depth values (R32F).
@@ -111,7 +112,9 @@ bool IShadowMap::PerformUpdate()
 
 void IShadowMap::UploadLights()
 {
-	mLights.Resize(1024 * 4);
+	// One row of the 1024-row shadow map texture per light, 4 floats each.
+	// The cvar is clamped to 64..1024 so this can never exceed the texture.
+	mLights.Resize((int)bd_shadowmap_max_lights * 4);
 	CollectLights();
 
 	if (mLightList == nullptr)

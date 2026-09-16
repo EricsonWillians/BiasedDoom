@@ -51,6 +51,8 @@ public:
 	IDataBuffer *CreateDataBuffer(int bindingpoint, bool ssbo, bool needsresize) override;
 
 	void InitLightmap(int LMTextureSize, int LMTextureCount, TArray<uint16_t>& LMTextureData) override;
+	bool SupportsSectorBleed() const override;
+	void InitSectorBleed(int width, int height, const TArray<uint8_t>& data) override;
 
 	// Retrieves a buffer containing image data for a screenshot.
 	// Hint: Pitch can be negative for upside-down images, in which case buffer

@@ -1,4 +1,4 @@
-"""The Interrogation — thin bootstrap and the headless autotest schedule.
+"""The Interrogation - thin bootstrap and the headless autotest schedule.
 
 Deliberately small: the tree and prose live in :mod:`inquisition_content`,
 session/atmosphere rules in :mod:`inquisition_systems`, and the
@@ -12,7 +12,15 @@ Custom Action 1 press path (event payload, session start, release edge),
 smalltalk routing,
 the faction gate locked/unlocked, both persuasion and both intimidation
 branches (shells/rounds only on success, dread bump on a successful
-threat), the attitude ctx keys with failed threats eroding the
+threat), the skill-check annotations naming the character's bonus
+("(DC 12 Persuasion, you +4)", cross-checked against
+``systems.skill_bonus``), the marker lifecycle (gold "!" before first
+contact, retired by it, the "[Q] Talk" label in range with no session,
+hidden during a session and out of range, intro toast fired), the
+hidden-choice hint lines (dread hint on the smalltalk node within 20
+below the mark threshold, attitude hint on the start node at <= -30,
+both lifting once their choice is revealed), the attitude ctx keys with
+failed threats eroding the
 Inquisitor's attitude by 20 each until the "You again." greeting unlocks
 at -50 with a standing-keyed body line, the
 player-log writes (errand + the mark's second line), the hidden mark
@@ -30,6 +38,7 @@ import biaseddoom as bd
 import bd_dialogue
 from bd_dialogue import Choice, Dialogue, Node
 import bd_quests
+from bd_horror import toasts
 from bd_quests import Quest
 
 try:
@@ -107,19 +116,24 @@ def schedule_run_modes(event):
             pawn.damage_factor = 0.0  # nothing may kill the test driver
         bd.schedule(autotest_model, delay=10)
         bd.schedule(autotest_spawned, delay=25)
+        bd.schedule(autotest_markers_intro, delay=30)
         bd.schedule(autotest_talk_command, delay=40)
         bd.schedule(autotest_talk_asserts, delay=50)
+        bd.schedule(autotest_markers_retired, delay=58)
         bd.schedule(autotest_custom_action_press, delay=62)
         bd.schedule(autotest_custom_action_asserts, delay=74)
         bd.schedule(autotest_custom_action_release, delay=86)
         bd.schedule(autotest_smalltalk, delay=102)
         bd.schedule(autotest_gate_locked, delay=110)
         bd.schedule(autotest_no_character, delay=125)
+        bd.schedule(autotest_marker_talk_label, delay=136)
         bd.schedule(autotest_check_success, delay=145)
         bd.schedule(autotest_check_fail_and_quest, delay=170)
         bd.schedule(autotest_quest_condition, delay=195)
         bd.schedule(autotest_pickup, delay=215)
+        bd.schedule(autotest_marker_far, delay=232)
         bd.schedule(autotest_quest_done, delay=240)
+        bd.schedule(autotest_marker_out_of_range, delay=250)
         bd.schedule(autotest_gate_open, delay=260)
         bd.schedule(autotest_session_guard, delay=290)
         bd.schedule(autotest_intimidation_success, delay=310)
@@ -219,6 +233,20 @@ def autotest_spawned():
     bd.assert_true(len(crates) >= 1, "reliquary crate spawned in the yard")
 
 
+def autotest_markers_intro():
+    """Pre-contact: the gold "!" floats over the Inquisitor, no talk label
+    yet, and the intro toast named the live binding and the annotations."""
+    bd.assert_true(systems.marker_state["mark"] is True
+                   and systems.marker_state["talk"] is False
+                   and systems.marker_state["talked"] is False,
+                   "gold '!' marker up before the first conversation")
+    expected = content.INTRO_TOAST.format(key=systems.action_key_hint(1))
+    bd.assert_true(any(entry.get("text") == expected
+                       for entry in toasts.history),
+                   "intro toast names the live binding and the DC/bonus "
+                   "annotations")
+
+
 def autotest_talk_command():
     """The real interaction path: alias talk -> pyui -> ui_command.
 
@@ -251,14 +279,31 @@ def autotest_talk_asserts():
                    and "[LOCKED]" in labels[IDX_RUMOR][2],
                    "rumor choice locked pre-reputation")
     bd.assert_true(labels[IDX_PERSUASION][1] is True
-                   and labels[IDX_PERSUASION][2] == "(DC 12 Persuasion)",
-                   "persuasion choice annotated with its DC")
+                   and labels[IDX_PERSUASION][2]
+                   == "(DC 12 Persuasion, you +4)",
+                   "persuasion choice annotated with its DC and your bonus")
     bd.assert_true(labels[IDX_INTIMIDATION][1] is True
-                   and labels[IDX_INTIMIDATION][2] == "(DC 12 Intimidation)",
-                   "intimidation choice annotated with its DC")
+                   and labels[IDX_INTIMIDATION][2]
+                   == "(DC 12 Intimidation, you +4)",
+                   "intimidation choice annotated with its DC and your bonus")
+    bd.assert_true(systems.skill_bonus(systems.character, "persuasion") == 4
+                   and systems.skill_bonus(systems.character,
+                                           "intimidation") == 4,
+                   "the +4 is ability mod +2 (cha 14) and proficiency +2")
     bd.assert_true(all(text != content.MARK_CHOICE_TEXT
                        for text, _en, _ann in labels),
                    "mark choice hidden while dread is low")
+
+
+def autotest_markers_retired():
+    """First contact happened and a refresh ran: the "!" is retired, and
+    no talk label shows while the session it opened is still active."""
+    bd.assert_true(systems.marker_state["talked"] is True,
+                   "the first conversation set the talked flag")
+    bd.assert_true(systems.marker_state["mark"] is False,
+                   "the first conversation retired the '!' marker")
+    bd.assert_true(systems.marker_state["talk"] is False,
+                   "no talk label while a session is open")
 
 
 def autotest_custom_action_press():
@@ -370,6 +415,34 @@ def autotest_no_character():
     plain.end()
     bd.assert_true(bd_dialogue.active_session() is None,
                    "manual end() clears the active session")
+    # The example's wrapper with no character attached falls back to the
+    # framework's rendering too (no bonus without a sheet).
+    wrapped = systems.InquisitionSession(systems.dialogue, systems.npc_ref,
+                                         quest_log=bd_quests.log,
+                                         horror_state=systems.horror)
+    bd.assert_true(wrapped.start(), "character-less wrapped session starts")
+    wrapped_labels = _choice_labels(wrapped.choices())
+    bd.assert_true(wrapped_labels[IDX_PERSUASION][1] is False
+                   and "(unavailable)" in wrapped_labels[IDX_PERSUASION][2]
+                   and "you +" not in wrapped_labels[IDX_PERSUASION][2],
+                   "wrapped session without a character keeps '(unavailable)'")
+    wrapped.end()
+    bd.assert_true(bd_dialogue.active_session() is None,
+                   "wrapped character-less session ended")
+
+
+def autotest_marker_talk_label():
+    """Post-contact, in talk range, no session open: the context label is
+    up and names the live Custom Action 1 binding."""
+    bd.assert_true(systems.marker_state["talked"] is True
+                   and systems.marker_state["mark"] is False,
+                   "the '!' stays retired after first contact")
+    bd.assert_true(systems.marker_state["talk"] is True,
+                   "talk label up in range with no session open")
+    expected = content.TALK_LABEL_TEMPLATE.format(
+        key=systems.action_key_hint(1))
+    bd.assert_true(systems.marker_state["talk_text"] == expected,
+                   "talk label names the live binding")
 
 
 def autotest_check_success():
@@ -466,6 +539,19 @@ def autotest_pickup():
     pawn.set_velocity(2.0, 0.0, 0.0)
 
 
+def autotest_marker_far():
+    """Park the player well beyond talk range (the crate sits at the exact
+    edge of it, too marginal for a marker assert); the out-of-range check
+    itself runs in autotest_marker_out_of_range after a refresh pass."""
+    pawn = systems.player_pawn()
+    npc = systems.npc_ref
+    bd.assert_true(pawn is not None and npc is not None and npc.valid,
+                   "marker out-of-range fixture available")
+    if pawn is None or npc is None or not npc.valid:
+        return
+    pawn.set_position(npc.x + 4.0 * TALK_RANGE, npc.y, npc.z, check=False)
+
+
 def autotest_quest_done():
     quest = bd_quests.log.get(QUEST_ID)
     bd.assert_true(quest is not None, "quest registered")
@@ -480,6 +566,22 @@ def autotest_quest_done():
                    "quest completion granted Choir reputation +1")
 
 
+def autotest_marker_out_of_range():
+    """Beyond talk range with no session open, the talk label hides."""
+    pawn = systems.player_pawn()
+    npc = systems.npc_ref
+    bd.assert_true(pawn is not None and npc is not None and npc.valid,
+                   "out-of-range fixture available")
+    if pawn is not None and npc is not None and npc.valid:
+        bd.assert_true(pawn.distance_to(npc) > TALK_RANGE,
+                       "player parked beyond talk range")
+    bd.assert_true(bd_dialogue.active_session() is None,
+                   "no session open for the out-of-range check")
+    bd.assert_true(systems.marker_state["talk"] is False
+                   and systems.marker_state["talk_text"] == "",
+                   "talk label hides out of range")
+
+
 def autotest_gate_open():
     """Post-reputation: the rumor branch unlocks and routes."""
     pawn = systems.player_pawn()
@@ -488,7 +590,7 @@ def autotest_gate_open():
                    and npc.valid, "gate-open fixture available")
     if pawn is None or npc is None or not npc.valid:
         return
-    # The player is at the crate (224 units out) — walk back into range.
+    # The player is at the crate (224 units out) - walk back into range.
     pawn.set_position(npc.x - 64.0, npc.y, npc.z, check=False)
     session = systems.start_talk()
     bd.assert_true(session is not None and session.active,
@@ -606,6 +708,9 @@ def autotest_attitude():
     texts = [choice.text for choice, _en, _ann in session.choices()]
     bd.assert_true(content.YOU_AGAIN_CHOICE_TEXT not in texts,
                    "the 'You again.' greeting stays hidden above -50")
+    bd.assert_true(content.HINT_START_ATTITUDE
+                   not in session.active_node.text,
+                   "no attitude hint at -20 (above the -30 hint line)")
     # Two more failed threats: -20 -> -40 -> -60. Each fails the room
     # (4 + 2 + 2 = 8 < 12), nothing granted, attitude eroded by 20.
     for expected in (-40, -60):
@@ -616,12 +721,19 @@ def autotest_attitude():
                        f"a failed threat drops the attitude to {expected}")
         texts = [choice.text for choice, _en, _ann in session.choices()]
         hidden = content.YOU_AGAIN_CHOICE_TEXT not in texts
+        hinted = content.HINT_START_ATTITUDE in session.active_node.text
         if expected == -60:
             bd.assert_true(not hidden,
                            "the 'You again.' greeting appears at -60")
+            bd.assert_true(not hinted,
+                           "the attitude hint lifts once the greeting is "
+                           "revealed")
         else:
             bd.assert_true(hidden,
                            "the greeting stays hidden at -40 (above -50)")
+            bd.assert_true(hinted,
+                           "the attitude hint appears at -40 (greeting "
+                           "still hidden)")
     session.choose(texts.index(content.YOU_AGAIN_CHOICE_TEXT))
     bd.assert_true(session.active_node.id == "greeting",
                    "the greeting choice routes to the greeting node")
@@ -636,7 +748,8 @@ def autotest_attitude():
 
 def autotest_hidden_choice():
     """The mark choice: absent below dread 50, present at/above it, and it
-    writes the second native player-log line."""
+    writes the second native player-log line. Along the way: the dread
+    hint line on the smalltalk node within 20 below the threshold."""
     session = systems.start_talk()
     bd.assert_true(session is not None and session.active,
                    "session restarted for the mark branch")
@@ -647,7 +760,28 @@ def autotest_hidden_choice():
     texts = [choice.text for choice, _en, _ann in entries]
     bd.assert_true(content.MARK_CHOICE_TEXT not in texts,
                    "mark choice ABSENT at dread < 50")
+    # The discoverability hint lives on the smalltalk node: visit it at
+    # dread 10 (no hint), 35 (within 20 of the threshold: hint), 60 (the
+    # mark choice is revealed, so the hint lifts and the base text
+    # returns exactly).
+    session.choose(IDX_SMALLTALK)
+    bd.assert_true(session.active_node.id == "smalltalk",
+                   "hint detour routed to the smalltalk node")
+    session.choices()  # choices() is what composes the hint lines
+    base_text = session.active_node.text
+    bd.assert_true(content.HINT_SMALLTALK_DREAD not in base_text,
+                   "no dread hint far below the threshold")
+    systems.horror.dread.set_level(35.0)
+    session.choices()
+    bd.assert_true(content.HINT_SMALLTALK_DREAD in session.active_node.text,
+                   "dread hint appears within 20 below the mark threshold")
     systems.horror.dread.set_level(60.0)
+    session.choices()
+    bd.assert_true(session.active_node.text == base_text,
+                   "the dread hint lifts once the mark choice is revealed")
+    session.choose(1)  # "Enough." -> start
+    bd.assert_true(session.active_node.id == "start",
+                   "the hint detour returned to the start node")
     entries = session.choices()
     texts = [choice.text for choice, _en, _ann in entries]
     bd.assert_true(content.MARK_CHOICE_TEXT in texts,
@@ -705,4 +839,7 @@ def autotest_stale_npc():
 
 
 def autotest_finish():
+    bd.assert_true(systems.marker_state["mark"] is False
+                   and systems.marker_state["talk"] is False,
+                   "markers cleared after the Inquisitor was destroyed")
     bd.log("INTERROGATION AUTOTEST assertions complete")

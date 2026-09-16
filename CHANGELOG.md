@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Live render-backend switching**: changing `vid_preferbackend`
+  (OpenGL/Vulkan/GLES) in Video Options takes effect at runtime —
+  backend-owned texture, material, postprocess, 2D-shape, and level-geometry
+  resources are rebuilt at the frame boundary without restarting the engine.
+- **Sector-edge light bleed**: optional per-pixel smoothing of floor/ceiling
+  sector-light transitions (`bd_sectorlight_bleed`, `bd_sectorlight_distance`,
+  `bd_sectorlight_strength`), generated as a low-resolution world-space light
+  map on OpenGL, Vulkan, and GLES-capable paths, with portal/sky/fog-boundary
+  and 3D-floor-control-sector exclusions and live backend-switch re-uploads.
+- **Bloom pipeline overhaul**: radius-matched Gaussian weights, mirrored edge
+  sampling, energy-preserving mip transfers, and exposed threshold, soft-knee,
+  and intensity controls (`bd_bloom_threshold`, `bd_bloom_knee`,
+  `bd_bloom_intensity`).
+- **Searchable preset browsers**: Graphics, Lighting, and Fog preset menus now
+  include full searchable picker submenus with active-preset highlighting.
+  Preset libraries expanded to 64 graphics, 38 lighting, and 16 fog presets
+  (append-only IDs remain INI-compatible).
+
 - **Python API v2 additions**: `line_activation_failed` now carries
   failure reason codes (`reason`/`reason_code`, with ZScript parity via
   `WorldLineActivationFailed` and `WorldEvent.ActivationFailReason`);
@@ -97,11 +115,77 @@ All notable changes to this project will be documented in this file.
   Walls*, *The Last Feeding*, *The Sunken Crypt*, *The Confessor*,
   *Pyre & Rime*, *The Interrogation* — with expanded autotest coverage
   that all passes headless.
+- **`bd_npcs` `NPCManager.retire(npc_id)`**: takes a world NPC off duty
+  (the recruit who joins the party as a follower): the actor leaves the
+  world (or is released for adoption), the manager stops tracking,
+  prompting, and respawning it, the retired set round-trips through
+  savegames, and the disposition standing survives.
+- **RPG examples gameplay overhaul**: the RPG set (27, 29, 30, 31, 32,
+  and the 33 capstone) gained in-world guidance and real goals: quest
+  giver "!" marks, objective beacons and rings (`bd.draw_world_*`
+  display list), persistent HUD strips with live key bindings, intro
+  onboarding, per-hit elemental feedback and a win condition in
+  *Pyre & Rime*, and an *Ashvale Crossing* campaign that now pays XP for
+  real Doom kills, gives every class a working active ability on Custom
+  Action 3, rebuilds its quest chain (no more hidden shadow quest or
+  silent fetch), and recruits Korr as a companion who spawns at his own
+  slot and actually fights. `29_dnd_dungeon` was rebuilt as *The
+  Delve*, a map-agnostic D&D rules layer in the roguelike example's
+  mold: a one-click class founding (Fighter/Rogue/Cleric, each with a
+  working class active), a per-map delve contract on any map (a crowned
+  Warden unique plus a blood-tribute kill count), visible d20 roll
+  popups for bashes/saves/rests, and rests that risk a real nightmare
+  spawn in the dark. It now also unifies the health pool (the sheet's
+  hp and the pawn's health are one pool kept at the same ratio, armor
+  still reducing damage pre-sync), makes the skills Doom-coherent
+  (Athletics CQB damage, Perception trap sense and dead-eye, Religion
+  light-warded rests with WIS nightmare saves, Insight crosshair
+  examine with threat notes), adds the full Delver ImGui window and a
+  two-line HUD strip with an examine line, and grows the contract with
+  depth scaling, deterministic per-map modifiers, and level-up boons
+  (a paused pick-one-of-three chooser).
 
 ### Fixed
 
+- Preset selection lifecycle is deterministic and category-independent:
+  graphics/lighting/fog selectors no longer dirty each other, startup archive
+  replay no longer stomps saved per-feature tweaks, and advanced graphics
+  features (SSAO, FXAA, and shadow-map settings) reset to a neutral baseline
+  before each graphics preset applies.
+
 - `save_checkpoint`/savegame thumbnails no longer crash in `-headless`
   mode (`PutSavePic` writes the placeholder PNG when no renderer exists).
+- Removed the gameplay screen tints from the RPG examples (full-view
+  `screen_flash`/`screen_fade` effects fight the player's aim
+  mid-combat): level-up and contract fanfares in `29_dnd_dungeon`,
+  focus cycling and elite death-rattle fades in `31_elemental_combat`,
+  the frenzy flash and storm pulses in `28_vtm_chronicle`, and the
+  level-up frame and affix damage feedback in `15_roguelike_run`.
+  Feedback stays in the world (rings, titles, sounds) and the HUD.
+  `bd_rpg.LootRules` gained `screen_feedback=False` for opting out of
+  the rarity flash (31 uses it).
+- `bd_dnd` `Companion` followers no longer spawn or teleport into walls
+  (spawning and catch-up teleports try a fit-checked candidate ring
+  around the player, and `bind(party, anchor=...)` can pin the first
+  spawn to a probed slot), and companions now fight proactively:
+  they engage monsters that hurt the player, monsters the player hurts,
+  monsters that hurt them, and, while combat is recent, the nearest
+  visible hostile near the player, instead of only reacting to damage
+  that already landed on the player.
+- `29_dnd_dungeon`'s autotest no longer leaks its scripted
+  `DamageSaveRule` instances into the later rest tests (they are
+  disarmed after use); a stray natural 20 could previously refund the
+  scripted wound and fail the fitful/sanctuary assertion.
+- `29_dnd_dungeon`'s Insight crosshair examine no longer fires a real
+  hitscan: the old zero-damage `bd.line_attack` probe still spawned
+  BulletPuffs and bullet decals on every wall along its trace every 7
+  tics, which read as constant phantom gunfire. Acquisition is now pure
+  geometry (a `bd.actor_refs` sphere query, one `bd.actor_field_batch`
+  read, a bearing/pitch cone, `check_sight` for walls), firing nothing.
+- `29_dnd_dungeon`'s reflex save no longer spams the center-screen
+  banner: it rolls on every incoming hit, so `announce_check` gained a
+  `center` flag and the save announces with `center=False`, keeping the
+  floating d20 readout and the check log.
 
 ## [4.15.12] - 2026-09-01
 

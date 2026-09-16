@@ -1,12 +1,14 @@
-"""The Confessor — UI: the bd_horror-themed Rite panel and toasts.
+"""The Confessor - UI: the bd_horror-themed Rite panel and toasts.
 
 A small Dear ImGui panel rendered next to the native conversation menu:
 the quest state out of ``bd_quests``, whether the Confessor's handle is
-live, and the last line of the rite. Everything is skinned through
-``bd_horror.theme`` and toasts render through ``bd_horror.toasts``.
+live, and the last line of the rite. While the quest is still INACTIVE the
+panel also carries a plain hint line telling the player to kneel with USE.
+Everything is skinned through ``bd_horror.theme`` and toasts render
+through ``bd_horror.toasts``.
 
 Headless safety is structural: every ImGui call lives inside the
-``imgui_frame`` handler, which never fires under ``-headless`` — the UI is
+``imgui_frame`` handler, which never fires under ``-headless``; the UI is
 a pure no-op there. The handler also carries the autowarp fallback for
 runs launched without ``+map`` (same pattern as the other examples).
 
@@ -40,6 +42,8 @@ def _draw_rite_panel():
     except Exception:
         present = False
     theme.kv_row("Confessor", "holding court" if present else "absent")
+    if systems.quest_inactive():
+        theme.faded_text(content.RITE_HINT_INACTIVE)
     theme.omen_text(systems.last_rite_line)
 
 

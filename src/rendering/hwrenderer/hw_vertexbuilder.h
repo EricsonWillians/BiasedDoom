@@ -68,6 +68,8 @@ using VertexContainers = TArray<VertexContainer>;
 VertexContainers BuildVertices(TArray<sector_t> &sectors);
 
 class FFlatVertexBuffer;
+class FLevelLocals;
 void CheckUpdate(FFlatVertexBuffer* fvb, sector_t* sector);
 void CreateVBO(FFlatVertexBuffer* fvb, TArray<sector_t>& sectors);
+void RecreateVBO(FFlatVertexBuffer* fvb, FLevelLocals* Level);
 

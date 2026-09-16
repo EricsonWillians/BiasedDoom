@@ -6,7 +6,7 @@ audience:
 - [glTF modding](gltf/README.md) - Blender assets, player replacement, ZScript, and glTF tools.
 - [Heresy Editor](https://github.com/EricsonWillians/heresy-editor) - recommended companion map editor ([website](https://ericsonwillians.github.io/heresy-editor/), [integration guide](https://ericsonwillians.github.io/heresy-editor/BiasedDoom.html)).
 - [Development notes](development/README.md) - implementation details, diagnostics, and historical status notes.
-- [Engine features](engine/README.md) - non-glTF gameplay/engine feature guides.
+- [Engine features](engine/README.md) - non-glTF gameplay/engine feature guides, including rendering presets and sector light bleed.
 - [Scripting](scripting/README.md) - embedded Python plus ACS/ZScript interoperability.
 - [Audio troubleshooting](audio-troubleshooting.md) - Windows/OpenAL diagnostics, logs, device recovery, and custom OGG checks.
 - [Release process](release/README.md) - maintainer release checklist.
@@ -28,6 +28,7 @@ or assets they describe.
 | Use the `GLTFModel` mixin | [ZScript usage](gltf/zscript-usage.md) | [ZScript API](gltf/zscript-api.md) |
 | Build a trusted Python mod | [Focused example suite](../examples/python/) | [Complete Python guide](scripting/python.md) |
 | Find installed Doom IWADs | [IWAD discovery](engine/iwad-discovery.md) | [Engine features](engine/README.md) |
+| Tune rendering presets and bloom | [Rendering presets and light bleed](engine/rendering-presets.md) | Root [changelog](../CHANGELOG.md) |
 | Generate a mod skeleton | [glTF tools](gltf/tools.md) | [Script robustness notes](development/create-gltf-replacement-script-improvements.md) |
 | Understand the implementation | [glTF implementation](development/gltf-implementation.md) | [Implementation status](development/gltf-implementation-status.md) |
 | Debug glTF build issues | [Compilation fixes](development/gltf-compilation-fixes.md) | [Robustness notes](development/gltf-robustness-improvements.md) |
@@ -76,6 +77,7 @@ is still limited, so external textures are the safest modding workflow.
 ### Engine And Maintenance
 
 - [Engine section index](engine/README.md)
+- [Rendering presets, bloom, and sector light bleed](engine/rendering-presets.md)
 - [Automatic IWAD discovery](engine/iwad-discovery.md)
 - [Procedural map generation](engine/procedural-map-generation.md)
 - [Procedural generation research paper](engine/procedural-generation-research-paper.md)

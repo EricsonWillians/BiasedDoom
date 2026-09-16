@@ -3,12 +3,16 @@
 Everything behavioral lives here: the custom element registry, the
 affinity tables, the loot rules with their relic toasts, the element
 focus and burst rites, the native damage filters, the elite afflictions
-and death rattles, the Warding Idol's blackout, and the sector-index
-light programs. No engine events are registered at import time —
-``arm_events``/``init_rites`` are called from ``main.py``'s
-``engine_start`` handler, so this module is inert when the engine
-executes it standalone from the PYTHON manifest (the smoke test loads it
-on MAP01 with no rite wired up).
+and death rattles, the Warding Idol's blackout, the sector-index light
+programs, and the combat feedback layer: a persistent control strip
+(display-list text refreshed by a 35-tic map-local task, independent of
+the closable ImGui panel), throttled per-hit affinity labels from the
+focus filter, persistent weakness labels over the elites, and the
+TID-counted "break the horde" win condition. No engine events are
+registered at import time: ``arm_events``/``init_rites`` are called
+from ``main.py``'s ``engine_start`` handler, so this module is inert
+when the engine executes it standalone from the PYTHON manifest (the
+smoke test loads it on MAP01 with no rite wired up).
 
 Sector-index light programs
 ---------------------------
@@ -56,6 +60,16 @@ horde_sector_index: Optional[int] = None   # probed at map_load
 _pinned: List[Any] = []         # retained handles: actor_data dies with the
                                 # last live Python handle, so elites (whose
                                 # affix markers live in actor_data) are pinned
+
+# --- combat feedback state ---------------------------------------------------------
+
+horde_dead: set = set()             # TIDs of broken horde monsters
+horde_broken = [False]              # list, so closures can assign through it
+feedback_last: Dict[int, int] = {}  # tid -> level_time of its last label
+feedback_log: List[str] = []        # every label drawn (autotest bookkeeping)
+strip_state: Dict[str, Any] = {"text": None}  # last strip text actually drawn
+weakness_labels: Dict[int, str] = {}          # elite tid -> label text drawn
+_strip_task: Optional[int] = None   # the map-local strip refresh task
 
 elite_loot: Optional[bd_rpg.LootTable] = None
 relic_loot: Optional[bd_rpg.LootTable] = None
@@ -171,7 +185,9 @@ def init_rites() -> None:
 
     elite_loot = content.make_rare_loot()
     relic_loot = content.make_relic_loot()
-    loot_rules = bd_rpg.LootRules()
+    # screen_feedback=False: no rarity screen flash on drops (full-view
+    # tints fight the player's aim); the rarity sound still plays.
+    loot_rules = bd_rpg.LootRules(screen_feedback=False)
     # Legendary first: the Rime-Bound's relic outranks the common spoils
     # (rules are checked in registration order; the first match wins).
     loot_rules.register(rime_bound_predicate, relic_loot,
@@ -228,11 +244,8 @@ def cycle_focus() -> None:
     """F: turn the elemental focus one sigil widdershins."""
     index = (content.ELEMENTS.index(focus[0]) + 1) % len(content.ELEMENTS)
     focus[0] = content.ELEMENTS[index]
-    entry = bd_rpg.damage_types.get(focus[0]) or {}
-    r, g, b = entry.get("color", (255, 255, 255))
     bd.hud_text(f"Focus: {focus[0].upper()}", id=731, y=0.18,
                 color="gold", hold=1.5)
-    bd.screen_flash(r, g, b, 0.15)
 
 
 def nearest_living_monster(pawn: Any) -> Any:
@@ -325,7 +338,8 @@ def elite_touch(event: Dict[str, Any]) -> None:
 
 
 def elite_death_rattle(event: Dict[str, Any]) -> None:
-    """Elite deaths rattle: a wet stock sound and a brief bruise fade."""
+    """Elite deaths rattle: a wet stock sound (no screen tint: the brief
+    bruise fade fought the player's aim mid-combat)."""
     snapshot = event.get("actor") or {}
     tid = snapshot.get("tid")
     if (snapshot.get("class_name") != content.ELITE_CLASS
@@ -338,11 +352,221 @@ def elite_death_rattle(event: Dict[str, Any]) -> None:
         bd.play_ui_sound(content.RATTLE_SOUND, volume=0.7)
     except Exception:
         pass  # headless / no sound device
-    r, g, b, alpha, seconds = content.RATTLE_FADE
+
+
+# --- the control strip --------------------------------------------------------------
+#
+# A persistent display-list text line at the bottom of the screen: the
+# live focus, the real key bindings, and the horde count. It rides the
+# canvas display list, not ImGui, so closing the HUD panel never takes
+# it down. A slow map-local task re-resolves the bound keys and refreshes
+# the text; deaths and the win refresh it immediately through the same
+# refresh_strip().
+
+
+def bound_key(command: str, fallback: str) -> str:
+    """Live display name of the key bound to a console command (the
+    engine-canonical name, e.g. "F"), or the fallback when unbound."""
     try:
-        bd.screen_fade(r, g, b, alpha, seconds=seconds)
+        name = bd.input_binding(command)
     except Exception:
-        pass  # headless: no renderer to fade
+        name = None
+    return name or fallback
+
+
+def strip_text() -> str:
+    """The one-line control strip: keys, live focus, horde progress."""
+    focus_key = bound_key("cycle_element", "F")
+    burst_key = bound_key("elemental_burst", "G")
+    if horde_broken[0]:
+        horde_part = content.STRIP_VICTORY
+    else:
+        horde_part = f"Horde: {len(horde_dead)}/{len(content.HORDE_TIDS)} broken"
+    return (f"[{focus_key}] focus: {focus[0].upper()}   "
+            f"[{burst_key}] burst   {horde_part}")
+
+
+def refresh_strip() -> bool:
+    """Redraw the control strip when its text changed; returns True so
+    the repeating task keeps running. The cache updates only after a
+    successful draw, so a transient failure is retried next refresh."""
+    try:
+        text = strip_text()
+    except Exception as exc:
+        bd.warn(f"pyre & rime: strip text failed: {exc!r}")
+        return True
+    if text == strip_state.get("text"):
+        return True
+    color = (content.STRIP_VICTORY_COLOR if horde_broken[0]
+             else content.ELEMENT_COLORS.get(focus[0], (255, 255, 255)))
+    try:
+        bd.draw_text(text, id=content.STRIP_ID, x=0.5, y=content.STRIP_Y,
+                     height=content.STRIP_HEIGHT, color=color,
+                     align="center", outline=True, layer=content.STRIP_LAYER)
+    except Exception as exc:
+        bd.warn(f"pyre & rime: control strip draw failed: {exc!r}")
+        return True
+    strip_state["text"] = text
+    return True
+
+
+def arm_strip() -> None:
+    """(Re)draw the strip now and re-arm its refresh task. Called on
+    every map_load: map-local tasks die on unload, and checkpoint loads
+    re-fire map_load, so this never duplicates within one map."""
+    global _strip_task
+    if _strip_task is not None:
+        try:
+            bd.cancel_task(_strip_task)
+        except Exception:
+            pass
+        _strip_task = None
+    strip_state["text"] = None
+    refresh_strip()
+    try:
+        _strip_task = bd.schedule(
+            refresh_strip, delay=content.STRIP_REFRESH_TICS,
+            repeat=content.STRIP_REFRESH_TICS, map_local=True)
+    except Exception as exc:
+        bd.warn(f"pyre & rime: could not arm the control strip: {exc!r}")
+
+
+# --- per-hit affinity feedback -----------------------------------------------------
+
+
+def hit_feedback(target: Any, element: str, mult: float) -> None:
+    """Float a transient affinity label over a struck monster.
+
+    Neutral (x1) hits stay silent; every other band labels the victim:
+    "x2 PYRE" ember-bright on weakness, "x1/2 ROT" sickly on resistance,
+    "IMMUNE" in grey. Throttled to one label per monster per
+    FEEDBACK_THROTTLE_TICS so a horde under fire stays readable. The
+    label id is tid-keyed, so a re-draw replaces the monster's previous
+    label instead of stacking.
+    """
+    text = content.feedback_text(element, mult)
+    if text is None or target is None:
+        return
+    try:
+        if not target.valid:
+            return
+        tid = int(target.tid)
+    except Exception:
+        return
+    now = bd.level_time()
+    if now - feedback_last.get(tid, -10 ** 9) < content.FEEDBACK_THROTTLE_TICS:
+        return
+    feedback_last[tid] = now
+    mult = float(mult)
+    if mult <= 0.0:
+        color = content.FEEDBACK_IMMUNE_COLOR
+    elif mult > 1.0:
+        color = content.FEEDBACK_STRONG_COLOR
+    else:
+        color = content.FEEDBACK_WEAK_COLOR
+    try:
+        bd.draw_world_text(target, id=content.FEEDBACK_ID_BASE + tid,
+                           text=text, offset_z=content.FEEDBACK_OFFSET_Z,
+                           color=color, height=content.FEEDBACK_HEIGHT,
+                           outline=True, duration=content.FEEDBACK_SECONDS)
+    except Exception as exc:
+        bd.warn(f"pyre & rime: hit feedback failed: {exc!r}")
+        return
+    feedback_log.append(text)
+
+
+# --- elite weakness labels ---------------------------------------------------------
+
+
+def arm_weakness_labels() -> None:
+    """Persistent weakness labels over the live elite roster, reading
+    the affix out of actor_data. World text anchors follow their actor
+    every frame, draw nothing while it is dead, and vanish on map
+    unload, so this re-runs on every map_load (fresh start and
+    checkpoint rebind alike)."""
+    weakness_labels.clear()
+    for index, elite in enumerate(content.ELITES):
+        try:
+            ref = bd.actor_ref(elite["tid"])
+        except Exception:
+            ref = None
+        if ref is None:
+            continue
+        try:
+            if not (ref.valid and ref.alive):
+                continue
+            pack = bd.actor_data(ref).get("bd_rpg") or {}
+            affix = pack.get("elite", elite["affix"])
+        except Exception:
+            continue
+        text = content.weakness_label(elite["name"], affix)
+        weakness = content.AFFIX_WEAKNESS.get(str(affix))
+        color = content.ELEMENT_COLORS.get(weakness, (220, 220, 220))
+        try:
+            bd.draw_world_text(ref, id=content.WEAKNESS_ID_BASE + index,
+                               text=text,
+                               offset_z=content.WEAKNESS_OFFSET_Z,
+                               color=color, height=content.WEAKNESS_HEIGHT,
+                               outline=True)
+        except Exception as exc:
+            bd.warn(f"pyre & rime: weakness label failed: {exc!r}")
+            continue
+        weakness_labels[elite["tid"]] = text
+
+
+def arm_arena_markers() -> None:
+    """Arm the whole feedback layer for the current map: the control
+    strip and the elite weakness labels. Scheduled one tic after
+    map_load so the draws register in-level, not during the load."""
+    arm_strip()
+    arm_weakness_labels()
+
+
+def reset_arena_state() -> None:
+    """Fresh-map reset: horde progress, the feedback throttle, and the
+    label bookkeeping. Checkpoint loads skip this; deaths counted before
+    the save stay counted in the restored world."""
+    horde_dead.clear()
+    horde_broken[0] = False
+    feedback_last.clear()
+    feedback_log.clear()
+
+
+# --- the win condition: break the horde --------------------------------------------
+
+
+def on_horde_death(event: Dict[str, Any]) -> None:
+    """Count arena monster deaths by TID; the last one breaks the horde.
+    Every death counts, credited or not: infighting breaks the horde too."""
+    snapshot = event.get("actor") or {}
+    try:
+        tid = int(snapshot.get("tid") or 0)
+    except (TypeError, ValueError):
+        return
+    if tid not in content.HORDE_TID_SET or tid in horde_dead:
+        return
+    horde_dead.add(tid)
+    if len(horde_dead) >= len(content.HORDE_TIDS):
+        break_the_horde()
+    else:
+        refresh_strip()
+
+
+def break_the_horde() -> None:
+    """The win: a center-screen call, a quest toast, and the one-time
+    souls bonus through the kill-XP wiring (its listener sings the
+    litany line). Latches: re-dying monsters never pay twice."""
+    if horde_broken[0]:
+        return
+    horde_broken[0] = True
+    log_line(content.LITANY_HORDE_BROKEN)
+    try:
+        bd.center_message(content.CENTER_HORDE_BROKEN, bold=True)
+    except Exception as exc:
+        bd.warn(f"pyre & rime: victory message failed: {exc!r}")
+    toasts.toast(content.TOAST_HORDE_BROKEN, kind="quest")
+    bd_rpg.award_kill_xp(content.HORDE_BONUS_XP, 0)
+    refresh_strip()
 
 
 # --- native damage-filter integration ---------------------------------------------
@@ -353,7 +577,8 @@ def elemental_focus_filter(event: Dict[str, Any]) -> None:
 
     Hits that already carry a registered RPG damage type (resolver output)
     are left alone — the resolver computes, this filter only translates
-    vanilla hits into elemental ones.
+    vanilla hits into elemental ones. Every translated hit also floats a
+    throttled affinity label over the victim (see hit_feedback).
     """
     if event.get("cancel"):
         return
@@ -380,6 +605,7 @@ def elemental_focus_filter(event: Dict[str, Any]) -> None:
             event["damage"] = int(int(event.get("damage", 0)) * mult)
         except (TypeError, ValueError):
             pass
+    hit_feedback(target, focus[0], mult)
 
 
 def stoneskin_filter(event: Dict[str, Any]) -> None:
@@ -445,6 +671,10 @@ def arm_events() -> None:
     @bd.on("actor_died")
     def _on_actor_died_rattle(event: Dict[str, Any]) -> None:
         elite_death_rattle(event)
+
+    @bd.on("actor_died")
+    def _on_actor_died_horde(event: Dict[str, Any]) -> None:
+        on_horde_death(event)
 
     @bd.on("item_picked")
     def _on_item_picked(event: Dict[str, Any]) -> None:

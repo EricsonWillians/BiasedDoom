@@ -27,9 +27,9 @@ BiasedDoom keeps GZDoom's WAD/PK3, DECORATE, ZScript, ACS, MD2, MD3, voxel, and 
 | glTF models | Native `.gltf` and `.glb` loading through `fastgltf` |
 | Animation | Skeletal animation, bone weights, animation blending, and GPU skinning paths |
 | Materials | PBR-oriented metallic-roughness workflow for modern model assets |
-| Rendering | OpenGL, Vulkan, GLES2, and software renderer support inherited from GZDoom |
+| Rendering | OpenGL, Vulkan, GLES2, and software renderer support inherited from GZDoom, plus live runtime backend switching (`vid_preferbackend`) that rebuilds renderer resources at a frame boundary |
 | Lighting | Dynamic light shaping, falloff controls, shadows, GI-style ambient, specular/emissive tuning |
-| Post-processing | Graphics presets, atmosphere/fog, bloom, tonemapping, color grading, CRT/VHS/NTSC, SSAO, FXAA |
+| Post-processing | Searchable graphics/lighting/fog preset browsers (64 graphics, 38 lighting, 16 fog), atmosphere/fog, overhauled bloom with threshold/soft-knee/intensity controls, tonemapping, color grading, CRT/VHS/NTSC, SSAO, FXAA |
 | Camera | Menu-driven third-person camera with presets, shoulder offsets, collision padding, pitch modes, and projected crosshair |
 | Procedural levels | Deterministic mission graphs, five architectural themes, hierarchical Doom-style spaces, macro liquids, staged keys, reachable landmarks, and map sizes from 1 to 80 |
 | Player customization | Mod-resistant player skins plus independently configurable horizontal and vertical autoaim |
@@ -66,7 +66,8 @@ BiasedDoom exposes a large lighting stack from the in-game menus:
 
 Important controls include:
 
-- Lighting style presets: Custom, Classic Balanced, Modern Pretty, Warm Cinematic, Horror Contrast, Neon Glow, PBR Showcase, Bright Playable, Soft Natural, Crisp Tactical, Low Light Realism, Hellfire Glow, and Void Dread.
+- 38 lighting-style presets selectable from the searchable **Browse Lighting Presets** picker with active-preset highlighting (Custom plus Classic Balanced, Warm Cinematic, Horror Contrast, Neon Glow, Hellfire Glow, Void Dread, and 32 more).
+- Sector-edge light bleed smoothing (`bd_sectorlight_bleed`, `bd_sectorlight_distance`, `bd_sectorlight_strength`): a low-resolution world-space light map softens floor/ceiling sector-light transitions on OpenGL, Vulkan, and GLES.
 - Sector light mode and fog mode controls.
 - Dynamic lights for sprites and particles.
 - Dynamic light falloff models: Linear, Inverse-square, and Power.
@@ -88,12 +89,12 @@ Post-processing is organized as a set of practical submenus:
 
 `Options -> Display Options -> Advanced -> Postprocess`
 
-The top-level menu includes a Graphics Preset selector, a Preset Locked toggle, PostFX enable, and PostFX Quality. The detailed submenus are:
+The top-level menu includes a 64-preset Graphics selector, the searchable **Browse Graphics Presets** submenu, a Preset Locked toggle, PostFX enable, and PostFX Quality. The detailed submenus are:
 
 | Menu | What It Controls |
 |------|------------------|
-| Atmosphere / Fog | Atmospheric palettes, fog mode, fog color, density, scale, sky fog, wall fog, fog gradients, and fog direction |
-| Image Effects | Bloom, lens effects, vignette, chromatic aberration, film grain, sharpening, and retro pixelation |
+| Atmosphere / Fog | 16 searchable fog presets, atmospheric palettes, fog mode, fog color, density, scale, sky fog, wall fog, fog gradients, and fog direction |
+| Image Effects | Overhauled bloom with threshold, soft-knee, and intensity controls; lens effects, vignette, chromatic aberration, film grain, sharpening, and retro pixelation |
 | Color / Tonemap | Tonemap mode, palette tonemapping, color grading, color grade strength, and LUT selection |
 | Lighting / Materials | The lighting/material controls listed above |
 | Retro Display | VHS effects, CRT mask/scanline modes, and NTSC simulation |
@@ -102,6 +103,10 @@ The top-level menu includes a Graphics Preset selector, a Preset Locked toggle, 
 Tonemapping includes classic and cinematic options such as Uncharted2, Hejl-Dawson, Reinhard, Palette, Gothic, Gothic Noir, Moonlit, Candlelit, Graveyard, Silent Hill, Bleach Bypass, Lottes Filmic, and ACES.
 
 Atmosphere modes include Gothic, Blood, Sepia, Toxic, Hellfire, Cyberpunk, Fogbound, Bleak Blue, Otherworld, and Sodium Vapor.
+
+Preset selectors are category-independent: tweaking a lighting or fog feature marks only that family as Custom, while graphics presets reset advanced renderer features to a deterministic baseline before applying.
+
+See [Rendering presets, bloom, and sector light bleed](docs/engine/rendering-presets.md) for the full controls and backend notes.
 
 Retro display options include VHS, CRT Standard Scanlines, Aperture Grille, Shadow Mask, and NTSC.
 

@@ -93,9 +93,30 @@ void main()
 			ClipDistance4 = worldcoord.y - ((uSplitBottomPlane.w + uSplitBottomPlane.x * worldcoord.x + uSplitBottomPlane.y * worldcoord.z) * uSplitBottomPlane.z);
 		}
 		
-		vWorldNormal = NormalModelMatrix * vec4(normalize(bones.Normal), 1.0);
-
-		vEyeNormal = NormalViewMatrix * vWorldNormal;
+		// Geometry without normals (sprites, particles) has a zero attribute;
+		// normalize() of that is NaN/Inf and poisons every fragment consumer.
+		vec3 attrNormal = bones.Normal;
+		float attrNormalLenSq = dot(attrNormal, attrNormal);
+		if (attrNormalLenSq > 1e-12)
+		{
+			vec4 worldNormal = NormalModelMatrix * vec4(attrNormal * inversesqrt(attrNormalLenSq), 1.0);
+			float worldNormalLenSq = dot(worldNormal.xyz, worldNormal.xyz);
+			if (worldNormalLenSq > 1e-12)
+			{
+				vWorldNormal = vec4(worldNormal.xyz * inversesqrt(worldNormalLenSq), 1.0);
+				vEyeNormal = NormalViewMatrix * vWorldNormal;
+			}
+			else
+			{
+				vWorldNormal = vec4(0.0);
+				vEyeNormal = vec4(0.0);
+			}
+		}
+		else
+		{
+			vWorldNormal = vec4(0.0);
+			vEyeNormal = vec4(0.0);
+		}
 	#endif
 	
 	#ifdef SPHEREMAP

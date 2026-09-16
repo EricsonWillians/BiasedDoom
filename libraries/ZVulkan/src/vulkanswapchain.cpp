@@ -16,17 +16,17 @@ VulkanSwapChain::~VulkanSwapChain()
 		vkDestroySwapchainKHR(device->device, swapchain, nullptr);
 }
 
-void VulkanSwapChain::Create(int width, int height, int imageCount, bool vsync, bool hdr, bool exclusivefullscreen)
+void VulkanSwapChain::Create(int width, int height, int imageCount, bool vsync, bool adaptive, bool hdr, bool exclusivefullscreen)
 {
 	views.clear();
 	images.clear();
 
-	CreateSwapchain(width, height, imageCount, vsync, hdr, exclusivefullscreen);
+	CreateSwapchain(width, height, imageCount, vsync, adaptive, hdr, exclusivefullscreen);
 
 	if (exclusivefullscreen && lost)
 	{
 		// We could not acquire exclusive fullscreen. Fall back to normal fullsceen instead.
-		CreateSwapchain(width, height, imageCount, vsync, hdr, false);
+		CreateSwapchain(width, height, imageCount, vsync, adaptive, hdr, false);
 	}
 
 	if (swapchain)
@@ -89,7 +89,7 @@ void VulkanSwapChain::SelectFormat(const VulkanSurfaceCapabilities& caps, bool h
 	format = caps.Formats.front();
 }
 
-bool VulkanSwapChain::CreateSwapchain(int width, int height, int imageCount, bool vsync, bool hdr, bool exclusivefullscreen)
+bool VulkanSwapChain::CreateSwapchain(int width, int height, int imageCount, bool vsync, bool adaptive, bool hdr, bool exclusivefullscreen)
 {
 	lost = false;
 
@@ -112,7 +112,7 @@ bool VulkanSwapChain::CreateSwapchain(int width, int height, int imageCount, boo
 	presentMode = VK_PRESENT_MODE_FIFO_KHR;
 	if (vsync)
 	{
-		if (supportsFifoRelaxed)
+		if (adaptive && supportsFifoRelaxed)
 			presentMode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
 	}
 	else

@@ -340,6 +340,19 @@ public: class ShaderVariantData
 		FBufferedUniform4f muFogGradientDirection;
 		FBufferedUniform4f muFogQuality;
 		FBufferedUniform1f muFogMinVisibility;
+		FBufferedUniform1f muLightContrast;
+		FBufferedUniform1f muSpecularPowerScale;
+		FBufferedUniform1f muRimLightStrength;
+		FBufferedUniform1f muRimLightPower;
+		FBufferedUniform1f muAmbientGradientStrength;
+		FBufferedUniform4f muAmbientGradientColor;
+		FBufferedUniform1f muSceneTime;
+		FBufferedUniform1f muDynLightFlicker;
+		FBufferedUniform1f muAerialStrength;
+		FBufferedUniform1f muAerialDistance;
+		FBufferedUniform4f muSpecularTintColor;
+		FBufferedUniform4f muSectorBleedBounds;
+		FBufferedUniform4f muSectorBleedParams;
 		/////
 
 		FBufferedUniform1f muDesaturation;

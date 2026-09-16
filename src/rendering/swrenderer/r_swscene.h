@@ -1,5 +1,4 @@
 #pragma once
-#pragma once
 
 #include "r_defs.h"
 #include "m_fixed.h"
@@ -24,5 +23,17 @@ public:
 	~SWSceneDrawer();
 
 	sector_t *RenderView(player_t *player);
+
+	// Drops the cached framebuffer textures, e.g. after a video backend
+	// switch invalidated the hardware textures they were created with.
+	void ResetFBTextures()
+	{
+		FBTexture[0].reset();
+		FBTexture[1].reset();
+	}
 };
+
+// Resets the cached software scene framebuffer textures, if any.
+// Implemented in hw_entrypoint.cpp, where the SWSceneDrawer instance lives.
+void ResetSWSceneFBTextures();
 

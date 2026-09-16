@@ -69,6 +69,48 @@ float VignetteMask(vec2 uv)
 	return max(1.0 - edge * strength * 0.88, 0.02);
 }
 
+vec3 ApplyVibrance(vec3 rgb)
+{
+	float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+	float maxc = max(rgb.r, max(rgb.g, rgb.b));
+	float minc = min(rgb.r, min(rgb.g, rgb.b));
+	float sat = maxc - minc;
+	float amount = clamp(VibranceStrength, 0.0, 1.0) * (1.0 - sat);
+	return clamp(mix(vec3(luma), rgb, 1.0 + amount), 0.0, 1.0);
+}
+
+vec3 ApplyWhiteBalance(vec3 rgb)
+{
+	float temp = clamp(WhiteBalanceTemperature, -1.0, 1.0);
+	float tint = clamp(WhiteBalanceTint, -1.0, 1.0);
+	vec3 balanced = rgb;
+	balanced.r *= 1.0 + 0.12 * temp;
+	balanced.b *= 1.0 - 0.12 * temp;
+	balanced.g *= 1.0 + 0.08 * tint;
+	balanced.r *= 1.0 - 0.04 * tint;
+	balanced.b *= 1.0 - 0.04 * tint;
+	return clamp(balanced, 0.0, 1.0);
+}
+
+vec3 ApplyLiftGammaGain(vec3 rgb)
+{
+	vec3 gradeGain = vec3(GradeGainR, GradeGainG, GradeGainB);
+	vec3 gradeLift = vec3(GradeLiftR, GradeLiftG, GradeLiftB);
+	vec3 gradeGamma = vec3(GradeGammaR, GradeGammaG, GradeGammaB);
+	vec3 lifted = rgb * gradeGain + gradeLift;
+	vec3 invGamma = vec3(1.0) / max(gradeGamma, vec3(0.05));
+	return pow(max(lifted, vec3(0.0)), invGamma);
+}
+
+vec3 ApplyHueShift(vec3 rgb)
+{
+	float angle = radians(HueShiftDegrees);
+	vec3 axis = vec3(0.57735027);
+	float c = cos(angle);
+	float s = sin(angle);
+	return clamp(rgb * c + cross(axis, rgb) * s + axis * dot(axis, rgb) * (1.0 - c), 0.0, 1.0);
+}
+
 vec3 ApplyColorgrade(vec3 rgb)
 {
 	if (ColorgradeMode <= 0 && ColorgradeLut <= 0 || ColorgradeStrength <= 0.0)
@@ -217,7 +259,7 @@ void main()
 		uv = UVOffset + distortedTexCoord * UVScale;
 	}
 
-	if (RetroPixelEnable > 0 && RetroPixelScale > 1.0)
+	if (RetroPixelScale > 1.0)
 	{
 		vec2 localUv = (uv - UVOffset) / UVScale;
 		localUv = clamp(localUv, 0.0, 1.0);
@@ -229,7 +271,34 @@ void main()
 
 	vec4 res = ApplyHdrMode(ApplyGamma(texture(InputTexture, uv)));
 
-	if (VignetteEnable > 0)
+	// God rays (radial bright-pass blur toward a light origin above screen top-center)
+	if (GodRaysStrength > 0.0)
+	{
+		vec2 origin = vec2(0.5, 1.15);
+		vec2 delta = (origin - uv) * (0.06 * clamp(GodRaysLength, 0.25, 2.0));
+		float thresh = clamp(GodRaysThreshold, 0.0, 1.0);
+		vec2 suv = uv;
+		vec3 rays = vec3(0.0);
+		float w = 1.0;
+		for (int i = 0; i < 14; i++)
+		{
+			suv += delta;
+			vec3 s = texture(InputTexture, clamp(suv, vec2(0.001), vec2(0.999))).rgb;
+			float lum = max(dot(s, vec3(0.2126, 0.7152, 0.0722)) - thresh, 0.0);
+			rays += lum * w * vec3(1.0, 0.96, 0.88);
+			w *= 0.86;
+		}
+		res.rgb += rays * GodRaysStrength * 0.12;
+	}
+
+	// Posterize (retro palette quantization)
+	if (PosterizeLevels >= 2.0)
+	{
+		float levels = clamp(PosterizeLevels, 2.0, 16.0);
+		res.rgb = clamp(floor(res.rgb * (levels - 1.0) + 0.5) / (levels - 1.0), 0.0, 1.0);
+	}
+
+	if (VignetteStrength > 0.0)
 	{
 		res.rgb *= VignetteMask(uv);
 	}
@@ -246,7 +315,7 @@ void main()
 	}
 
 	// Chromatic aberration
-	if (ChromaticEnable > 0 && ChromaticStrength > 0.0)
+	if (ChromaticStrength > 0.0)
 	{
 		vec2 texel = vec2(1.0) / texSize;
 		float shift = ChromaticStrength * 1.5 * texel.x;
@@ -258,7 +327,7 @@ void main()
 	}
 
 	// Sharpen
-	if (SharpenEnable > 0 && SharpenStrength > 0.0)
+	if (SharpenStrength > 0.0)
 	{
 		vec2 texel = vec2(1.0) / texSize;
 		vec3 center = res.rgb;
@@ -270,15 +339,40 @@ void main()
 		res.rgb = clamp(mix(center, sharpened, SharpenStrength), 0.0, 1.0);
 	}
 
+	// Clarity (local contrast from 4-tap blurred luma)
+	if (ClarityStrength > 0.0)
+	{
+		vec2 texel3 = vec2(3.0) / texSize;
+		float la = dot(texture(InputTexture, uv + vec2(texel3.x, texel3.y)).rgb, vec3(0.299, 0.587, 0.114));
+		float lb = dot(texture(InputTexture, uv - vec2(texel3.x, texel3.y)).rgb, vec3(0.299, 0.587, 0.114));
+		float lc = dot(texture(InputTexture, uv + vec2(texel3.x, -texel3.y)).rgb, vec3(0.299, 0.587, 0.114));
+		float ld = dot(texture(InputTexture, uv + vec2(-texel3.x, texel3.y)).rgb, vec3(0.299, 0.587, 0.114));
+		float avg = (la + lb + lc + ld) * 0.25;
+		res.rgb = clamp(res.rgb + (res.rgb - vec3(avg)) * ClarityStrength * 0.6, 0.0, 1.0);
+	}
+
+	// Edge glow / cel outline (4-tap luma edge detect)
+	if (EdgeGlowStrength > 0.0)
+	{
+		vec2 texel = vec2(1.0) / texSize;
+		float lumaL = dot(texture(InputTexture, uv - vec2(texel.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+		float lumaR = dot(texture(InputTexture, uv + vec2(texel.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+		float lumaB = dot(texture(InputTexture, uv - vec2(0.0, texel.y)).rgb, vec3(0.299, 0.587, 0.114));
+		float lumaT = dot(texture(InputTexture, uv + vec2(0.0, texel.y)).rgb, vec3(0.299, 0.587, 0.114));
+		float edge = abs(lumaR - lumaL) + abs(lumaT - lumaB);
+		float threshold = clamp(EdgeGlowThreshold, 0.0, 1.0);
+		res.rgb *= 1.0 - clamp(EdgeGlowStrength, 0.0, 1.0) * smoothstep(threshold, threshold * 3.0, edge);
+	}
+
 	// Film grain (time-invariant hash noise)
-	if (FilmgrainEnable > 0 && FilmgrainStrength > 0.0)
+	if (FilmgrainStrength > 0.0)
 	{
 		float scale = max(FilmgrainScale, 1.0);
 		float grain = Hash((TexCoord * texSize) * scale) * 2.0 - 1.0;
 		res.rgb = clamp(res.rgb + grain * FilmgrainStrength * 0.08, 0.0, 1.0);
 	}
 
-	if (VhsEnable > 0 && VhsStrength > 0.0)
+	if (VhsStrength > 0.0)
 	{
 		float scanLine = floor(uv.y * texSize.y);
 		float fieldPhase = floor(VhsTime * 29.97);
@@ -374,7 +468,46 @@ void main()
 		res.rgb = clamp(res.rgb, 0.0, 1.0);
 	}
 
+	// Lens flare ghosts (mirrored bright-pass taps + halo tint)
+	if (LensFlareStrength > 0.0)
+	{
+		vec2 center = vec2(0.5);
+		vec3 flare = vec3(0.0);
+		vec3 g1 = texture(InputTexture, center + (center - uv) * 0.5).rgb;
+		vec3 g2 = texture(InputTexture, center + (center - uv) * 1.0).rgb;
+		vec3 g3 = texture(InputTexture, center + (center - uv) * 1.5).rgb;
+		flare += max(g1 - 0.8, vec3(0.0)) * vec3(0.9, 0.7, 0.5) * 0.20;
+		flare += max(g2 - 0.8, vec3(0.0)) * vec3(0.5, 0.7, 0.9) * 0.12;
+		flare += max(g3 - 0.8, vec3(0.0)) * vec3(0.6, 0.5, 0.9) * 0.08;
+		res.rgb += flare * LensFlareStrength;
+	}
+
+	// Lift / Gamma / Gain
+	if (GradeEnable > 0)
+	{
+		res.rgb = ApplyLiftGammaGain(res.rgb);
+	}
+
 	res.rgb = ApplyColorgrade(res.rgb);
+
+	// White balance
+	if (abs(WhiteBalanceTemperature) + abs(WhiteBalanceTint) > 0.0001)
+	{
+		res.rgb = ApplyWhiteBalance(res.rgb);
+	}
+
+	// Hue shift
+	if (HueShiftDegrees != 0.0)
+	{
+		res.rgb = ApplyHueShift(res.rgb);
+	}
+
+	// Vibrance
+	if (VibranceStrength > 0.0)
+	{
+		res.rgb = ApplyVibrance(res.rgb);
+	}
+
 	vec3 atmosphereBase = res.rgb;
 
 	if (AtmosphereMode == 1) // Gothic

@@ -84,6 +84,7 @@ EXTERN_CVAR (Int, vid_displaybits)
 EXTERN_CVAR (Int, vid_defwidth)
 EXTERN_CVAR (Int, vid_defheight)
 EXTERN_CVAR (Bool, cl_capfps)
+EXTERN_CVAR (Bool, vid_vsync_adaptive)
 EXTERN_CVAR(Bool, vk_debug)
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
@@ -410,6 +411,7 @@ DFrameBuffer *SDLVideo::CreateFrameBuffer ()
 			surface = std::make_shared<VulkanSurface>(instance, surfacehandle);
 
 			fb = new VulkanRenderDevice(nullptr, vid_fullscreen, surface);
+			currentVideoBackend = 1;
 		}
 		catch (CVulkanError const &error)
 		{
@@ -428,10 +430,16 @@ DFrameBuffer *SDLVideo::CreateFrameBuffer ()
 	{
 #ifdef HAVE_GLES2
 		if (V_GetBackend() != 0)
+		{
 			fb = new OpenGLESRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
+			currentVideoBackend = 2;
+		}
 		else
 #endif
+		{
 			fb = new OpenGLRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
+			currentVideoBackend = 0;
+		}
 	}
 
 	return fb;
@@ -441,6 +449,23 @@ DFrameBuffer *SDLVideo::CreateFrameBuffer ()
 IVideo *gl_CreateVideo()
 {
 	return new SDLVideo();
+}
+
+
+void SDL_DestroyVideoWindow()
+{
+	if (Priv::window != nullptr)
+		Priv::DestroyWindow();
+}
+
+
+void SDL_ShowVideoWindow()
+{
+	if (Priv::window != nullptr)
+	{
+		SDL_ShowWindow(Priv::window);
+		SDL_RaiseWindow(Priv::window);
+	}
 }
 
 
@@ -622,12 +647,29 @@ void SystemGLFrameBuffer::SetVSync( bool vsync )
 #else
 	if (vsync)
 	{
-		if (SDL_GL_SetSwapInterval(-1) == -1)
-			SDL_GL_SetSwapInterval(1);
+		if (vid_vsync_adaptive && SDL_GL_SetSwapInterval(-1) == 0)
+		{
+			DPrintf(DMSG_NOTIFY, "VSync enabled (adaptive).\n");
+		}
+		else if (SDL_GL_SetSwapInterval(1) == 0)
+		{
+			DPrintf(DMSG_NOTIFY, "VSync enabled.\n");
+		}
+		else
+		{
+			Printf(TEXTCOLOR_YELLOW "VSync was requested but the driver refused it: %s\n", SDL_GetError());
+		}
 	}
 	else
 	{
-		SDL_GL_SetSwapInterval(0);
+		if (SDL_GL_SetSwapInterval(0) == 0)
+		{
+			DPrintf(DMSG_NOTIFY, "VSync disabled.\n");
+		}
+		else
+		{
+			Printf(TEXTCOLOR_YELLOW "VSync could not be disabled: %s\n", SDL_GetError());
+		}
 	}
 #endif
 }

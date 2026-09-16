@@ -76,11 +76,13 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 	ambientLight = ApplyBiasedAmbientFloor(ambientLight + vec3(uGIAmbientStrength));
 
 	float metallic = material.Metallic;
-	float roughness = material.Roughness;
+	float roughness = clamp(material.Roughness / max(uSpecularPowerScale, 0.25), 0.045, 1.0);
 	float ao = material.AO;
 
 	vec3 N = material.Normal;
 	vec3 V = normalize(uCameraPos.xyz - worldpos);
+
+	ambientLight = ApplyBiasedAmbientGradient(ambientLight, N);
 
 	vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
@@ -131,7 +133,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 
 					vec3 nominator = NDF * G * F;
 					float denominator = 4.0 * clamp(dot(N, V), 0.0, 1.0) * clamp(dot(N, L), 0.0, 1.0);
-					vec3 specular = nominator / max(denominator, 0.001);
+					vec3 specular = (nominator / max(denominator, 0.001)) * uSpecularTintColor.rgb;
 
 					Lo += (kD * albedo / PI + ApplyBiasedSpecularLight(specular)) * radiance;
 				}
@@ -179,7 +181,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 
 					vec3 nominator = NDF * G * F;
 					float denominator = 4.0 * clamp(dot(N, V), 0.0, 1.0) * clamp(dot(N, L), 0.0, 1.0);
-					vec3 specular = nominator / max(denominator, 0.001);
+					vec3 specular = (nominator / max(denominator, 0.001)) * uSpecularTintColor.rgb;
 
 					Lo -= (kD * albedo / PI + ApplyBiasedSpecularLight(specular)) * radiance;
 				}

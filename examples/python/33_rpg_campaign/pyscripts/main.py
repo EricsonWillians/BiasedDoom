@@ -10,22 +10,29 @@ The autotest drives the real engine paths headlessly with scripted RNG
 doubles and asserts, in order: creation validation errors and a full
 Mercenary founding; every class preset round-tripping through
 ``content.apply_preset`` into a valid founding; unit-level class progression
-through level 4 with the ASI queue; the spawned hub (four friendly tinted
-NPCs in talk range, the cache, no yard before the quest); nearest-NPC
-targeting; the real
-``bind e talk -> pyui talk -> ui_command`` path into a disposition-carrying
-session; the quest handout (quest active, Sera +10, five AMBUSH zombies up);
-both persuasion branches through ``session.rng`` (the rumor starts the hidden
-starter quest only on success); the shop (buy/sell math, stock counts, a
-scheduled restock); the healer (restore, fee, refusal when broke); the
-trainer (scripted mastery advancement); the quest flow (pawn-sourced kills
-complete the yard, XP lands, the level-2 class feature applies, Sera shifts
-+20, prove_worth completes on clear_yard's coattails, the cache pickup
-finishes the fetch quest); recruitment (party of two, companion actor bound
-and hp-synced); a checkpoint round-trip (RNG stream, hero, dispositions,
-shop stock, party, companion rebind, NPC TIDs); and the synthetic Custom
-Action path (action 1 press starts a talk session with the documented
-event payload, action 2 press/release flips the hero sheet both ways).
+through level 4 with the ASI queue and the level-2 resource raises; the
+spawned hub (four friendly tinted NPCs in talk range, the cache, no yard
+before the quest, the initial marker bookkeeping); nearest-NPC targeting;
+the real ``bind e talk -> pyui talk -> ui_command`` path into a
+disposition-carrying session; the quest handout (quest active, Sera +10,
+five AMBUSH zombies up, the Sera "!" swapped for the yard beacon); both
+persuasion branches through ``session.rng`` (the rumor starts watch_grows
+only on success); the Dobb fetch-accept dialogue (quest active, cache
+beacon up); the shop (buy/sell math, stock counts, a scheduled restock);
+the healer (restore, fee, refusal when broke); the trainer (scripted
+mastery advancement); the quest flow (pawn-sourced kills complete the yard,
+kill XP and quest XP land, the level-2 class feature raises Second Wind to
+two charges, Sera shifts +20); Sera's post-yard trust choice starting
+watch_grows; the cache walk completing the fetch; recruitment (Korr retired
+from the hub, one companion actor at his slot, watch_grows completed);
+companion combat (the follower marks and targets a monster the player
+hurt); the hero damage filter on a synthetic event; the Mercenary class
+active (heal on sheet and pawn, charge spent, the no-charge message); a
+checkpoint round-trip (RNG stream, hero, dispositions, shop stock, party,
+companion rebind, NPC TIDs, the retired set, quest states, the HUD strip
+task, cleared markers); and the synthetic Custom Action path (action 1
+press starts a talk session with the documented event payload, action 2
+press/release flips the hero sheet both ways).
 The run ends via ``-scripttest``'s own PASS/FAIL accounting.
 
 Manifest entry 4 of 4 (runs after its siblings have self-registered).
@@ -138,16 +145,28 @@ def schedule_run_modes(event):
             bd.schedule(autotest_nearest_talk, delay=55)
             bd.schedule(autotest_session_asserts, delay=75)
             bd.schedule(autotest_quest_handout, delay=95)
+            bd.schedule(autotest_markers_after_accept, delay=112)
             bd.schedule(autotest_persuasion, delay=125)
-            bd.schedule(autotest_shop, delay=165)
-            bd.schedule(autotest_healer, delay=215)
-            bd.schedule(autotest_trainer, delay=245)
-            bd.schedule(autotest_quest_flow, delay=275)
-            bd.schedule(_walk_onto_cache, delay=310)
-            bd.schedule(autotest_fetch_cache_asserts, delay=325)
+            bd.schedule(autotest_watch_marker_reset, delay=140)
+            bd.schedule(autotest_fetch_accept, delay=150)
+            bd.schedule(autotest_fetch_marker, delay=160)
+            bd.schedule(autotest_shop, delay=175)
+            bd.schedule(autotest_healer, delay=220)
+            bd.schedule(autotest_trainer, delay=250)
+            bd.schedule(autotest_quest_flow, delay=280)
+            bd.schedule(autotest_sera_watch_choice, delay=300)
+            bd.schedule(autotest_markers_after_watch, delay=308)
+            bd.schedule(_walk_onto_cache, delay=315)
+            bd.schedule(autotest_fetch_cache_asserts, delay=330)
             bd.schedule(autotest_recruit, delay=345)
-            bd.schedule(autotest_pre_save, delay=395)
-            bd.schedule(autotest_load, delay=430)
+            bd.schedule(autotest_companion_combat_mark, delay=362)
+            bd.schedule(autotest_companion_combat_assert, delay=378)
+            bd.schedule(autotest_class_active_no_charge, delay=395)
+            bd.schedule(autotest_class_active_no_charge_asserts, delay=407)
+            bd.schedule(autotest_class_active_press, delay=419)
+            bd.schedule(autotest_class_active_asserts, delay=431)
+            bd.schedule(autotest_pre_save, delay=448)
+            bd.schedule(autotest_load, delay=475)
         if SCREENSHOT:
             screenshot_wizard_pose()
             bd.schedule(screenshot_pose, delay=bd.TICRATE,
@@ -251,6 +270,8 @@ def autotest_creation():
         wiz.assign_skill(skill)
     hero = systems.finish_creation(wiz)
     bd.assert_true(hero is systems.hero, "finish_creation stores the hero")
+    bd.assert_true(systems.hero_damage_filter is not None,
+                   "hero progression is wired (kill XP + damage filter)")
     bd.assert_true(hero.name == content.HERO_DEFAULT_NAME
                    and hero.class_id == "Mercenary",
                    "the hero is a bound Mercenary")
@@ -341,8 +362,9 @@ def autotest_class_progression():
     events = unit.award_xp(1)  # 300 exactly: level 2
     bd.assert_true(unit.level == 2 and len(events) == 1,
                    "300 XP reaches level 2")
-    bd.assert_true(unit.resource_max.get("press_on") == 1,
-                   "the level-2 Press On feature granted its charge")
+    bd.assert_true(unit.resource_max.get("second_wind") == 2,
+                   "the level-2 Press On feature raised Second Wind to "
+                   "two charges")
     unit.award_xp(1800)  # 2100 total: level 3
     bd.assert_true(unit.level == 3, "2100 XP reaches level 3")
     unit.award_xp(600)  # 2700 total: level 4, ASI queued
@@ -353,12 +375,26 @@ def autotest_class_progression():
                    and pending[0].get("spent") == 0,
                    "level 4 queues two pending ASI points")
     bd.assert_true(unit.proficiency == 2, "proficiency stays +2 at level 4")
-    # The Scout's level-1 feature is a pure mod note.
+    # The Scout's level-1 feature is a pure mod note; the blur charge is
+    # the level-2 feature, so the active exists only from level 2.
     scout = bd_dnd.Character("S", bd_dnd.AbilityScores(dex=15), hit_die=8)
     bd_dnd.bind_class(scout, content.SCOUT)
     bd.assert_true(getattr(scout, "mod_notes", {}).get("skirmisher_damage")
                    == 1 and scout.hit_die == 8,
                    "the Scout's Skirmisher note applies at level 1")
+    bd.assert_true(scout.resource_max.get("uncanny_step", 0) == 0,
+                   "the Scout has no blur charge at level 1")
+    bd_dnd.apply_class_level(scout, content.SCOUT, 2)
+    bd.assert_true(scout.resource_max.get("uncanny_step") == 1,
+                   "Uncanny Step grants the blur charge at level 2")
+    # The Lightkeeper's level-2 feature raises the light pool.
+    keeper = bd_dnd.Character("L", bd_dnd.AbilityScores(wis=15), hit_die=8)
+    bd_dnd.bind_class(keeper, content.LIGHTKEEPER)
+    bd.assert_true(keeper.resource_max.get("light") == 3,
+                   "the Lightkeeper starts with three light charges")
+    bd_dnd.apply_class_level(keeper, content.LIGHTKEEPER, 2)
+    bd.assert_true(keeper.resource_max.get("light") == 4,
+                   "Warding Flame raises the light pool to four")
 
 
 def autotest_spawns():
@@ -393,6 +429,23 @@ def autotest_spawns():
     clear = bd_quests.log.get(content.QUEST_CLEAR_YARD)
     bd.assert_true(clear is not None and clear.state == Quest.INACTIVE,
                    "clear_yard registered and inactive")
+    fetch = bd_quests.log.get(content.QUEST_FETCH_CACHE)
+    bd.assert_true(fetch is not None and fetch.state == Quest.INACTIVE,
+                   "fetch_cache registered and inactive (no auto-start)")
+    watch = bd_quests.log.get(content.QUEST_WATCH_GROWS)
+    bd.assert_true(watch is not None and watch.state == Quest.INACTIVE,
+                   "watch_grows registered and inactive")
+    bd.assert_true(bd_quests.log.get("prove_worth") is None,
+                   "the old hidden shadow quest is gone")
+    # The opening markers: gold "!" over both quest givers, no beacons yet.
+    bd.assert_true(systems.marker_state.get(content.MARKER_SERA_ID) == "sera",
+                   "the Sera marker shows while clear_yard waits")
+    bd.assert_true(systems.marker_state.get(content.MARKER_DOBB_ID) == "dobb",
+                   "the Dobb marker shows while fetch_cache waits")
+    bd.assert_true(content.MARKER_KORR_ID not in systems.marker_state
+                   and content.MARKER_YARD_BEACON_ID not in systems.marker_state
+                   and content.MARKER_CACHE_BEACON_ID not in systems.marker_state,
+                   "no Korr marker and no beacons before any quest runs")
 
 
 def autotest_nearest_talk():
@@ -469,9 +522,20 @@ def autotest_quest_handout():
                    "the errand exit ends the session")
 
 
+def autotest_markers_after_accept():
+    """After the handout: Sera's "!" is gone, the yard beacon stands."""
+    bd.assert_true(content.MARKER_SERA_ID not in systems.marker_state,
+                   "the Sera marker cleared once clear_yard runs")
+    bd.assert_true(systems.marker_state.get(content.MARKER_YARD_BEACON_ID)
+                   == "yard_beacon",
+                   "the yard beacon shows while clear_yard runs")
+    bd.assert_true(systems.marker_state.get(content.MARKER_DOBB_ID) == "dobb",
+                   "the Dobb marker still shows (fetch not yet accepted)")
+
+
 def autotest_persuasion():
-    """Both rumor branches through session.rng: only success starts the
-    hidden prove_worth quest and writes the rumor log line."""
+    """Both rumor branches through session.rng: only success starts
+    watch_grows (pointing at Korr) and writes the rumor log line."""
     session = systems.start_talk()
     bd.assert_true(session is not None and session.active,
                    "session restarted for the persuasion branches")
@@ -485,9 +549,9 @@ def autotest_persuasion():
                    "scripted roller drives the success branch (12 vs DC 12)")
     bd.assert_true(session.active_node.id == "rumor_ok",
                    "success routes to the rumor_ok node")
-    prove = bd_quests.log.get(content.QUEST_PROVE_WORTH)
-    bd.assert_true(prove is not None and prove.state == Quest.ACTIVE,
-                   "the rumor effect started the hidden starter quest")
+    watch = bd_quests.log.get(content.QUEST_WATCH_GROWS)
+    bd.assert_true(watch is not None and watch.state == Quest.ACTIVE,
+                   "the rumor effect started watch_grows")
     bd.assert_true(bd.player_log() == content.RUMOR_LOG_TEXT,
                    "the rumor effect wrote the player log")
     session.end()
@@ -504,10 +568,62 @@ def autotest_persuasion():
                    "scripted roller drives the failure branch (4 vs DC 12)")
     bd.assert_true(session.active_node.id == "rumor_no",
                    "failure routes to the refusal node")
-    prove = bd_quests.log.get(content.QUEST_PROVE_WORTH)
-    bd.assert_true(prove is not None and prove.state == Quest.ACTIVE,
-                   "a failed rumor does not disturb the starter quest")
+    watch = bd_quests.log.get(content.QUEST_WATCH_GROWS)
+    bd.assert_true(watch is not None and watch.state == Quest.ACTIVE,
+                   "a failed rumor does not disturb watch_grows")
     session.end()
+
+
+def autotest_watch_marker_reset():
+    """Korr's "!" rides watch_grows; then reset the quest for the Sera path.
+
+    The reset is a plain attribute write: quest starts are one-way by
+    design, and the autotest still owes the post-yard Sera choice an
+    INACTIVE watch_grows to fire on. No hooks are bypassed (start only
+    flips state); the objective is untouched.
+    """
+    bd.assert_true(systems.marker_state.get(content.MARKER_KORR_ID) == "korr",
+                   "the Korr marker shows while watch_grows is open")
+    watch = bd_quests.log.get(content.QUEST_WATCH_GROWS)
+    bd.assert_true(watch is not None and watch.state == Quest.ACTIVE,
+                   "watch_grows active before the reset")
+    if watch is not None:
+        watch.state = Quest.INACTIVE
+
+
+def autotest_fetch_accept():
+    """Dobb's errand: the real dialogue choice starts fetch_cache."""
+    _teleport_to("dobb")
+    session = systems.start_talk()
+    bd.assert_true(session is not None and session.active,
+                   "session with Dobb open for the errand")
+    if session is None:
+        return
+    index = _choice_index(session, "Anything you need moved?")
+    bd.assert_true(index >= 0, "the cache errand is visible while inactive")
+    if index < 0:
+        session.end()
+        return
+    session.choose(index)
+    fetch = bd_quests.log.get(content.QUEST_FETCH_CACHE)
+    bd.assert_true(fetch is not None and fetch.state == Quest.ACTIVE,
+                   "accepting the errand started fetch_cache")
+    bd.assert_true(session.active_node is not None
+                   and session.active_node.id == "cache_where",
+                   "the errand routes to the cache_where node")
+    bd.assert_true(bd.player_log() == content.FETCH_LOG_TEXT,
+                   "the errand choice wrote the native player log")
+    session.choose(0)  # "Consider it moved." ends the conversation
+    bd.assert_true(not session.active, "the errand exit ends the session")
+
+
+def autotest_fetch_marker():
+    """The cache beacon stands and Dobb's "!" is gone while fetch runs."""
+    bd.assert_true(systems.marker_state.get(content.MARKER_CACHE_BEACON_ID)
+                   == "cache_beacon",
+                   "the cache beacon shows while fetch_cache runs")
+    bd.assert_true(content.MARKER_DOBB_ID not in systems.marker_state,
+                   "the Dobb marker cleared once fetch_cache runs")
 
 
 def autotest_shop():
@@ -595,7 +711,7 @@ def autotest_shop():
 
 
 def autotest_healer():
-    """Wren's HealerService: heal, fee, and the broke refusal."""
+    """Wren: heal, fee, charge-restoring breather, and the broke refusal."""
     _teleport_to("wren")
     pawn = systems.player_pawn()
     bd.assert_true(pawn is not None, "healer: pawn available")
@@ -608,19 +724,38 @@ def autotest_healer():
     # keeps 17), so the assertion is "a real wound landed", not the raw 25.
     bd.assert_true(pawn.health < health_before,
                    "the test wound landed (armor-absorbed)")
+    # Spend a class-active charge so the breather restore has room to show.
+    hero = systems.hero
+    spent_resource = None
+    if hero is not None and hero.resources.get("second_wind", 0) > 0:
+        hero.use_resource("second_wind")
+        spent_resource = "second_wind"
+        bd.assert_true(hero.resources["second_wind"] == 0,
+                       "the second_wind charge is spent for the test")
     currency = systems.currency_class
     pawn.give_inventory(currency, 50)
     purse = systems.dobb_shop.currency(pawn)
-    result = systems.run_service("wren", 0)
+    result = systems.run_healer()
     bd.assert_true(result.get("ok"), "the healer takes the patient")
     bd.assert_true(pawn.health == health_before,
                    "the healer restored the pawn to full")
     bd.assert_true(systems.dobb_shop.currency(pawn) == purse - 15,
                    "the 15-coin fee was paid")
+    if spent_resource is not None:
+        bd.assert_true(
+            hero.resources[spent_resource] == hero.resource_max[spent_resource],
+            "Wren's care restores the class-active charges")
+        bd.assert_true("breathing" in str(result.get("message", "")),
+                       "the breather message names the restore")
     pawn.take_inventory(currency, systems.dobb_shop.currency(pawn))
-    result = systems.run_service("wren", 0)
+    if spent_resource is not None:
+        hero.use_resource(spent_resource)
+    result = systems.run_healer()
     bd.assert_true(not result.get("ok") and "afford" in result.get("message", ""),
                    "a broke patient is refused politely")
+    if spent_resource is not None:
+        bd.assert_true(hero.resources[spent_resource] == 0,
+                       "a refused heal restores no charges")
     pawn.give_inventory(currency, 200)
     pawn.damage_factor = 0.0  # test driver is invulnerable again
 
@@ -650,7 +785,7 @@ def autotest_trainer():
 
 
 def autotest_quest_flow():
-    """Kill the yard through the player pawn: quest, XP, level, disposition."""
+    """Kill the yard through the player pawn: quest, kill XP, level, disposition."""
     pawn = systems.player_pawn()
     bd.assert_true(pawn is not None, "quest flow: pawn available")
     if pawn is None:
@@ -660,7 +795,8 @@ def autotest_quest_flow():
         ref = bd.actor_ref(tid)
         if ref is not None and ref.valid and ref.alive:
             # source=pawn: the pawn is the Die() source, so exact kill
-            # credit applies to the tracker's killer="player" policy.
+            # credit applies to the tracker's killer="player" policy AND
+            # to track_xp_from_kills' player_index=0 policy.
             ref.damage(1000, source=pawn)
     clear = bd_quests.log.get(content.QUEST_CLEAR_YARD)
     bd.assert_true(clear is not None and clear.state == Quest.COMPLETED,
@@ -669,18 +805,51 @@ def autotest_quest_flow():
     bd.assert_true(obj is not None and obj.done and obj.progress == 5,
                    "the kill objective tracked 5/5")
     hero = systems.hero
-    # clear_yard's own rewards AND its on_complete hook (prove_worth) run
-    # synchronously during the fifth kill, so by this tic both XP payloads
-    # have landed: 300 + 100 = 400, and the level-2 feature is applied.
-    bd.assert_true(hero.level == 2 and hero.xp == 400,
-                   "the XP rewards leveled the hero to 2 (300 + 100 = 400)")
-    bd.assert_true(hero.resource_max.get("press_on") == 1,
-                   "the level-2 class feature applied on the level-up")
+    # Every yard kill paid its tabled 25 XP (5 x 25 = 125) through
+    # track_xp_from_kills, and clear_yard's own 300 XP reward landed on the
+    # fifth kill: 125 + 300 = 425, past the 300 threshold for level 2, so
+    # the Press On feature already applied.
+    bd.assert_true(hero.level == 2 and hero.xp == 425,
+                   "kill XP plus the quest reward leveled the hero to 2 "
+                   "(125 + 300 = 425)")
+    bd.assert_true(hero.resource_max.get("second_wind") == 2,
+                   "Press On raised Second Wind to two charges per rest")
     bd.assert_true(systems.manager.dispositions.get("sera") == 30,
                    "the quest reward shifted Sera by +20 (10 -> 30)")
-    prove = bd_quests.log.get(content.QUEST_PROVE_WORTH)
-    bd.assert_true(prove is not None and prove.state == Quest.COMPLETED,
-                   "prove_worth completed on clear_yard's coattails")
+
+
+def autotest_sera_watch_choice():
+    """Post-yard, Sera's trust pointer starts watch_grows (the second of
+    the quest's two starts)."""
+    _teleport_to("sera")
+    session = systems.start_talk()
+    bd.assert_true(session is not None and session.active,
+                   "session with Sera open for the trust pointer")
+    if session is None:
+        return
+    index = _choice_index(session, "Who else can I trust here?")
+    bd.assert_true(index >= 0,
+                   "the trust choice is visible once the yard is clean")
+    if index < 0:
+        session.end()
+        return
+    session.choose(index)
+    watch = bd_quests.log.get(content.QUEST_WATCH_GROWS)
+    bd.assert_true(watch is not None and watch.state == Quest.ACTIVE,
+                   "the trust choice started watch_grows")
+    bd.assert_true(session.active_node is not None
+                   and session.active_node.id == "trust_korr",
+                   "the trust choice routes to the Korr pointer node")
+    session.choose(0)  # "I will find him." ends the conversation
+    bd.assert_true(not session.active, "the trust pointer exit ends the session")
+
+
+def autotest_markers_after_watch():
+    """watch_grows open again: Korr carries the "!", the yard beacon is down."""
+    bd.assert_true(systems.marker_state.get(content.MARKER_KORR_ID) == "korr",
+                   "the Korr marker shows again for watch_grows")
+    bd.assert_true(content.MARKER_YARD_BEACON_ID not in systems.marker_state,
+                   "the yard beacon cleared once clear_yard completed")
 
 
 def autotest_fetch_cache_asserts():
@@ -692,8 +861,10 @@ def autotest_fetch_cache_asserts():
     bd.assert_true(obj is not None and obj.done,
                    "the pickup objective credited the crate")
     hero = systems.hero
-    bd.assert_true(hero is not None and hero.xp == 550,
-                   "the fetch XP landed (400 -> 550)")
+    bd.assert_true(hero is not None and hero.xp == 575,
+                   "the fetch XP landed (425 -> 575)")
+    bd.assert_true(content.MARKER_CACHE_BEACON_ID not in systems.marker_state,
+                   "the cache beacon cleared once fetch_cache completed")
 
 
 def _walk_onto_cache():
@@ -708,7 +879,13 @@ def _walk_onto_cache():
 
 
 def autotest_recruit():
-    """Recruit Korr through the gated dialogue effect."""
+    """Recruit Korr through the gated dialogue effect: the hub NPC retires
+    and the companion spawns at his slot."""
+    korr_slot = None
+    ref_before = systems.manager.actor_for("korr")
+    if ref_before is not None and ref_before.valid:
+        korr_slot = (ref_before.x, ref_before.y, ref_before.z)
+    bd.assert_true(korr_slot is not None, "the hub Korr is live pre-recruit")
     _teleport_to("korr")
     session = systems.start_talk()
     bd.assert_true(session is not None and session.active,
@@ -725,6 +902,10 @@ def autotest_recruit():
     bd.assert_true(systems.korr_recruited, "the effect recruited Korr")
     bd.assert_true(session.active_node.id == "joined",
                    "recruitment routes to the joined node")
+    bd.assert_true(systems.manager.is_retired("korr"),
+                   "the hub Korr is retired")
+    bd.assert_true(systems.manager.actor_for("korr") is None,
+                   "the manager no longer tracks a hub Korr")
     party = systems.party
     bd.assert_true(party is not None and len(party) == 2,
                    "the party holds the hero and Korr")
@@ -733,6 +914,22 @@ def autotest_recruit():
     ref = companion.actor() if companion is not None else None
     bd.assert_true(korr is not None and ref is not None and ref.valid
                    and ref.alive, "Korr's companion actor is in the world")
+    if ref is not None and korr_slot is not None:
+        dx, dy = ref.x - korr_slot[0], ref.y - korr_slot[1]
+        bd.assert_true((dx * dx + dy * dy) ** 0.5 <= 80.0,
+                       "the companion spawned at the retired NPC slot")
+    demons = [r for r in bd.actor_refs("Demon") if r.valid and r.alive]
+    bd.assert_true(len(demons) == 1,
+                   "exactly one Demon follower exists (no hub duplicate)")
+    watch = bd_quests.log.get(content.QUEST_WATCH_GROWS)
+    bd.assert_true(watch is not None and watch.state == Quest.COMPLETED,
+                   "recruitment completed watch_grows")
+    obj = watch.objective("recruit_korr") if watch is not None else None
+    bd.assert_true(obj is not None and obj.done,
+                   "the recruit objective credited Korr signing on")
+    hero = systems.hero
+    bd.assert_true(hero is not None and hero.xp == 725,
+                   "the watch_grows XP landed (575 -> 725)")
     if ref is not None and korr is not None:
         bd.assert_true(ref.health == korr.hp,
                        "companion health initialized from Korr's hp")
@@ -747,7 +944,165 @@ def autotest_recruit():
                        "the recruitment toast was raised")
     except Exception:
         bd.assert_true(False, "bd_horror toasts available for the toast check")
-    session.choose(0)  # "To the end." ends the conversation
+    session.choose(0)  # the retired NPC handle is stale: ends the conversation
+
+
+#: TID for the hostile test zombie of the companion-combat stage.
+ZOMBIE_TEST_TID = 9210
+
+
+def autotest_companion_combat_mark():
+    """Spawn a hostile, let the player hurt it, and drive the damage filter.
+
+    The companion's mark list updates off the actor_damaged event; the hero
+    damage filter is driven directly with synthetic event dicts (the engine
+    never sees them, so the run stays isolation-safe).
+    """
+    pawn = systems.player_pawn()
+    companion = systems.korr_companion
+    bd.assert_true(pawn is not None and companion is not None,
+                   "companion combat: pawn and companion available")
+    bd.assert_true(content.MARKER_KORR_ID not in systems.marker_state,
+                   "the Korr marker cleared once he signed on")
+    if pawn is None or companion is None:
+        return
+    zombie = None
+    try:
+        zombie = bd.spawn(content.GAME_CONTENT["yard_monster"],
+                          pawn.x + 256.0, pawn.y, pawn.z, angle=270.0,
+                          tid=ZOMBIE_TEST_TID, force=True)
+        zombie.set_flag("STANDSTILL", True)
+        zombie.speed = 0.0  # planted: the companion cannot reach it mid-test
+    except Exception as exc:
+        bd.assert_true(False, f"test zombie spawned: {exc!r}")
+        return
+    # The player hurts it: the companion marks it (asserted next stage).
+    zombie.damage(3, source=pawn)
+    # The hero damage filter, driven directly with a synthetic event shaped
+    # like actor_before_damage: a player hit on a live monster gains the
+    # level bonus (level 2: min(8, 1) = 1; no Skirmisher note on a
+    # Mercenary).
+    event = {"attacker_player_index": 0, "actor_ref": zombie, "damage": 10,
+             "damage_type": "None"}
+    systems.hero_damage_filter(event)
+    expected = 10 + min(8, max(0, systems.hero.level - 1))
+    bd.assert_true(event["damage"] == expected,
+                   "the hero damage filter added the level bonus")
+    neutral = {"attacker_player_index": None, "actor_ref": zombie,
+               "damage": 10}
+    systems.hero_damage_filter(neutral)
+    bd.assert_true(neutral["damage"] == 10,
+                   "the filter ignores hits not landed by the player")
+    bystander = {"attacker_player_index": 0, "actor_ref": pawn, "damage": 10}
+    systems.hero_damage_filter(bystander)
+    bd.assert_true(bystander["damage"] == 10,
+                   "the filter ignores non-monster victims")
+
+
+def autotest_companion_combat_assert():
+    """~15 tics later: the companion fights the mark; the kill pays XP."""
+    companion = systems.korr_companion
+    zombie = bd.actor_ref(ZOMBIE_TEST_TID)
+    if companion is None or zombie is None:
+        bd.assert_true(False, "the test zombie survived to the assert")
+        return
+    cref = companion.actor()
+    targeted = False
+    try:
+        targeted = (cref is not None and cref.target is not None
+                    and cref.target == zombie)
+    except Exception:
+        targeted = False
+    marked = False
+    try:
+        marked = any(h is not None and h.valid and h == zombie
+                     for h, _expiry in companion._attackers)
+    except Exception:
+        marked = False
+    bd.assert_true(targeted or marked,
+                   "the companion fights the monster the player hurt")
+    pawn = systems.player_pawn()
+    hero = systems.hero
+    if pawn is None or hero is None:
+        return
+    xp_before = hero.xp
+    zombie.damage(999, source=pawn)
+    bd.assert_true(hero.xp == xp_before + 25,
+                   "a pawn-sourced ZombieMan kill paid its tabled XP (25)")
+    try:
+        zombie.destroy()
+    except Exception:
+        pass
+
+
+#: Scripted roll for the class-active heal: d10 face 5, plus the level.
+_ACTIVE_ROLL = 5
+
+
+def autotest_class_active_no_charge():
+    """Custom Action 3 with an empty pool: the no-charge path only talks."""
+    pawn = systems.player_pawn()
+    hero = systems.hero
+    bd.assert_true(pawn is not None and hero is not None,
+                   "class active: pawn and hero available")
+    if pawn is None or hero is None:
+        return
+    # A real wound on the pawn (the established damage_factor toggle) and
+    # a wounded sheet, so the heal that eventually lands is measurable.
+    pawn.damage_factor = 1.0
+    pawn.damage(30)
+    pawn.damage_factor = 0.0
+    _pre_save["pawn_wounded_hp"] = pawn.health
+    hero.set_hp(5)
+    hero.resources["second_wind"] = 0  # spend down the pool by hand
+    bd.set_custom_action(3, True)
+
+
+def autotest_class_active_no_charge_asserts():
+    """The empty pool named the resource and the rest, and nothing healed."""
+    bd.assert_true((3, True) in systems.action_log,
+                   "the class-active press fired {'action': 3, pressed}")
+    hero = systems.hero
+    pawn = systems.player_pawn()
+    bd.assert_true(hero is not None and hero.hp == 5,
+                   "no charge, no sheet heal")
+    bd.assert_true(pawn is not None
+                   and pawn.health == _pre_save.get("pawn_wounded_hp"),
+                   "no charge, no pawn heal")
+    message = systems.last_active_message
+    bd.assert_true("second_wind" in message and "rest" in message,
+                   "the no-charge path names the resource and the rest")
+    bd.set_custom_action(3, False)
+    # Refill for the real heal; script the die so the amount is exact.
+    if hero is not None:
+        hero.resources["second_wind"] = \
+            hero.resource_max.get("second_wind", 2)
+    systems.class_active_rng = _Roller([_ACTIVE_ROLL])
+
+
+def autotest_class_active_press():
+    """Custom Action 3 with a charge: Second Wind fires on the next scan."""
+    bd.set_custom_action(3, True)
+
+
+def autotest_class_active_asserts():
+    """The Mercenary heal landed on sheet and pawn; the charge is spent."""
+    hero = systems.hero
+    pawn = systems.player_pawn()
+    amount = _ACTIVE_ROLL + (hero.level if hero is not None else 0)
+    if hero is not None:
+        bd.assert_true(hero.hp == 5 + amount,
+                       "Second Wind healed the sheet by die + level")
+        bd.assert_true(hero.resources.get("second_wind") == 1,
+                       "the heal spent one of the two charges")
+    if pawn is not None:
+        bd.assert_true(pawn.health
+                       == _pre_save.get("pawn_wounded_hp", -99) + amount,
+                       "Second Wind healed the pawn by the same amount")
+    bd.assert_true("Second Wind" in systems.last_active_message,
+                   "the use feedback named the active")
+    systems.class_active_rng = None
+    bd.set_custom_action(3, False)
 
 
 def autotest_pre_save():
@@ -762,9 +1117,10 @@ def autotest_pre_save():
     _pre_save["hero"] = hero.serialize()
     _pre_save["sera"] = systems.manager.dispositions.get("sera")
     _pre_save["stock"] = systems.dobb_shop.stock_snapshot()
+    # The retired Korr carries no TID anymore; only the three hub NPCs do.
     _pre_save["tids"] = {
         npc_id: systems.manager.actor_for(npc_id).tid
-        for npc_id in ("sera", "dobb", "wren", "korr")}
+        for npc_id in ("sera", "dobb", "wren")}
     _pre_save["companion_tid"] = systems.korr_companion.tid
     _pre_save["korr_hp"] = systems.party.get(content.KORR_NAME).hp
     bd.save_checkpoint(content.CHECKPOINT_NAME,
@@ -790,7 +1146,7 @@ def autotest_post_load():
     if hero is None:
         return
     bd.assert_true(hero.level == snap.get("level") == 2
-                   and hero.xp == snap.get("xp") == 550,
+                   and hero.xp == snap.get("xp") == 750,
                    "level and XP round-tripped")
     bd.assert_true(hero.max_hp == snap.get("max_hp") == 20,
                    "max hp round-tripped (12 + 8 on the level-up)")
@@ -801,10 +1157,9 @@ def autotest_post_load():
                    == set(snap.get("proficient_skills", ())),
                    "proficiencies round-tripped")
     bd.assert_true(hero.resources.get("second_wind") == 0
-                   and hero.resource_max.get("second_wind") == 1,
-                   "the spent charge stays spent")
-    bd.assert_true(hero.resource_max.get("press_on") == 1,
-                   "the level-2 feature pool round-tripped")
+                   and hero.resource_max.get("second_wind") == 2,
+                   "the spent charge stays spent; Press On's second max "
+                   "charge round-tripped")
     bd.assert_true(getattr(hero, "cls", None) is content.MERCENARY,
                    "the live class object is still attached")
     bd.assert_true(systems.manager.dispositions.get("sera")
@@ -839,12 +1194,27 @@ def autotest_post_load():
         bd.assert_true(ref is not None and ref.valid and ref.alive
                        and ref.tid == tid,
                        f"{npc_id} re-bound to its saved TID")
+    # The retired set round-tripped: spawn_all must not respawn a hub Korr,
+    # and the companion remains the one Demon in the world.
+    bd.assert_true(systems.manager.is_retired("korr"),
+                   "Korr's retirement round-tripped")
+    bd.assert_true(systems.manager.actor_for("korr") is None,
+                   "spawn_all did not respawn a hub Korr after the load")
+    demons = [r for r in bd.actor_refs("Demon") if r.valid and r.alive]
+    bd.assert_true(len(demons) == 1,
+                   "still exactly one Demon after the load (the companion)")
     for quest_id, state in ((content.QUEST_CLEAR_YARD, Quest.COMPLETED),
                             (content.QUEST_FETCH_CACHE, Quest.COMPLETED),
-                            (content.QUEST_PROVE_WORTH, Quest.COMPLETED)):
+                            (content.QUEST_WATCH_GROWS, Quest.COMPLETED)):
         quest = bd_quests.log.get(quest_id)
         bd.assert_true(quest is not None and quest.state == state,
                        f"{quest_id} round-tripped as {state}")
+    bd.assert_true(bd_quests.log.get("prove_worth") is None,
+                   "the deleted shadow quest never comes back")
+    bd.assert_true(systems._hud_task is not None,
+                   "the HUD strip task is alive after the load")
+    bd.assert_true(not systems.marker_state,
+                   "every marker cleared (all quests complete post-load)")
     for key in (bd_dnd.STATE_KEY, bd_dnd.PARTY_STATE_KEY, "bd_npcs",
                 bd_quests.STATE_KEY, content.SHOP_STATE_KEY):
         bd.assert_true(isinstance(bd.state.get(key), dict),

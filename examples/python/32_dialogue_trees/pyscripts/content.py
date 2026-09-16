@@ -1,4 +1,4 @@
-"""The Interrogation — pure content: prose, the tree, factories.
+"""The Interrogation - pure content: prose, the tree, factories.
 
 **Import-safe**: no engine calls at import time. The dialogue tree, the
 quest, the faction registry, and the player character are built by factory
@@ -8,7 +8,7 @@ touching logic.
 
 Loaded as manifest entry 1 of 4; the trailing ``_LiveAlias`` registration
 lets later manifest entries ``import inquisition_content`` (the engine
-registers manifest modules under mangled names only after execution — the
+registers manifest modules under mangled names only after execution - the
 proxy reads through to this module's live globals).
 
 The tree keeps the original fixture's four branches (a smalltalk loop, a
@@ -30,6 +30,11 @@ quest handout (bd_quests + native player log)) and adds three more:
   Inquisitor's disposition as a plain int and injects it, plus its
   standing word, into the session ctx). It leads to a greeting node whose
   body line is rewritten per standing by the choice's effect.
+
+Discoverability constants live here too: the world-marker texts/colors
+(the gold "!" and the "[Q] Talk" label), the map-start intro toast, and
+the hidden-choice hint lines that appear when dread or attitude nears a
+threshold without crossing it.
 """
 
 # --- fixture constants ----------------------------------------------------------
@@ -87,6 +92,37 @@ MARK_CHOICE_TEXT = "[The mark on your throat pulses] 'You know what I am.'"
 
 # The attitude-gated greeting: exact text for the same reason.
 YOU_AGAIN_CHOICE_TEXT = "You again."
+
+# --- talk markers and discoverability -------------------------------------
+
+# Display-list ids for the Inquisitor's world-space markers. This example
+# reserves the 98000+ range for them (they are its only draw_* calls).
+# World items follow their anchor actor and vanish on map unload; the
+# MARKER_REFRESH_TICS task in systems.py owns registration while the map
+# is live. Both markers keep the default occlude=True so they respect
+# line of sight.
+MARKER_MARK_ID = 98000        # the gold "!" until the first conversation
+MARKER_TALK_ID = 98001        # the "[Q] Talk" context label in range
+MARKER_REFRESH_TICS = 7       # marker lifecycle poll rate
+MARKER_OFFSET_Z = 8.0         # just above the Inquisitor's head
+MARKER_MARK_TEXT = "!"
+MARKER_MARK_COLOR = (255, 200, 60)    # gold
+MARKER_MARK_HEIGHT = 0.055            # normalized screen-height fraction
+MARKER_TALK_COLOR = (235, 225, 205)   # bone
+MARKER_TALK_HEIGHT = 0.03
+TALK_LABEL_TEMPLATE = "[{key}] Talk"
+
+#: Map-start toast; {key} is filled with the live Custom Action 1 binding.
+INTRO_TOAST = ("The Inquisitor waits in the ash-light, under a golden "
+               "'!'. Press {key} up close to question him. Choices show "
+               "their DC and your bonus before you commit.")
+
+#: Hidden-choice hint lines: shown while a threshold is near but not yet
+#: crossed (the choice itself stays hidden until it is).
+DREAD_HINT_WINDOW = 20.0
+HINT_SMALLTALK_DREAD = "The Inquisitor studies the dread on you..."
+ATTITUDE_HINT_THRESHOLD = -30
+HINT_START_ATTITUDE = "The Inquisitor's patience with you wears thin..."
 
 #: The greeting node's body per attitude standing (systems.attitude_standing
 #: computes the word from the live ctx value; the choice effect rewrites

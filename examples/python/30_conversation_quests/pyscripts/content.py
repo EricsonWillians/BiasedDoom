@@ -1,4 +1,4 @@
-"""The Confessor — pure content: fixture constants, prose, and factories.
+"""The Confessor - pure content: fixture constants, prose, and factories.
 
 This module is **import-safe**: it performs no engine calls at import time.
 Everything is either plain data or a factory that the systems layer invokes
@@ -7,7 +7,7 @@ fixture can be re-voiced without touching logic.
 
 Loaded as a ``PYTHON`` manifest entry (first, in dependency order). The
 trailing ``sys.modules`` alias lets later manifest entries reach it with a
-plain ``import confessor_content`` — the manifest itself mangles module
+plain ``import confessor_content``; the manifest itself mangles module
 names, mirroring how ``hello_world`` registers siblings via
 ``bd.import_script(..., module_name=...)``.
 """
@@ -45,6 +45,20 @@ CANDLE_BASE = 104        # well under MAP01's indoor light: the booth dims
 CANDLE_AMPLITUDE = 24    # how far the walk may wander from the base
 CANDLE_PERIOD = 13       # tics between steps (slow, breathing flame)
 
+# --- quest-giver marker (the gold "!" over the Confessor) ----------------------
+
+# Display-list ids: the bd.ui toolkit owns every id >= 900000 (see
+# docs/scripting/python.md, "Layers and id ownership"); this example owns the
+# 97000-97009 block, well clear of the toolkit and of the low ids other
+# examples use.
+MARKER_TEXT_ID = 97000   # the floating "!" label above the Confessor
+MARKER_RING_ID = 97001   # the gold ground ring at his feet
+MARKER_REFRESH_TICS = 7  # the map-local marker task re-syncs this often
+MARKER_TEXT = "!"
+MARKER_COLOR = (255, 205, 70)  # quest-giver gold
+MARKER_TEXT_HEIGHT = 0.03      # screen-height fraction: big enough to read
+MARKER_RING_RADIUS = 26.0
+
 # --- prose: toasts and the Rite panel -----------------------------------------
 
 SPAWN_TOAST = "The Confessor waits in the ash-light - walk up and press USE to kneel."
@@ -54,12 +68,20 @@ SPAWN_TOAST = "The Confessor waits in the ash-light - walk up and press USE to k
 # carries a fixed themed line; a free-text log_string would be toasted
 # verbatim (see systems._toast_reply).
 TOAST_ACCEPT = "the rite is sealed - your sin has a price now"
+# The accept reply also hands over Shell ammo (giveitem = 921) through the
+# native pickup path; name the payout so it is visible even off-menu.
+TOAST_REWARD = "alms for the honest: a box of shells"
 TOAST_DECLINE = "the Confessor watches you leave, unmoved"
+# A decline never fails the quest: the marker stays lit and the conversation
+# can simply be re-entered. This toast says so out loud.
+TOAST_OFFER_STANDS = "The offer stands. Kneel again when you are ready."
 TOAST_STARTED = "the Confessor opens the black book"
 
 RITE_WAITING = "He waits, patient as the grave."
 RITE_ACCEPTED = "'Alms for the honest. Go - and sin no louder.'"
 RITE_DECLINED = "'Then carry them, penitent. They only get heavier.'"
+# Plain hint line the Rite panel shows while the quest is INACTIVE.
+RITE_HINT_INACTIVE = "Kneel before the Confessor with USE (the marked figure ahead)."
 
 #: Themed Rite-panel line per (node, reply_index) the fixture can produce.
 RITE_LINES = {

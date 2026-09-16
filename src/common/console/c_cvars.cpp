@@ -604,9 +604,27 @@ void FBaseCVar::EnableNoSet ()
 	m_DoNoSet = true;
 }
 
+static bool GInitialCallbackReplay = false;
+
+bool C_InInitialCallbackReplay()
+{
+	return GInitialCallbackReplay;
+}
+
+namespace
+{
+	class FInitialCallbackReplayScope
+	{
+	public:
+		FInitialCallbackReplayScope() { GInitialCallbackReplay = true; }
+		~FInitialCallbackReplayScope() { GInitialCallbackReplay = false; }
+	};
+}
+
 void FBaseCVar::EnableCallbacks ()
 {
 	m_UseCallback = true;
+	FInitialCallbackReplayScope replayScope;
 	CVarMap::Iterator it(cvarMap);
 	CVarMap::Pair *pair;
 	while (it.NextPair(pair))

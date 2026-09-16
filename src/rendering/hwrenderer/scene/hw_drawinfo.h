@@ -356,6 +356,8 @@ int CalcLightLevel(ELightMode lightmode, int lightlevel, int rellight, bool weap
 PalEntry CalcLightColor(ELightMode lightmode, int light, PalEntry pe, int blendfactor);
 float GetFogDensity(FLevelLocals* Level, ELightMode lightmode, int lightlevel, PalEntry fogcolor, int sectorfogdensity, int blendfactor);
 bool CheckFog(FLevelLocals* Level, sector_t* frontsector, sector_t* backsector, ELightMode lightmode);
+void HW_UpdateSectorLightBleed(FLevelLocals* Level, ELightMode lightmode);
+void HW_UploadSectorLightBleed(FLevelLocals* Level);
 void SetColor(FRenderState& state, FLevelLocals* Level, ELightMode lightmode, int sectorlightlevel, int rellight, bool fullbright, const FColormap& cm, float alpha, bool weapon = false);
 void SetShaderLight(FRenderState& state, FLevelLocals* Level, float level, float olight);
 void SetFog(FRenderState& state, FLevelLocals* Level, ELightMode lightmode, int lightlevel, int rellight, bool fullbright, const FColormap* cmap, bool isadditive);

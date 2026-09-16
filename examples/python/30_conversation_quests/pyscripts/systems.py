@@ -1,4 +1,4 @@
-"""The Confessor — systems: event wiring, the quest rule, the booth candle.
+"""The Confessor - systems: event wiring, the quest rule, the booth candle.
 
 Owns every ``bd.on`` handler that drives the fixture's mechanics:
 
@@ -9,17 +9,22 @@ Owns every ``bd.on`` handler that drives the fixture's mechanics:
   NPC" idiom) and whispers a toast.
 - ``conversation_reply`` raises a ``bd_horror`` toast for the log update.
   The accept reply carries a *numeric* log, so the payload's ``log_string``
-  is None and the ``$TXT_LOGTEXT77`` label cannot be resolved from Python —
+  is None and the ``$TXT_LOGTEXT77`` label cannot be resolved from Python:
   no localization lookup is exposed in the ``bd`` API (verified against
   ``docs/scripting/biaseddoom.pyi``). The toast therefore uses the fixed
   themed line from :mod:`confessor_content`; a hypothetical free-text
-  ``log_string`` would be toasted verbatim instead.
-- ``map_load`` spawns the Confessor ahead of the player and arms a slow
-  candle :class:`~bd_horror.atmosphere.LightProgram` over his booth sector.
-  Stock light programs bind by sector *tag*, but the MAP01 start sector is
-  untagged, so :class:`PositionCandle` (an example-local LightProgram
-  subclass, public-API only) resolves its sector through ``bd.sector_at``
-  on the Confessor's live position. The example re-arms it from its own
+  ``log_string`` would be toasted verbatim instead. The accept also toasts
+  the payout (a box of shells), and a decline toasts that the offer
+  stands, since the conversation can simply be re-entered.
+- ``map_load`` spawns the Confessor ahead of the player, arms a slow
+  candle :class:`~bd_horror.atmosphere.LightProgram` over his booth
+  sector, and raises the quest-giver marker: a gold "!" label plus a
+  ground ring over the NPC, kept in sync with the quest state by a 7-tic
+  map-local refresh task (see :data:`marker_state`). Stock light programs
+  bind by sector *tag*, but the MAP01 start sector is untagged, so
+  :class:`PositionCandle` (an example-local LightProgram subclass,
+  public-API only) resolves its sector through ``bd.sector_at`` on the
+  Confessor's live position. The example re-arms it from its own
   ``map_load``/``map_unload`` handlers instead of a LightManager.
 
 Manifest entry 2 of 4; imports :mod:`confessor_content` through the
@@ -48,6 +53,13 @@ started_events = []
 reply_events = []
 last_rite_line = content.RITE_WAITING
 candle = None
+
+#: Quest-giver marker lifecycle, maintained by a 7-tic map-local task (see
+#: ``_marker_sync``). The headless autotest reads this dict: ``shown`` tracks
+#: whether the "!" label and ring are registered on the display list,
+#: ``draws``/``clears`` count the display-list mutations, and ``task`` holds
+#: the repeating task id (reset to None on map unload).
+marker_state = {"task": None, "shown": False, "draws": 0, "clears": 0}
 
 
 def player_pawn():
@@ -82,8 +94,8 @@ class PositionCandle(LightProgram):
     Stock ``LightProgram`` resolution goes through ``bd.sectors(tag=...)``
     and the booth sector on Doom II MAP01 has no tag (sector tags are
     read-only from Python), so this subclass overrides ``_resolve`` to find
-    the sector under the Confessor via ``bd.sector_at``. Everything else —
-    original-light capture/restore, write-on-change, deterministic RNG —
+    the sector under the Confessor via ``bd.sector_at``. Everything else
+    (original-light capture/restore, write-on-change, deterministic RNG)
     is the shipped implementation. ``position_of`` is a callable returning
     ``(x, y)`` or None; when the Confessor's handle is stale the program
     simply resolves to no sectors and sits inert until the next arm.
@@ -126,13 +138,80 @@ def candle_active():
     return candle is not None and candle._task is not None
 
 
+# --- the quest-giver marker -------------------------------------------------------
+
+
+def markers_wanted():
+    """True while the Confessor's quest can still be accepted.
+
+    The marker only stands down once the rite is sealed (COMPLETED) or the
+    quest is FAILED: a decline leaves it burning, because the offer stands.
+    """
+    quest = bd_quests.log.get(content.QUEST_ID)
+    if quest is None:
+        return False
+    return quest.state not in (Quest.COMPLETED, Quest.FAILED)
+
+
+def _markers_show(npc):
+    try:
+        bd.draw_world_text(npc, id=content.MARKER_TEXT_ID,
+                           text=content.MARKER_TEXT, offset_z=12.0,
+                           color=content.MARKER_COLOR,
+                           height=content.MARKER_TEXT_HEIGHT,
+                           outline=True)
+        bd.draw_world_ring(npc, id=content.MARKER_RING_ID,
+                           radius=content.MARKER_RING_RADIUS,
+                           color=content.MARKER_COLOR, alpha=0.9,
+                           offset_z=2.0, segments=24)
+    except Exception as exc:
+        bd.warn(f"confessor: quest-giver marker draw failed: {exc!r}")
+        return
+    marker_state["shown"] = True
+    marker_state["draws"] += 1
+
+
+def _markers_clear():
+    try:
+        bd.draw_clear(content.MARKER_TEXT_ID)
+        bd.draw_clear(content.MARKER_RING_ID)
+    except Exception as exc:
+        bd.warn(f"confessor: quest-giver marker clear failed: {exc!r}")
+    marker_state["shown"] = False
+    marker_state["clears"] += 1
+
+
+def _marker_sync():
+    """Reconcile the marker with the quest state (7-tic map-local task).
+
+    Also invoked directly on map load (so the marker appears without
+    waiting a refresh) and from the quest's ``on_complete`` hook (so it
+    stands down the tic the rite is sealed).
+    """
+    npc = npc_ref
+    try:
+        live = npc is not None and npc.valid
+    except Exception:
+        live = False
+    if live and markers_wanted():
+        _markers_show(npc)
+    elif marker_state["shown"]:
+        _markers_clear()
+    return True
+
+
 # --- event wiring -----------------------------------------------------------------
 
 
 @bd.on("engine_start")
 def setup_quests(event):
     bd.imgui.set_master_visible(True)  # the Rite panel + toasts render
-    bd_quests.log.add(content.build_quest())
+    quest = content.build_quest()
+    # Stand the quest-giver marker down the very tic the rite is sealed
+    # (the 7-tic refresh task below is the general maintainer; this hook
+    # just makes the clear immediate).
+    quest.on_complete = lambda q: _marker_sync()
+    bd_quests.log.add(quest)
     # When a conversation_reply with log_number 77 commits, the quest
     # auto-starts if needed and the objective completes.
     bd_quests.log.track_conversation_log(content.QUEST_ID,
@@ -155,14 +234,18 @@ def on_conversation_started(event):
 
 
 def _toast_reply(event):
-    """Raise the log-update toast for a committed reply."""
+    """Raise the toasts for a committed reply: the log update and payout on
+    accept, the standing offer on a decline."""
     global last_rite_line
     log_string = event.get("log_string")
+    node = event.get("node")
+    reply_index = event.get("reply_index")
     if event.get("log_number") == content.LOG_NUMBER:
         # Numeric log: the payload carries no text and $LABELs cannot be
-        # resolved from Python (see the module docstring) — toast the fixed
-        # themed line.
+        # resolved from Python (see the module docstring), so toast the
+        # fixed themed line, then name the payout so it is visible.
         toasts.toast(content.TOAST_ACCEPT, kind="quest")
+        toasts.toast(content.TOAST_REWARD, kind="loot")
     elif log_string:
         # Free-text log (not produced by this fixture): toast it verbatim
         # unless it is an unresolvable $LABEL.
@@ -172,8 +255,12 @@ def _toast_reply(event):
             toasts.toast(str(log_string), kind="quest")
     else:
         toasts.toast(content.TOAST_DECLINE, kind="info")
-    last_rite_line = content.RITE_LINES.get(
-        (event.get("node"), event.get("reply_index")), content.RITE_WAITING)
+        # A decline never fails the quest: the marker stays lit and the
+        # conversation can simply be re-entered. Say so out loud.
+        if (node, reply_index) == (content.FIRST_NODE, content.REPLY_DECLINE):
+            toasts.toast(content.TOAST_OFFER_STANDS, kind="quest")
+    last_rite_line = content.RITE_LINES.get((node, reply_index),
+                                            content.RITE_WAITING)
 
 
 @bd.on("conversation_reply")
@@ -205,6 +292,15 @@ def on_map(event):
                             period=content.CANDLE_PERIOD)
     candle.arm(fresh=True)
 
+    # Raise the quest-giver marker (the gold "!" and ring) at once, then
+    # keep it in sync with the quest state on a slow map-local refresh
+    # task; the engine cancels map-local tasks on unload.
+    _marker_sync()
+    if marker_state["task"] is None:
+        marker_state["task"] = bd.schedule(
+            _marker_sync, delay=content.MARKER_REFRESH_TICS,
+            repeat=content.MARKER_REFRESH_TICS, map_local=True)
+
 
 @bd.on("map_unload")
 def on_map_unload(event):
@@ -212,6 +308,11 @@ def on_map_unload(event):
     # restoring (the map is going away).
     if candle is not None:
         candle.disarm(restore=False)
+    # The marker's display-list items vanish with the map on their own and
+    # the engine cancels the map-local refresh task; just reset the
+    # bookkeeping so the next map starts clean.
+    marker_state["task"] = None
+    marker_state["shown"] = False
 
 
 def quest_state_text():
@@ -220,6 +321,12 @@ def quest_state_text():
     if quest is None:
         return "unwritten"
     return quest.state
+
+
+def quest_inactive():
+    """True while the quest has not been started (the offer is fresh)."""
+    quest = bd_quests.log.get(content.QUEST_ID)
+    return quest is not None and quest.state == Quest.INACTIVE
 
 
 # --- sibling-import registration ---------------------------------------------------

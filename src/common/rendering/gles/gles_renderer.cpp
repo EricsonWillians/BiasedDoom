@@ -96,6 +96,7 @@ FGLRenderer::~FGLRenderer()
 	FlushModels();
 	TexMan.FlushAll();
 	if (mShaderManager != nullptr) delete mShaderManager;
+	if (mSectorBleedID != 0) glDeleteTextures(1, &mSectorBleedID);
 	if (mFBID != 0) glDeleteFramebuffers(1, &mFBID);
 
 	if (mBuffers) delete mBuffers;

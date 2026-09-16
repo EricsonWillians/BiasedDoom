@@ -52,6 +52,9 @@ struct FDynLightData
 		if (siz[2] > max) siz[2] = max;
 	}
 
+	// Keeps only the maxLights strongest lights per group (16 floats per light).
+	void LimitPerSurface(int maxLights);
+
 
 };
 

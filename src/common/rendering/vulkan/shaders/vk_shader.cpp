@@ -183,6 +183,7 @@ static const char *shaderBindings = R"(
 
 	layout(set = 0, binding = 0) uniform sampler2D ShadowMap;
 	layout(set = 0, binding = 1) uniform sampler2DArray LightMap;
+	layout(set = 0, binding = 3) uniform sampler2D SectorBleed;
 	#ifdef SUPPORTS_RAYTRACING
 	layout(set = 0, binding = 2) uniform accelerationStructureEXT TopLevelAS;
 	#endif
@@ -226,6 +227,21 @@ static const char *shaderBindings = R"(
 		vec4 uFogGradientDirection;
 		vec4 uFogQuality;
 		float uFogMinVisibility;
+		float uLightContrast;
+		float uSpecularPowerScale;
+		float uRimLightStrength;
+		float uRimLightPower;
+		float uAmbientGradientStrength;
+		float uLightStylePadding2;
+		float uLightStylePadding3;
+		vec4 uAmbientGradientColor;
+		float uSceneTime;
+		float uDynLightFlicker;
+		float uAerialStrength;
+		float uAerialDistance;
+		vec4 uSpecularTintColor;
+		vec4 uSectorBleedBounds;
+		vec4 uSectorBleedParams;
 	};
 
 	layout(set = 1, binding = 1, std140) uniform readonly MatricesUBO {

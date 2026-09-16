@@ -1,4 +1,4 @@
-"""The Interrogation — systems: sessions, horror state, event wiring.
+"""The Interrogation - systems: sessions, horror state, event wiring.
 
 Owns the rules and every engine hook of the fixture:
 
@@ -11,6 +11,11 @@ Owns the rules and every engine hook of the fixture:
   word (same thresholds as ``bd_npcs``, reimplemented locally so this
   example never imports the pack just for the mapping), and a
   ``shift_attitude`` callable for effects. Composition over framework edits.
+  Its ``choices()`` override adds two presentation layers: skill-check
+  annotations gain the character's total bonus ("(DC 12 Persuasion,
+  you +4)", computed with the bd_dnd helpers via :func:`skill_bonus`),
+  and the active node's body gains a hint line when dread or attitude
+  nears a hidden choice's threshold without crossing it.
 - **Talk interaction.** Custom Action 1 (``+pyaction1``, auto-bound to Q
   at ``engine_start`` unless the player already bound it under Options ->
   Customize Controls, Custom Actions) fires the ``custom_action`` event ->
@@ -18,10 +23,18 @@ Owns the rules and every engine hook of the fixture:
   ``TALK_RANGE`` of the Inquisitor. The ``talk`` console alias
   (``pyui talk`` -> ``ui_command``) routes into the same function, and the
   "no one near" feedback names the live binding.
+- **Talk markers.** A gold "!" floats over the Inquisitor (display-list
+  id ``MARKER_MARK_ID``) until the first conversation starts; after that
+  a "[Q] Talk" label (id ``MARKER_TALK_ID``, live binding text) shows
+  while the player is in ``TALK_RANGE`` with no session open. A 7-tic
+  map-local task (:func:`refresh_markers`) owns the lifecycle and keeps
+  :data:`marker_state` in step for the autotest; both markers keep the
+  default ``occlude=True`` so they respect line of sight. A map-start
+  toast names the binding and the annotation style.
 - **Dusk ambience.** On ``map_load`` the horror state starts (dread tick +
   stalker windows + persistence), a slow candle
-  :class:`PositionCandle` dresses the Inquisitor's (untagged) sector —
-  resolved through ``bd.sector_at`` on his live position — and the
+  :class:`PositionCandle` dresses the Inquisitor's (untagged) sector,
+  resolved through ``bd.sector_at`` on his live position - and the
   ``StalkerDirector`` is enabled *while no session is active*. Talking to
   the Inquisitor holds the dark at bay: ``start_talk`` disables the
   director and the session's ``on_end`` re-enables it.
@@ -33,8 +46,10 @@ import math
 
 import biaseddoom as bd
 import bd_dialogue
+import bd_dnd
 import bd_horror
 import bd_quests
+from bd_horror import toasts
 from bd_horror.atmosphere import LightProgram
 
 try:
@@ -138,8 +153,8 @@ class PositionCandle(LightProgram):
     Stock ``LightProgram`` resolution goes through ``bd.sectors(tag=...)``
     and the Inquisitor's sector on Doom II MAP01 has no tag (sector tags
     are read-only from Python), so this subclass overrides ``_resolve`` to
-    find the sector under him via ``bd.sector_at``. Everything else —
-    original-light capture/restore, write-on-change, deterministic RNG —
+    find the sector under him via ``bd.sector_at``. Everything else
+    (original-light capture/restore, write-on-change, deterministic RNG)
     is the shipped implementation. When his handle is stale the program
     resolves to no sectors and sits inert until the next arm.
     """
@@ -184,11 +199,40 @@ def candle_active():
 # --- the session wrapper ------------------------------------------------------------
 
 
+def skill_bonus(character, skill):
+    """The character's total bonus for a skill check (ability mod + prof).
+
+    Computed with the bd_dnd helpers (``SKILLS`` for the governing
+    ability, ``AbilityScores.mod`` for the modifier, and the character's
+    ``proficiency``/``proficient_skills`` for the proficiency part), the
+    same terms ``Character.skill_check`` rolls with. None when the
+    character or skill is unknown.
+    """
+    try:
+        if character is None:
+            return None
+        ability = bd_dnd.SKILLS.get(str(skill))
+        if ability is None:
+            return None
+        bonus = int(character.abilities.mod(ability))
+        if str(skill) in getattr(character, "proficient_skills", ()):
+            bonus += int(character.proficiency)
+        return bonus
+    except Exception:
+        return None
+
+
+#: Node ids the hidden-choice hint lines can appear on (all other nodes,
+#: notably the greeting node whose text its choice effect rewrites, are
+#: left untouched).
+_HINT_NODES = ("start", "smalltalk")
+
+
 class InquisitionSession(bd_dialogue.DialogueSession):
     """A DialogueSession whose ctx carries the live dread level and attitude.
 
     ``context()`` gains four keys over the framework default: ``dread``
-    (float, the HorrorState dread level at call time — re-read on every
+    (float, the HorrorState dread level at call time - re-read on every
     ``choices()`` call, so a threshold crossed mid-conversation reveals
     the mark choice on the next render), ``horror`` (the HorrorState,
     for effects that push dread around), ``attitude`` (int, the
@@ -196,11 +240,25 @@ class InquisitionSession(bd_dialogue.DialogueSession):
     ``attitude_standing`` (its threshold word: hostile/cold/neutral/
     warm/trusted), and ``shift_attitude`` (callable delta -> new value,
     the hook the intimidation failure effect uses to erode him).
+
+    ``choices()`` adds two presentation layers over the framework
+    implementation:
+
+    - skill-check annotations name the character's total bonus:
+      "(DC 12 Persuasion, you +4)" instead of "(DC 12 Persuasion)", so
+      the odds are knowable before committing;
+    - :meth:`_refresh_hints` rewrites the active node's body with a
+      discoverability hint when dread (smalltalk node) or attitude
+      (start node) nears a hidden choice's threshold without crossing
+      it, and restores the base text otherwise (and on :meth:`end`).
     """
 
     def __init__(self, *args, horror_state=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.horror = horror_state
+        #: Base body text per hinted node id, captured clean on first
+        #: sight so hint lines compose and lift exactly.
+        self._base_texts = {}
 
     def context(self):
         ctx = super().context()
@@ -216,6 +274,80 @@ class InquisitionSession(bd_dialogue.DialogueSession):
         ctx["attitude_standing"] = attitude_standing(attitude)
         ctx["shift_attitude"] = shift_attitude
         return ctx
+
+    def choices(self):
+        """Visible choices, with node hints applied and check bonuses shown."""
+        self._refresh_hints()
+        entries = super().choices()
+        return [(choice, enabled, self._bonus_annotation(choice, annotation))
+                for choice, enabled, annotation in entries]
+
+    def end(self, reason="manual"):
+        """End the conversation; hint lines lift with it."""
+        self._restore_hints()
+        super().end(reason)
+
+    def _bonus_annotation(self, choice, annotation):
+        """Extend the framework's "(DC N Skill)" with ", you +bonus"."""
+        if choice.skill_check is None or self.character is None:
+            return annotation  # "(unavailable)" and plain rows pass through
+        if not choice.show_failed:
+            return annotation  # a hidden DC stays hidden
+        skill, dc = choice.skill_check
+        bonus = skill_bonus(self.character, skill)
+        if bonus is None:
+            return annotation
+        label = skill.replace("_", " ").title()
+        base = f"(DC {dc} {label})"
+        extended = f"(DC {dc} {label}, you {bonus:+d})"
+        if base in annotation:
+            return annotation.replace(base, extended)
+        return extended if not annotation else f"{annotation} {extended}"
+
+    def _refresh_hints(self):
+        """Compose/lift the hidden-choice hint lines on the hinted nodes.
+
+        Runs on every ``choices()`` call (i.e. every render): the active
+        node gets its hint when the threshold is near, every hinted node
+        reverts to its captured base text otherwise. Inert once the
+        session ends (``end()`` already restored the bases).
+        """
+        if not self.active:
+            return
+        for node_id in _HINT_NODES:
+            node = self.dialogue.node(node_id)
+            if node is None:
+                continue
+            base = self._base_texts.get(node_id)
+            if base is None:
+                base = self._base_texts[node_id] = node.text
+            hint = self._hint_for(node_id) if node is self.active_node else None
+            node.text = base if hint is None else f"{base}\n\n{hint}"
+
+    def _hint_for(self, node_id):
+        """The hint line a node should show right now (or None)."""
+        if node_id == "smalltalk":
+            dread = 0.0
+            if self.horror is not None:
+                try:
+                    dread = float(self.horror.dread.level)
+                except Exception:
+                    dread = 0.0
+            low = content.DREAD_MARK_THRESHOLD - content.DREAD_HINT_WINDOW
+            if low <= dread < content.DREAD_MARK_THRESHOLD:
+                return content.HINT_SMALLTALK_DREAD
+        elif node_id == "start":
+            if (content.ATTITUDE_GREETING_THRESHOLD < int(attitude)
+                    <= content.ATTITUDE_HINT_THRESHOLD):
+                return content.HINT_START_ATTITUDE
+        return None
+
+    def _restore_hints(self):
+        """Revert every hinted node to its captured base text (idempotent)."""
+        for node_id, base in self._base_texts.items():
+            node = self.dialogue.node(node_id)
+            if node is not None:
+                node.text = base
 
 
 def _on_session_ended(ended_session):
@@ -246,6 +378,7 @@ def start_talk():
     new_session.on_end.append(_on_session_ended)
     horror.stalker.enabled = False  # his candle holds the dark back
     session = new_session
+    marker_state["talked"] = True  # first contact retires the "!" marker
     return new_session
 
 
@@ -306,6 +439,114 @@ def on_custom_action(event):
         bd.warn(f"inquisition: custom action failed: {exc!r}")
 
 
+# --- talk markers (display list) -------------------------------------------
+
+
+#: Marker lifecycle, read by the autotest: "mark" (the gold "!" is
+#: registered over the Inquisitor), "talk"/"talk_text" (the context
+#: label and its live text), "talked" (the first conversation has
+#: started, retiring the "!" for the rest of the map).
+marker_state = {"mark": False, "talk": False, "talk_text": "",
+                "talked": False}
+
+
+def _safe_draw(func, *args, **kwargs):
+    # Draw calls are display-list registrations: headless-safe no-ops,
+    # but they raise RuntimeError while the world mutates (map unload).
+    try:
+        func(*args, **kwargs)
+    except (RuntimeError, ValueError):
+        pass
+
+
+def _set_mark(show):
+    """Register/clear the gold "!" over the Inquisitor (idempotent)."""
+    if bool(show) == marker_state["mark"]:
+        return
+    marker_state["mark"] = bool(show)
+    if show:
+        _safe_draw(bd.draw_world_text, npc_ref, id=content.MARKER_MARK_ID,
+                   text=content.MARKER_MARK_TEXT,
+                   offset_z=content.MARKER_OFFSET_Z,
+                   color=content.MARKER_MARK_COLOR,
+                   height=content.MARKER_MARK_HEIGHT)
+    else:
+        _safe_draw(bd.draw_clear, content.MARKER_MARK_ID)
+
+
+def _set_talk(show, text=""):
+    """Register/clear the context talk label (idempotent); redraws when
+    the text changes, so a live rebind shows within one refresh."""
+    if show and marker_state["talk"] and marker_state["talk_text"] == text:
+        return
+    if not show and not marker_state["talk"]:
+        return
+    marker_state["talk"] = bool(show)
+    marker_state["talk_text"] = text if show else ""
+    if show:
+        _safe_draw(bd.draw_world_text, npc_ref, id=content.MARKER_TALK_ID,
+                   text=text, offset_z=content.MARKER_OFFSET_Z,
+                   color=content.MARKER_TALK_COLOR,
+                   height=content.MARKER_TALK_HEIGHT)
+    else:
+        _safe_draw(bd.draw_clear, content.MARKER_TALK_ID)
+
+
+def reset_markers():
+    """Fresh map: clear any stale registrations and the lifecycle state.
+
+    World items vanish on map unload on their own; the draw_clear calls
+    cover same-map resets, and marker_state is what the refresh task (and
+    the autotest) reads.
+    """
+    marker_state["mark"] = False
+    marker_state["talk"] = False
+    marker_state["talk_text"] = ""
+    marker_state["talked"] = False
+    _safe_draw(bd.draw_clear, content.MARKER_MARK_ID)
+    _safe_draw(bd.draw_clear, content.MARKER_TALK_ID)
+
+
+def refresh_markers():
+    """Slow repeating task (every MARKER_REFRESH_TICS tics, map-local):
+    owns the Inquisitor's world-marker lifecycle.
+
+    A gold "!" floats over him until the first conversation starts; after
+    that, a "[Q] Talk" label (text from the live Custom Action 1 binding)
+    shows while the player is within TALK_RANGE and no session is open.
+    Both keep the default occlude=True, so line of sight applies, and
+    both vanish with the map on their own; this task only keeps
+    registration and marker_state in step.
+    """
+    npc = npc_ref
+    try:
+        npc_ok = npc is not None and npc.valid and npc.alive
+    except Exception:
+        npc_ok = False
+    if not npc_ok:
+        _set_mark(False)
+        _set_talk(False)
+        return True
+    if not marker_state["talked"]:
+        _set_mark(True)
+        _set_talk(False)
+        return True
+    _set_mark(False)
+    pawn = player_pawn()
+    in_range = False
+    if pawn is not None:
+        try:
+            in_range = pawn.distance_to(npc) <= content.TALK_RANGE
+        except Exception:
+            in_range = False
+    if in_range and bd_dialogue.active_session() is None:
+        _set_talk(True, text=content.TALK_LABEL_TEMPLATE.format(
+            key=action_key_hint(1)))
+    else:
+        _set_talk(False)
+    return True
+
+
 # --- event wiring -------------------------------------------------------------------
 
 
@@ -342,6 +583,9 @@ def on_map(event):
     global npc_ref, crate_pos, candle
     horror.start()              # dread tick + stalker windows
     horror.arm_persistence()    # save/load round-trip via bd.state
+    reset_markers()
+    bd.schedule(refresh_markers, delay=content.MARKER_REFRESH_TICS,
+                repeat=content.MARKER_REFRESH_TICS)  # map-local: dies on unload
     if event.get("from_savegame"):
         return
     pawn = player_pawn()
@@ -366,6 +610,11 @@ def on_map(event):
         bd.spawn(content.CRATE_CLASS, *crate_pos, force=True)
     except Exception as exc:
         bd.warn(f"inquisition spawn crate failed: {exc!r}")
+    try:
+        toasts.toast(content.INTRO_TOAST.format(key=action_key_hint(1)),
+                     kind="omen")
+    except Exception as exc:
+        bd.warn(f"inquisition: intro toast failed: {exc!r}")
 
     # Dusk ambience: a candle over the Inquisitor's sector, and the stalker
     # director hunting while no confession is in progress.

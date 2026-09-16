@@ -50,6 +50,20 @@ CUSTOM_CVAR(Int, gl_fogmode, 2, CVAR_ARCHIVE | CVAR_NOINITCALL)
 	if (self < 0) self = 0;
 }
 
+CVAR(Bool, bd_sectorlight_bleed, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+CUSTOM_CVAR(Float, bd_sectorlight_distance, 192.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 16.0f) self = 16.0f;
+	if (self > 512.0f) self = 512.0f;
+}
+
+CUSTOM_CVAR(Float, bd_sectorlight_strength, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0.0f) self = 0.0f;
+	if (self > 1.0f) self = 1.0f;
+}
+
 
 // OpenGL stuff moved here
 // GL related CVARs

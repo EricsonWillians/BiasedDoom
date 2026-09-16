@@ -46,6 +46,7 @@
 #include "hw_lightbuffer.h"
 #include "hw_bonebuffer.h"
 #include "hw_cvars.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 #include "hwrenderer/data/hw_viewpointbuffer.h"
 #include "hwrenderer/scene/hw_fakeflat.h"
 #include "hwrenderer/scene/hw_clipper.h"
@@ -71,12 +72,13 @@ void CollectLights(FLevelLocals* Level)
 {
 	IShadowMap* sm = &screen->mShadowMap;
 	int lightindex = 0;
+	int maxLights = (int)bd_shadowmap_max_lights;
 
 	// Todo: this should go through the blockmap in a spiral pattern around the player so that closer lights are preferred.
 	for (auto light = Level->lights; light; light = light->next)
 	{
 		IShadowMap::LightsProcessed++;
-		if (light->shadowmapped && light->IsActive() && lightindex < 1024)
+		if (light->shadowmapped && light->IsActive() && lightindex < maxLights)
 		{
 			IShadowMap::LightsShadowmapped++;
 
@@ -91,7 +93,7 @@ void CollectLights(FLevelLocals* Level)
 
 	}
 
-	for (; lightindex < 1024; lightindex++)
+	for (; lightindex < maxLights; lightindex++)
 	{
 		sm->SetLight(lightindex, 0, 0, 0, 0);
 	}
@@ -315,6 +317,12 @@ static void CheckTimer(FRenderState &state, uint64_t ShaderStartTime)
 	// if we're going to overflow a float (after ~4.6 hours, or 24 bits), re-init to regain precision
 	if ((state.firstFrame == 0) || (screen->FrameTime - state.firstFrame >= 1 << 24) || ShaderStartTime >= state.firstFrame)
 		state.firstFrame = screen->FrameTime - 1;
+}
+
+
+void ResetSWSceneFBTextures()
+{
+	if (swdrawer) swdrawer->ResetFBTextures();
 }
 
 

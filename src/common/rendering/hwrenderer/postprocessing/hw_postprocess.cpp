@@ -86,6 +86,8 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth,
   ExtractUniforms extractUniforms;
   extractUniforms.Scale = screen->SceneScale();
   extractUniforms.Offset = screen->SceneOffset();
+  extractUniforms.Threshold = bd_bloom_threshold;
+  extractUniforms.Knee = bd_bloom_knee;
 
   auto &level0 = levels[0];
 
@@ -102,7 +104,8 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth,
 
   const float blurAmount = gl_bloom_amount;
   BlurUniforms blurUniforms;
-  ComputeBlurSamples(7, blurAmount, blurUniforms.SampleWeights);
+  ComputeBlurSamples(7, blurAmount * bd_bloom_radius, blurUniforms.SampleWeights);
+  blurUniforms.RadiusScale = bd_bloom_radius;
 
   // Blur and downscale:
   for (int i = 0; i < NumBloomLevels - 1; i++) {
@@ -125,38 +128,34 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth,
     renderstate->Draw();
   }
 
-  // Blur and upscale:
+  // Accumulate the blurred mip chain back upward. Upsampling is additive so
+  // each level retains its own contribution instead of overwriting the finer
+  // level and compounding the highlight rolloff through every transfer.
   for (int i = NumBloomLevels - 1; i > 0; i--) {
     auto &blevel = levels[i];
     auto &next = levels[i - 1];
 
-    BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture,
-             blevel.Viewport, false);
-    BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture,
-             blevel.Viewport, true);
-
-    // Linear upscale:
     renderstate->Clear();
     renderstate->Shader = &BloomCombine;
     renderstate->Uniforms.Clear();
     renderstate->Viewport = next.Viewport;
-    renderstate->SetInputTexture(0, &blevel.VTexture, PPFilterMode::Linear);
+    renderstate->SetInputTexture(0, &blevel.VTexture, PPFilterMode::Linear,
+                                 PPWrapMode::Mirror);
     renderstate->SetOutputTexture(&next.VTexture);
-    renderstate->SetNoBlend();
+    renderstate->SetAdditiveBlend();
     renderstate->Draw();
   }
 
-  BlurStep(renderstate, blurUniforms, level0.VTexture, level0.HTexture,
-           level0.Viewport, false);
-  BlurStep(renderstate, blurUniforms, level0.HTexture, level0.VTexture,
-           level0.Viewport, true);
+  BloomCompositeUniforms compositeUniforms;
+  compositeUniforms.Intensity = bd_bloom_intensity;
 
   // Add bloom back to scene texture:
   renderstate->Clear();
-  renderstate->Shader = &BloomCombine;
-  renderstate->Uniforms.Clear();
+  renderstate->Shader = &BloomFinal;
+  renderstate->Uniforms.Set(compositeUniforms);
   renderstate->Viewport = screen->mSceneViewport;
-  renderstate->SetInputTexture(0, &level0.VTexture, PPFilterMode::Linear);
+  renderstate->SetInputTexture(0, &level0.VTexture, PPFilterMode::Linear,
+                               PPWrapMode::Mirror);
   renderstate->SetOutputCurrent();
   renderstate->SetAdditiveBlend();
   renderstate->Draw();
@@ -204,6 +203,7 @@ void PPBloom::RenderBlur(PPRenderState *renderstate, int sceneWidth,
 
   BlurUniforms blurUniforms;
   ComputeBlurSamples(7, blurAmount, blurUniforms.SampleWeights);
+  blurUniforms.RadiusScale = 1.0f;
 
   // Blur and downscale:
   for (int i = 0; i < numLevels - 1; i++) {
@@ -272,7 +272,8 @@ void PPBloom::BlurStep(PPRenderState *renderstate,
   renderstate->Shader = vertical ? &BlurVertical : &BlurHorizontal;
   renderstate->Uniforms.Set(blurUniforms);
   renderstate->Viewport = viewport;
-  renderstate->SetInputTexture(0, &input);
+  renderstate->SetInputTexture(0, &input, PPFilterMode::Linear,
+                               PPWrapMode::Mirror);
   renderstate->SetOutputTexture(&output);
   renderstate->SetNoBlend();
   renderstate->Draw();

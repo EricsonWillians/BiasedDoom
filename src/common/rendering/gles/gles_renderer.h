@@ -48,6 +48,7 @@ public:
 	FShaderManager *mShaderManager = nullptr;
 	FSamplerManager* mSamplerManager = nullptr;
 	unsigned int mFBID = 0;
+	unsigned int mSectorBleedID = 0;
 	unsigned int mStencilValue = 0;
 
 	int mOldFBID = 0;

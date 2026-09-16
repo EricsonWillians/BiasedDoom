@@ -287,12 +287,19 @@ public:
 
 struct DShape2DBufferInfo : RefCountedBase
 {
+	DShape2DBufferInfo();
+	~DShape2DBufferInfo();
+
 	TArray<F2DVertexBuffer> buffers;
 	bool needsVertexUpload = true;
 	int bufIndex = -1;
 	int lastCommand = -1;
 	bool uploadedOnce = false;
 };
+
+// Releases backend-owned cached shape buffers before the video backend is
+// replaced; shape data is re-uploaded lazily on the next draw.
+void InvalidateShape2DBuffers();
 
 class DShape2D : public DObject
 {

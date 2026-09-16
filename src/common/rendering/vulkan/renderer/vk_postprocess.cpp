@@ -219,31 +219,23 @@ void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma,
   uniforms.CrtScanlineSharpness = gl_crt_scanline_sharpness;
   uniforms.CrtMaskIntensity = gl_crt_mask_intensity;
   uniforms.NtscMode = (postfxEnabled ? gl_ntsc_mode : 0);
-  uniforms.VignetteEnable = (postfxEnabled && bd_vignette_enable) ? 1 : 0;
   uniforms.VignetteStrength =
       (postfxEnabled && bd_vignette_enable) ? bd_vignette_strength : 0.0f;
-  uniforms.ChromaticEnable =
-      (postfxEnabled && bd_chromatic_enable) ? 1 : 0;
   uniforms.ChromaticStrength =
       (postfxEnabled && bd_chromatic_enable) ? bd_chromatic_strength : 0.0f;
-  uniforms.FilmgrainEnable =
-      (postfxEnabled && bd_filmgrain_enable) ? 1 : 0;
   uniforms.FilmgrainStrength =
       (postfxEnabled && bd_filmgrain_enable) ? bd_filmgrain_strength : 0.0f;
   uniforms.FilmgrainScale = bd_filmgrain_scale;
-  uniforms.SharpenEnable = (postfxEnabled && bd_sharpen_enable) ? 1 : 0;
   uniforms.SharpenStrength =
       (postfxEnabled && bd_sharpen_enable) ? bd_sharpen_strength : 0.0f;
-  uniforms.RetroPixelEnable =
-      (postfxEnabled && bd_retro_pixel_enable) ? 1 : 0;
-  uniforms.RetroPixelScale = bd_retro_pixel_scale;
+  uniforms.RetroPixelScale =
+      (postfxEnabled && bd_retro_pixel_enable) ? bd_retro_pixel_scale : 1.0f;
   uniforms.ColorgradeMode =
       (postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_mode : 0;
   uniforms.ColorgradeStrength =
       (postfxEnabled) ? bd_colorgrade_strength : 0.0f;
   uniforms.ColorgradeLut =
       (postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_lut : 0;
-  uniforms.VhsEnable = (postfxEnabled && bd_vhs_enable) ? 1 : 0;
   uniforms.VhsStrength =
       (postfxEnabled && bd_vhs_enable) ? bd_vhs_strength : 0.0f;
   uniforms.VhsScanline =
@@ -261,6 +253,51 @@ void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma,
       (postfxEnabled && bd_vhs_enable) ? bd_vhs_evil : 0.0f;
   uniforms.VhsPanicEnable =
       (postfxEnabled && bd_vhs_enable && bd_vhs_panic_enable) ? 1 : 0;
+  uniforms.GradeEnable = (postfxEnabled && bd_grade_enable) ? 1 : 0;
+  uniforms.VibranceStrength =
+      (postfxEnabled && bd_vibrance_enable) ? bd_vibrance_strength : 0.0f;
+  uniforms.WhiteBalanceTemperature =
+      (postfxEnabled && bd_whitebalance_enable) ? bd_whitebalance_temperature
+                                                : 0.0f;
+  uniforms.WhiteBalanceTint =
+      (postfxEnabled && bd_whitebalance_enable) ? bd_whitebalance_tint : 0.0f;
+  uniforms.HueShiftDegrees =
+      (postfxEnabled && bd_hueshift_enable) ? bd_hueshift_degrees : 0.0f;
+  uniforms.PosterizeLevels =
+      (postfxEnabled && bd_posterize_enable) ? bd_posterize_levels : 0.0f;
+  uniforms.EdgeGlowStrength =
+      (postfxEnabled && bd_edgeglow_enable) ? bd_edgeglow_strength : 0.0f;
+  uniforms.EdgeGlowThreshold =
+      (postfxEnabled && bd_edgeglow_enable) ? bd_edgeglow_threshold : 0.0f;
+  uniforms.GodRaysStrength =
+      (postfxEnabled && bd_godrays_enable) ? bd_godrays_strength : 0.0f;
+  uniforms.GodRaysLength = bd_godrays_length;
+  uniforms.GodRaysThreshold = bd_godrays_threshold;
+  uniforms.LensFlareStrength =
+      (postfxEnabled && bd_lensflare_enable) ? bd_lensflare_strength : 0.0f;
+  uniforms.ClarityStrength =
+      (postfxEnabled && bd_clarity_enable) ? bd_clarity_strength : 0.0f;
+  if (postfxEnabled && bd_grade_enable) {
+    uniforms.GradeLiftR = bd_grade_lift_r;
+    uniforms.GradeLiftG = bd_grade_lift_g;
+    uniforms.GradeLiftB = bd_grade_lift_b;
+    uniforms.GradeGammaR = bd_grade_gamma_r;
+    uniforms.GradeGammaG = bd_grade_gamma_g;
+    uniforms.GradeGammaB = bd_grade_gamma_b;
+    uniforms.GradeGainR = bd_grade_gain_r;
+    uniforms.GradeGainG = bd_grade_gain_g;
+    uniforms.GradeGainB = bd_grade_gain_b;
+  } else {
+    uniforms.GradeLiftR = 0.0f;
+    uniforms.GradeLiftG = 0.0f;
+    uniforms.GradeLiftB = 0.0f;
+    uniforms.GradeGammaR = 1.0f;
+    uniforms.GradeGammaG = 1.0f;
+    uniforms.GradeGammaB = 1.0f;
+    uniforms.GradeGainR = 1.0f;
+    uniforms.GradeGainG = 1.0f;
+    uniforms.GradeGainB = 1.0f;
+  }
   uniforms.ColorScale =
       (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);
 

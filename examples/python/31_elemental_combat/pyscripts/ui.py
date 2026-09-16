@@ -120,8 +120,6 @@ def _draw_contents(imgui: Any) -> None:
         if _sigil_button(imgui, element, systems.focus[0] == element):
             try:
                 systems.focus[0] = element
-                r, g, b = content.ELEMENT_COLORS[element]
-                bd.screen_flash(r, g, b, 0.15)
             except Exception as exc:
                 bd.warn(f"pyre & rime: sigil click failed: {exc!r}")
     theme.faded_text(content.ELEMENT_PROSE[systems.focus[0]])

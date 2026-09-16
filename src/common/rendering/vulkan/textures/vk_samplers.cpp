@@ -96,7 +96,12 @@ void VkSamplerManager::CreateHWSamplers()
 		builder.MipmapMode(TexFilter[filter].mipfilter);
 		if (TexFilter[filter].mipmapping)
 		{
-			builder.Anisotropy(gl_texture_filter_anisotropic);
+			// A value of 0 means "driver default" in the menu and the GL backend
+			// maps it to 1.0 (off). vkCreateSampler requires maxAnisotropy >= 1.0
+			// when anisotropyEnable is set, and NVIDIA's driver crashes on 0, so
+			// only request anisotropy when it is actually above 1.
+			if (gl_texture_filter_anisotropic > 1.0f)
+				builder.Anisotropy(gl_texture_filter_anisotropic);
 			builder.MaxLod(100.0f); // According to the spec this value is clamped so something high makes it usable for all textures.
 		}
 		else
@@ -150,16 +155,22 @@ void VkSamplerManager::DeleteHWSamplers()
 
 VulkanSampler* VkSamplerManager::Get(PPFilterMode filter, PPWrapMode wrap)
 {
-	int index = (((int)filter) << 1) | (int)wrap;
+	int index = (((int)filter) * 3) + (int)wrap;
 	auto& sampler = mPPSamplers[index];
 	if (sampler)
 		return sampler.get();
+
+	VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	if (wrap == PPWrapMode::Repeat)
+		addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+	else if (wrap == PPWrapMode::Mirror)
+		addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
 
 	sampler = SamplerBuilder()
 		.MipmapMode(VK_SAMPLER_MIPMAP_MODE_NEAREST)
 		.MinFilter(filter == PPFilterMode::Nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
 		.MagFilter(filter == PPFilterMode::Nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
-		.AddressMode(wrap == PPWrapMode::Clamp ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT)
+		.AddressMode(addressMode)
 		.DebugName("VkPostprocess.mSamplers")
 		.Create(fb->device.get());
 

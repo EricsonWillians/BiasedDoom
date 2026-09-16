@@ -132,6 +132,23 @@ void FTextureManager::FlushAll()
 
 //==========================================================================
 //
+// Deletes all backend-created materials. Unlike FlushAll this is only
+// needed when the video backend itself is replaced at runtime, because
+// FMaterial subclasses may reference their creating render device.
+// Materials are recreated lazily by the new backend.
+//
+//==========================================================================
+
+void FTextureManager::FlushMaterials()
+{
+	for (int i = TexMan.NumTextures() - 1; i >= 0; i--)
+	{
+		Textures[i].Texture->DeleteMaterials();
+	}
+}
+
+//==========================================================================
+//
 // Examines the lump contents to decide what type of texture to create,
 // and creates the texture.
 //

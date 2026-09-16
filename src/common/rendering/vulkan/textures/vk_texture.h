@@ -24,6 +24,7 @@ public:
 	void BeginFrame();
 
 	void SetLightmap(int LMTextureSize, int LMTextureCount, const TArray<uint16_t>& LMTextureData);
+	void SetSectorBleed(int width, int height, const TArray<uint8_t>& data);
 
 	VkTextureImage* GetTexture(const PPTextureType& type, PPTexture* tex);
 	VkFormat GetTextureFormat(PPTexture* texture);
@@ -39,11 +40,13 @@ public:
 
 	VkTextureImage Shadowmap;
 	VkTextureImage Lightmap;
+	VkTextureImage SectorBleed;
 
 private:
 	void CreateNullTexture();
 	void CreateShadowmap();
 	void CreateLightmap();
+	void CreateSectorBleed();
 
 	VkPPTexture* GetVkTexture(PPTexture* texture);
 

@@ -62,6 +62,7 @@ public:
 	FShadowMapShader *mShadowMapShader = nullptr;
 
 	int mLightMapID = 0;
+	int mSectorBleedID = 0;
 
 	//FRotator mAngles;
 

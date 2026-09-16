@@ -352,6 +352,21 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 			vec4 uFogGradientDirection;
 			vec4 uFogQuality;
 			float uFogMinVisibility;
+			float uLightContrast;
+			float uSpecularPowerScale;
+			float uRimLightStrength;
+			float uRimLightPower;
+			float uAmbientGradientStrength;
+			float uLightStylePadding2;
+			float uLightStylePadding3;
+			vec4 uAmbientGradientColor;
+			float uSceneTime;
+			float uDynLightFlicker;
+			float uAerialStrength;
+			float uAerialDistance;
+			vec4 uSpecularTintColor;
+			vec4 uSectorBleedBounds;
+			vec4 uSectorBleedParams;
 		};
 
 		uniform int uTextureMode;
@@ -435,6 +450,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		uniform sampler2D tex;
 		uniform sampler2D ShadowMap;
 		uniform sampler2DArray LightMap;
+		uniform sampler2D SectorBleed;
 		uniform sampler2D texture2;
 		uniform sampler2D texture3;
 		uniform sampler2D texture4;
@@ -815,6 +831,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 
 	int lightmapindex = glGetUniformLocation(hShader, "LightMap");
 	if (lightmapindex != -1) glUniform1i(lightmapindex, 17);
+
+	GLint textureUnits = 0;
+	glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &textureUnits);
+	int sectorBleedIndex = glGetUniformLocation(hShader, "SectorBleed");
+	if (sectorBleedIndex != -1 && textureUnits > 18) glUniform1i(sectorBleedIndex, 18);
 
 	glUseProgram(0);
 	return true;

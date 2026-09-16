@@ -259,32 +259,23 @@ void FGLRenderer::prepareInterleavedPresent(FPresentShaderBase& shader)
 	shader.Uniforms->CrtScanlineSharpness = gl_crt_scanline_sharpness;
 	shader.Uniforms->CrtMaskIntensity = gl_crt_mask_intensity;
 	shader.Uniforms->NtscMode = (postfxEnabled ? gl_ntsc_mode : 0);
-	shader.Uniforms->VignetteEnable = (postfxEnabled && bd_vignette_enable) ? 1 : 0;
 	shader.Uniforms->VignetteStrength =
 		(postfxEnabled && bd_vignette_enable) ? bd_vignette_strength : 0.0f;
-	shader.Uniforms->ChromaticEnable =
-		(postfxEnabled && bd_chromatic_enable) ? 1 : 0;
 	shader.Uniforms->ChromaticStrength =
 		(postfxEnabled && bd_chromatic_enable) ? bd_chromatic_strength : 0.0f;
-	shader.Uniforms->FilmgrainEnable =
-		(postfxEnabled && bd_filmgrain_enable) ? 1 : 0;
 	shader.Uniforms->FilmgrainStrength =
 		(postfxEnabled && bd_filmgrain_enable) ? bd_filmgrain_strength : 0.0f;
 	shader.Uniforms->FilmgrainScale = bd_filmgrain_scale;
-	shader.Uniforms->SharpenEnable =
-		(postfxEnabled && bd_sharpen_enable) ? 1 : 0;
 	shader.Uniforms->SharpenStrength =
 		(postfxEnabled && bd_sharpen_enable) ? bd_sharpen_strength : 0.0f;
-	shader.Uniforms->RetroPixelEnable =
-		(postfxEnabled && bd_retro_pixel_enable) ? 1 : 0;
-	shader.Uniforms->RetroPixelScale = bd_retro_pixel_scale;
+	shader.Uniforms->RetroPixelScale =
+		(postfxEnabled && bd_retro_pixel_enable) ? bd_retro_pixel_scale : 1.0f;
 	shader.Uniforms->ColorgradeMode =
 		(postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_mode : 0;
 	shader.Uniforms->ColorgradeStrength =
 		(postfxEnabled) ? bd_colorgrade_strength : 0.0f;
 	shader.Uniforms->ColorgradeLut =
 		(postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_lut : 0;
-	shader.Uniforms->VhsEnable = (postfxEnabled && bd_vhs_enable) ? 1 : 0;
 	shader.Uniforms->VhsStrength =
 		(postfxEnabled && bd_vhs_enable) ? bd_vhs_strength : 0.0f;
 	shader.Uniforms->VhsScanline =
@@ -303,6 +294,54 @@ void FGLRenderer::prepareInterleavedPresent(FPresentShaderBase& shader)
 		(postfxEnabled && bd_vhs_enable) ? bd_vhs_evil : 0.0f;
 	shader.Uniforms->VhsPanicEnable =
 		(postfxEnabled && bd_vhs_enable && bd_vhs_panic_enable) ? 1 : 0;
+	shader.Uniforms->GradeEnable =
+		(postfxEnabled && bd_grade_enable) ? 1 : 0;
+	shader.Uniforms->VibranceStrength =
+		(postfxEnabled && bd_vibrance_enable) ? bd_vibrance_strength : 0.0f;
+	shader.Uniforms->WhiteBalanceTemperature =
+		(postfxEnabled && bd_whitebalance_enable) ? bd_whitebalance_temperature : 0.0f;
+	shader.Uniforms->WhiteBalanceTint =
+		(postfxEnabled && bd_whitebalance_enable) ? bd_whitebalance_tint : 0.0f;
+	shader.Uniforms->HueShiftDegrees =
+		(postfxEnabled && bd_hueshift_enable) ? bd_hueshift_degrees : 0.0f;
+	shader.Uniforms->PosterizeLevels =
+		(postfxEnabled && bd_posterize_enable) ? bd_posterize_levels : 0.0f;
+	shader.Uniforms->EdgeGlowStrength =
+		(postfxEnabled && bd_edgeglow_enable) ? bd_edgeglow_strength : 0.0f;
+	shader.Uniforms->EdgeGlowThreshold =
+		(postfxEnabled && bd_edgeglow_enable) ? bd_edgeglow_threshold : 0.0f;
+	shader.Uniforms->GodRaysStrength =
+		(postfxEnabled && bd_godrays_enable) ? bd_godrays_strength : 0.0f;
+	shader.Uniforms->GodRaysLength = bd_godrays_length;
+	shader.Uniforms->GodRaysThreshold = bd_godrays_threshold;
+	shader.Uniforms->LensFlareStrength =
+		(postfxEnabled && bd_lensflare_enable) ? bd_lensflare_strength : 0.0f;
+	shader.Uniforms->ClarityStrength =
+		(postfxEnabled && bd_clarity_enable) ? bd_clarity_strength : 0.0f;
+	if (postfxEnabled && bd_grade_enable)
+	{
+		shader.Uniforms->GradeLiftR = bd_grade_lift_r;
+		shader.Uniforms->GradeLiftG = bd_grade_lift_g;
+		shader.Uniforms->GradeLiftB = bd_grade_lift_b;
+		shader.Uniforms->GradeGammaR = bd_grade_gamma_r;
+		shader.Uniforms->GradeGammaG = bd_grade_gamma_g;
+		shader.Uniforms->GradeGammaB = bd_grade_gamma_b;
+		shader.Uniforms->GradeGainR = bd_grade_gain_r;
+		shader.Uniforms->GradeGainG = bd_grade_gain_g;
+		shader.Uniforms->GradeGainB = bd_grade_gain_b;
+	}
+	else
+	{
+		shader.Uniforms->GradeLiftR = 0.0f;
+		shader.Uniforms->GradeLiftG = 0.0f;
+		shader.Uniforms->GradeLiftB = 0.0f;
+		shader.Uniforms->GradeGammaR = 1.0f;
+		shader.Uniforms->GradeGammaG = 1.0f;
+		shader.Uniforms->GradeGammaB = 1.0f;
+		shader.Uniforms->GradeGainR = 1.0f;
+		shader.Uniforms->GradeGainG = 1.0f;
+		shader.Uniforms->GradeGainB = 1.0f;
+	}
 
 	shader.Uniforms->HdrMode = 0;
 	shader.Uniforms->ColorScale = (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);

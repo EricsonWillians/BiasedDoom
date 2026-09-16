@@ -108,6 +108,8 @@ FGLRenderer::~FGLRenderer()
 	TexMan.FlushAll();
 	if (mShaderManager != nullptr) delete mShaderManager;
 	if (mSamplerManager != nullptr) delete mSamplerManager;
+	if (mLightMapID != 0) glDeleteTextures(1, (GLuint*)&mLightMapID);
+	if (mSectorBleedID != 0) glDeleteTextures(1, (GLuint*)&mSectorBleedID);
 	if (mFBID != 0) glDeleteFramebuffers(1, &mFBID);
 	if (mVAOID != 0)
 	{

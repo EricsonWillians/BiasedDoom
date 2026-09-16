@@ -809,6 +809,23 @@ void I_ShutdownGraphics()
 void I_InitGraphics()
 {
 	Video = new CocoaVideo;
+	currentVideoBackend = 0;
+}
+
+bool I_SupportsLiveBackendSwitch()
+{
+	// Live backend switching is currently only implemented for the SDL backend.
+	return false;
+}
+
+void I_RestartGraphics()
+{
+	// Never called: I_SupportsLiveBackendSwitch() returns false here.
+}
+
+void I_ShowGraphicsWindow()
+{
+	// Never called: I_SupportsLiveBackendSwitch() returns false here.
 }
 
 

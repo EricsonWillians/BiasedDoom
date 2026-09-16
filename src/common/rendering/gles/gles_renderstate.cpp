@@ -251,6 +251,19 @@ bool FGLRenderState::ApplyShader()
 		activeShader->cur->muFogGradientDirection.Set(&mHwUniforms->mFogGradientDirection.X);
 		activeShader->cur->muFogQuality.Set(&mHwUniforms->mFogQuality.X);
 		activeShader->cur->muFogMinVisibility.Set(mHwUniforms->mFogMinVisibility);
+		activeShader->cur->muLightContrast.Set(mHwUniforms->mLightContrast);
+		activeShader->cur->muSpecularPowerScale.Set(mHwUniforms->mSpecularPowerScale);
+		activeShader->cur->muRimLightStrength.Set(mHwUniforms->mRimLightStrength);
+		activeShader->cur->muRimLightPower.Set(mHwUniforms->mRimLightPower);
+		activeShader->cur->muAmbientGradientStrength.Set(mHwUniforms->mAmbientGradientStrength);
+		activeShader->cur->muAmbientGradientColor.Set(&mHwUniforms->mAmbientGradientColor.X);
+		activeShader->cur->muSceneTime.Set(mHwUniforms->mSceneTime);
+		activeShader->cur->muDynLightFlicker.Set(mHwUniforms->mDynLightFlicker);
+		activeShader->cur->muAerialStrength.Set(mHwUniforms->mAerialStrength);
+		activeShader->cur->muAerialDistance.Set(mHwUniforms->mAerialDistance);
+		activeShader->cur->muSpecularTintColor.Set(&mHwUniforms->mSpecularTintColor.X);
+		activeShader->cur->muSectorBleedBounds.Set(&mHwUniforms->mSectorBleedBounds.X);
+		activeShader->cur->muSectorBleedParams.Set(&mHwUniforms->mSectorBleedParams.X);
 	}
 
 	glVertexAttrib4fv(VATTR_COLOR, &mStreamData.uVertexColor.X);

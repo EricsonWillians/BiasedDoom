@@ -103,3 +103,38 @@ void I_InitGraphics ()
 	if (Video == NULL)
 		I_FatalError ("Failed to initialize display");
 }
+
+bool I_SupportsLiveBackendSwitch ()
+{
+	return !I_IsHeadless();
+}
+
+void I_RestartGraphics ()
+{
+	if (Video)
+		delete Video, Video = NULL;
+
+	// The Vulkan backend never destroys its window, so make sure it is gone
+	// before the new IVideo creates one with different flags.
+	extern void SDL_DestroyVideoWindow();
+	SDL_DestroyVideoWindow();
+
+	if (I_IsHeadless())
+	{
+		Video = new NullVideo();
+	}
+	else
+	{
+		extern IVideo *gl_CreateVideo();
+		Video = gl_CreateVideo();
+	}
+
+	if (Video == NULL)
+		I_FatalError ("Failed to initialize display");
+}
+
+void I_ShowGraphicsWindow ()
+{
+	extern void SDL_ShowVideoWindow();
+	SDL_ShowVideoWindow();
+}

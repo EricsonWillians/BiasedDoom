@@ -30,6 +30,7 @@ version "4.15.1"
 #include "zscript/engine/ui/menu/search/searchfield.zs"
 #include "zscript/engine/ui/menu/search/query.zs"
 #include "zscript/engine/ui/menu/search/anyoralloption.zs"
+#include "zscript/engine/ui/menu/presetmenu.zs"
 
 #include "zscript/engine/ui/statusbar/statusbarcore.zs"
 

@@ -54,6 +54,23 @@ struct HWViewpointUniforms
 	// Lower bound for the fog visibility factor so distant geometry can never
 	// be swallowed completely by fog.
 	float mFogMinVisibility = 0.f;
+	float mLightContrast = 1.f;
+	float mSpecularPowerScale = 1.f;
+	float mRimLightStrength = 0.f;
+	float mRimLightPower = 3.f;
+	float mAmbientGradientStrength = 0.f;
+	float mLightStylePadding2 = 0.f;
+	float mLightStylePadding3 = 0.f;
+	FVector4 mAmbientGradientColor = { 0.f, 0.f, 0.f, 0.f };
+	float mSceneTime = 0.f;
+	float mDynLightFlicker = 0.f;
+	float mAerialStrength = 0.f;
+	float mAerialDistance = 2048.f;
+	FVector4 mSpecularTintColor = { 1.f, 1.f, 1.f, 0.f };
+	// World-space sector-light bleed map: minimum XY and reciprocal extent.
+	FVector4 mSectorBleedBounds = { 0.f, 0.f, 0.f, 0.f };
+	// Blend strength in X; the remaining components are reserved.
+	FVector4 mSectorBleedParams = { 0.f, 0.f, 0.f, 0.f };
 
 	void CalcDependencies()
 	{

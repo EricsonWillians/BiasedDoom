@@ -235,6 +235,8 @@ public:
 	virtual void BlurScene(float amount) {}
 
 	virtual void InitLightmap(int LMTextureSize, int LMTextureCount, TArray<uint16_t>& LMTextureData) {}
+	virtual bool SupportsSectorBleed() const { return false; }
+	virtual void InitSectorBleed(int width, int height, const TArray<uint8_t>& data) {}
 
     // Interface to hardware rendering resources
 	virtual IVertexBuffer *CreateVertexBuffer() { return nullptr; }
@@ -320,8 +322,15 @@ void V_Init2 ();
 void V_Shutdown ();
 int V_GetBackend();
 
+// Live backend switching: recreates the video backend at a frame boundary.
+void V_RestartBackend();
+
 inline bool IsRatioWidescreen(int ratio) { return (ratio & 3) != 0; }
-extern bool setsizeneeded, setmodeneeded;
+extern bool setsizeneeded, setmodeneeded, backendchangeneeded;
+
+// The backend that is actually active (0=OpenGL, 1=Vulkan, 2=GLES), which can
+// differ from vid_preferbackend when creation fell back to another backend.
+extern int currentVideoBackend;
 
 
 #endif // __V_VIDEO_H__

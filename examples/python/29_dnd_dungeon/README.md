@@ -1,155 +1,174 @@
-# The Sunken Crypt (D&D Dungeon)
+# The Delve (D&D rules layer)
 
-A grave-dark D&D delve built on the **engine-shipped `bd_dnd` rules
-framework** (`src/python/lib/bd_dnd/`) and dressed in the **`bd_horror`
-presentation pack** (`src/python/lib/bd_horror/` — theme, toasts, light
-programs). Both are importable from any Python mod with a plain `import`.
+A map-agnostic **D&D rules layer** for BiasedDoom's embedded Python,
+built on the engine-shipped **`bd_dnd`** framework, the **`bd_horror`**
+presentation pack (toasts and the sheet skin), and the **`bd_quests`**
+journal pack. It takes its shape from `15_roguelike_run`: no probed
+fixtures, no map gating, one clear loop that works identically on every
+map, and everything announced loudly.
 
-You are **Morrow, the Grave-Hardened**, a level-1 fighter (str 16,
-dex 12, con 14, d10 hit die) built through the `bd_dnd`
-`CreationWizard`; he has buried more friends than he has kept. **The
-Hollow Warden** — a hexer who died on watch and kept
-walking — descends with you, its bound **crypt hound** (a friendly
-Demon) shadowing your steps.
+**The loop.** You found a delver, and every map deals you a contract:
+a **blood tribute** (put down N of the map's monsters) and a crowned
+**Warden** to slay. Kills pay XP with floating gold popups; levels heal
+you fully, toughen your blows, and offer a **boon**; every check is a
+**visible d20**; locked doors force or pick open on rolls; rests are
+safe only in the light and spawn real nightmares in the dark; the
+**Guild Hound** fights at your side. And there is one pool of blood:
+the character sheet's hp and the marine's health bar are the same
+thing, kept at the same ratio everywhere.
 
-**The delve rides every map of the WAD, not one.** Every tabled monster
-in Doom, Heretic, and Hexen pays kill XP; each level toughens your blows
-(+1 damage per level past the first, capped, through the
-`actor_before_damage` filter); any locked door in the game can be *bashed
-open* with an Athletics check instead of its key; any hit can be rolled
-with on a DEX save for half; and rest heals the marine's body as well as
-the sheet. A persistent strip at the bottom of the screen tracks name,
-level, XP, Blood, and the current damage bonus.
+## Founding (resembles D&D)
 
-MAP02 is where the crypt proper shows itself: two graverobber-thralls
-and a crypt imp near the entrance as an opening tribute, the sealed red
-door on line 111 as the bash's reference fixture, a dart trap in the
-entrance chamber (sector 7, tag 13), and torch-light guttering over the
-tagged sectors (bd_horror `candle`/`fluorescent` light programs — no
-Dread meter, no heartbeat: the example retired them). Rest is only safe
-where the light holds: **sanctuary rests** require sector light ≥ 160.
-Sleep in the dark and the **nightmare** comes — a DEX save vs. DC 12;
-fail and the dark eats a *resolve* charge ("The dark dreams with you."),
-succeed and you wake fitful with half the benefit. When the crypt hound
-falls, a deep bell tolls below.
+The first interactive map opens a world-paused **founding window** (the
+engine is literally paused while you read). A name field (prefilled
+"Delver") and three class cards; one click drives a real
+`bd_dnd.CreationWizard` (standard array, preset scores, class skill
+picks, `finish()`), no shortcuts:
+
+| Card | Hit die | Saves | Skills | Active ([C]) |
+|------|---------|-------|--------|--------------|
+| **Fighter** | d10 | str/con | athletics, perception | **Second Wind**: heal hit die + level, sheet and body |
+| **Rogue** | d8 | dex/int | sleight_of_hand, perception | **Uncanny Dodge**: 5 seconds at ~1/3 incoming damage; also picks locked doors (DEX sleight_of_hand, DC - 2) instead of bashing |
+| **Cleric** | d8 | wis/cha | religion, insight | **Turn the Unholy**: 12 + 2/level fire damage to everything within 160 units |
+
+Each class's level-1 feature grants the active's charge; its level-2
+feature raises the maximum by one. **Custom Action 3** (auto-bound to
+**C**, alias `class_active`) fires the active; with no charges the
+message names the refill (the rest action). The party is the hero plus
+the **Guild Hound**, a second `bd_dnd.Character` that a `bd_dnd.Companion`
+(a friendly Demon) binds to: it spawns fit-checked near you each map,
+fights what hurts you, what you hurt, and what hurts it, and if it
+cannot close distance for 30 tics (a ledge, a wall, a lift) it teleports
+to your side anyway.
+
+## Blood is the body (health unification)
+
+There is **one health pool**, kept at one ratio everywhere:
+`sheet.hp / sheet.max_hp == pawn.health / 100`. Vanilla Doom health is
+fully integrated; nothing is ignored and nothing is double-counted.
+
+- **Pawn damage** removes `damage * sheet.max_hp / 100` sheet hp,
+  immediately, through the `actor_damaged` hook. The event reports what
+  landed **after armor**, so armor integrates naturally by reducing
+  pawn damage pre-sync. Armor and ammo stay vanilla.
+- **Pawn-health gains** the 10-tic map-local diff detector sees
+  (medikits, stimpacks, soulspheres, `pawn.heal` from RPG effects like
+  the reflex-save refund) heal the sheet by the same ratio.
+- **RPG-side heals** (rests, Second Wind, level-up) heal the pawn back
+  toward the sheet's ratio, upward only.
+- **Level-up and map_load** hard-resync the pawn to the sheet's ratio
+  (both directions), absorbing per-event rounding.
+
+A `_syncing` guard (the same pattern the companion module uses) keeps
+the resync's own corrections from feeding back. The Delver window and
+the strip tell the one truth: `Blood 8/12` next to `Body 67`.
+
+## Skills that matter in Doom
+
+Proficiency (+2) matters in every one of these, and each bonus shows
+up in the Delver window with its live context:
+
+| Skill | Doom effect |
+|-------|-------------|
+| **Athletics** | Door bash (STR, DC 15). **CQB training** (proficient): +2 damage on your hits within 96 units, through the `actor_before_damage` filter, distance from the event's refs. |
+| **Perception** | **Trap sense**: the first entry per map into a sector with `sector.damage > 0` (nukage, lava) rolls Perception vs DC 12 through the visible announce path ("Your skin prickles: the floor is death here.", once per map). **Dead-eye** (proficient): +1 damage on your hits beyond 512 units, same filter. |
+| **Sleight of hand** | Rogue lockpicking: doors pick with DEX sleight_of_hand at DC - 2 instead of STR bash. |
+| **Religion** | Proficient: the sanctuary rest threshold drops 160 to 140, and the nightmare save rolls **WIS** instead of DEX ("faith wards the dark"; the announced check names the ability actually rolled). |
+| **Insight** | **Examine**: a 7-tic geometric probe (aim cone + native sight check, fires nothing) reads the crosshair monster; the examine line shows name + HP for everyone, plus its XP value (`DEFAULT_XP_TABLE`) and a threat note ("deadly for your level" when its XP >= 4 x 25 x your level) only when Insight-proficient. Cached by handle identity; headless-safe. |
+
+## The Delver window (Q)
+
+**Custom Action 1** (auto-bound to **Q**, alias `toggle_sheet`) opens
+the full character window, every value read live: **Body** (Blood bar,
+sheet pool, plus a body bar for the pawn), **Experience** (XP bar and
+"N to level L+1"), **Abilities** (six scores with modifiers), **Vocation**
+(class, hit die, saves, level features), **Skills** (each class skill's
+total bonus, modifier + proficiency + mastery, with its live Doom
+context string: "bash DC 15: need 11+ on d20; CQB +2 within 96u",
+"pick DC 13: need 7+", "sanctuary at 140; wards the nightmare (WIS)",
+"examine the crosshair"), **Active** (charges and the refill hint),
+**Contract** (both objectives with progress, the map's modifier, and
+the depth), **Examine** (the crosshair target's data), and **Boons**
+(pending and taken this run).
+
+## The HUD strip
+
+Two `bd.draw_text` lines (35-tic refresh), plus a third only while the
+crosshair holds a monster:
+
+```
+LV n  XP x/y (need N)  Blood s/max  Body hp  [C] <active> xN
+Rest: sanctuary|the dark dreams  Contract: tribute k/N - Warden alive|slain  [MODIFIER]  Depth n
+Warden of MAP01 (Demon)  HP 240/240  250 XP  deadly
+```
+
+Segments that do not apply are omitted (no contract on empty maps, no
+bracket on a plain contract). Display-list ids live in the documented
+block in `content.py` (887100-887102, 887300+).
+
+## Depth and contract modifiers (replayability)
+
+- **Depth** (`bd.state["delve_depth"]`, contracts completed, persisted):
+  Warden health multiplier 2.5 + 0.25/depth (cap 5), Warden XP
+  multiplier 5 + depth (cap 10), tribute goal +1/depth (cap census - 1),
+  contract reward 200 + 50/depth. The strip carries it.
+- **One modifier per map**, rolled deterministically from
+  `bd.rng(bd.state["delve_seed"] (default 29) + byte-sum(map name))`,
+  announced center-screen (no screen tint): **IRON WARDEN** (Warden
+  health x2 more, XP +2 shares), **HORDE** (tribute x2 capped
+  census - 1, +100 XP), **DARK DELVE** (sanctuary +20, nightmare
+  DC +2, contract XP x1.5), **GUILD BOUNTY** (contract XP x2),
+  **BLOODHOUND** (the hound at +50% hp this map), and a plain contract
+  at ~30% weight. The weighted table lives in `content.py`.
+
+## Level-up boons
+
+Every level-up queues a **pick-one-of-three** in a world-paused chooser
+(mouse buttons or keys 1/2/3, all driving the same `systems.pick_boon`
+the autotest calls): **Toughness** (+2 max sheet hp), **Deadly** (+1
+damage through the level filter, stacking), **Prepared** (+1 max
+class-active charge). Pending and taken boons persist through bd.state
+save/load handlers.
+
+## Doors, saves, and the combat loop
+
+- **Any locked door** in the game opens on a check instead of its key:
+  `DoorBashRules` dispatches a card-lending `LockedDoorCheck` per locked
+  line (locks 1-3 and 129-134 all accept the Doom key cards, per
+  `wadsrc/static/lockdefs.txt`; refused lines are remembered and never
+  spammed). The first touch of a line toasts "Barred. Use it again to
+  force it." Fighters and Clerics bash (STR athletics, DC 15); Rogues
+  pick (DEX sleight_of_hand, DC 13). MAP02's red door on line 111
+  survives only as the autotest's real locked-door fixture, commented
+  as such in `content.py`.
+- **Reflex save**: any incoming hit rolls an announced DEX save vs DC 12
+  (35-tic cooldown): half is refunded on a success, all of it on a
+  natural 20. The refund heals the body, so the sheet gains the same
+  ratio through the health sync. Because it rolls mid-combat on every
+  hit, it skips the center-screen banner (`announce_check(center=False)`)
+  and shows only the floating d20 readout.
+- **Kill XP everywhere**: the full Doom/Heretic/Hexen table credits the
+  local player's kills exactly (`track_xp_from_kills`,
+  `player_index=0`), with a floating gold "+N XP" over each credited
+  kill.
+- **Levels**: level-up heals sheet and pawn fully (hard resync), fires
+  a gold ring burst, a chime, and "LEVEL N", queues a boon, and each
+  level past the first adds +1 damage to every hit you land on a
+  monster (capped, through the `actor_before_damage` filter).
+- Fanfares stay in the world and the HUD: no full-view screen tints.
 
 ## Architecture
 
 Four modules, all listed in the `PYTHON` manifest in load order (the
-engine executes every manifest line; siblings also reach each other
-through `sys.modules`, exactly how `hello_world` imports
-`pyscripts/helper.py`):
+engine executes every manifest line; siblings reach each other through
+`sys.modules`):
 
 | File | Role |
 |------|------|
-| `pyscripts/content.py` | **Pure data + factories.** The delvers (Morrow is rolled up by a driven `CreationWizard` bound to the `FIGHTER` `CharacterClass` with the Grave-Hardened and Second Wind level-1 features), probed MAP02 constants (door line/approach, trap tag, sector tags 13/7/12), progression tuning (level damage cap, save DC/cooldown, HUD refresh), rest rules, prose and toast lines. No engine calls at import. |
-| `pyscripts/systems.py` | **Behavior.** `arm_crypt_lights` (MAP02), `DoorBashRules` (any locked line on any map, lending the Doom key cards for one native activation; refused lines are remembered and never spam), `wire_level_damage` (level bonus through `actor_before_damage`), `use_second_wind` (active heal, sheet and pawn), `try_long_rest` (sanctuary/nightmare/fitful branches, mending the pawn too), the progression strip, level-up and death-knell wiring, checkpoint quiescence. Registers no events at import. |
-| `pyscripts/ui.py` | **Interface.** The character sheet as a bd_horror *reliquary* (Vessel / Vocation / Vitality / Omens sections; Vessel spells out the modifier rule, Vocation reads the bound class's hit die, saves, skills, and feature descriptions), the party roster chapel, and the toast stack. No-op headless. |
-| `pyscripts/main.py` | **Bootstrap + autotest.** Object graph, event wiring, the MAP02 gating for the set pieces, and the full deterministic test schedule. |
-
-## What it teaches
-
-- `roll("2d6+3")` / `d20(advantage=True)` dice: notation parsing,
-  advantage/disadvantage, natural-20/natural-1 criticals, all through
-  the deterministic savegame-serialized script RNG
-- `ABILITIES` / `modifier()` / `SKILLS` / `proficiency_bonus()`: the
-  5e math tables (floored modifiers, 2 + (level-1)//4 proficiency)
-- `CharacterClass` / `CreationWizard` / `bind_class`: the classes
-  layer. Morrow is data: a Fighter class definition (d10 hit die, str/con
-  saves, athletics/perception class skills, level features) plus a driven
-  wizard whose `finish()` binds the class and applies the level-1
-  Grave-Hardened and Second Wind features, seeding the resolve and
-  second_wind pools. Later levels run through the `on_level_up` hook
-  (Death Knell is flavor at level 2) and level 4 queues two ASI points on
-  `pending_asi`
-- `Character`: `skill_check` / `ability_check` / `saving_throw` with
-  rich result dicts and a roll log, `award_xp` with the 5e threshold
-  table, hit-die level-ups with `on_level_up` hooks, short/long rests,
-  and per-rest `resources` (`grant_resource` / `use_resource` /
-  `restore_resources`)
-- `track_xp_from_kills`: the full-roster monster XP table (Doom II,
-  Heretic, Hexen — see `DEFAULT_XP_TABLE`) wired to `actor_died` with
-  exact player-credit attribution (`player_index=0`: only the local
-  player's kills award XP; `player_index=None` restores the legacy
-  any-death policy)
-- `actor_before_damage` as a progression hook: the mutable pre-damage
-  filter adds the level bonus to every hit the local player lands on a
-  monster
-- `DamageSaveRule`: `actor_damaged` on the player -> DEX save ->
-  retroactive heal refund (half on a success, full on a natural 20),
-  with cooldown and damage-type filtering
-- `Party` / `PartyState`: a two-member roster (Morrow plus the Hollow
-  Warden) with shared/solo XP awards, persisted through the checkpoint
-  round-trip
-- `Companion`: the Warden is bound to a friendly crypt hound in the
-  world — it shadows the player (follow loop + teleport catch-up,
-  re-binding itself on every map), fights the player's recent attackers
-  through its native AI (`Actor.target` is writable), its actor health
-  *is* the Warden's RPG hp (two-way sync through
-  `Character.on_hp_changed` / `set_hp`), death incapacitates the Warden
-  and `revive()` respawns it at half hp; the descriptor rides along in
-  the `PartyState` checkpoint and re-binds by TID after a load
-- `LockedDoorCheck`: `line_activation_failed` (reason `"locked"`) ->
-  Athletics bash -> native door opening; the example's `DoorBashRules`
-  dispatcher scales it from one probed door to *every* locked line,
-  lending all three Doom key cards (locks 1-3 and 129-134 all accept
-  them, per `wadsrc/static/lockdefs.txt`) and remembering lines whose
-  activation is refused
-- `TrapZone`: `sector_entered` on tagged sectors -> DEX save -> full or
-  halved native damage, with `once`/cooldown control — armed only on the
-  crypt map so no other map's tag 13 can spring it
-- `DialogueSkillGate`: `conversation_reply` -> skill check -> callbacks
-  (unit-tested in the autotest; MAP02 has no Strife NPCs)
-- `CharacterState` persistence: level/XP/HP/abilities/proficiencies/
-  resources round-trip through `bd.save_checkpoint` / `bd.load_checkpoint`
-  with zero extra mod-side code
-- `bd.draw_text` as a persistent HUD: the progression strip is one
-  display-list item with a stable id, refreshed by a slow repeating task
-- `bd_horror.theme`: the reliquary skin — `apply()`/`clear()`,
-  `begin_window`, `section`, `bar` (blood/ember/bruise tones, pulse),
-  `omen_text`, `kv_row`; roll-log omens colored success=sickly /
-  fail=blood / crit=ember
-- `bd_horror.toasts`: diegetic toast queue (`quest`/`harm`/`info` kinds)
-  with an assertable history ring
-- `bd_horror.atmosphere`: the `LightManager` half of `HorrorState`
-  running `candle` and `fluorescent` programs over the crypt's tagged
-  sectors, persisted through `bd.state` (the `Dread` meter and the
-  `StalkerDirector` are deliberately never started in this example)
-
-## The map probes behind the numbers
-
-MAP02 has no *visible* classic locked specials through the engine
-because GZDoom translates Doom-format specials. Probing `bd.lines()`
-shows the red door as engine special 13 (`Door_LockedRaise`) with args
-`[7, 64, 0, 129, 0]` (lock 129 = red key) on **lines 111/112**; the raw
-WAD has it as special 135. It is approached from **(752, 1328)** facing
-**angle 270**. Using it without the key fires `line_activation_failed`
-with `reason == "locked"` (drive `BT_USE` in `pre_tick` with 1-tic
-pulses, and set `actor.angle` directly — `set_input(yaw=...)` is a
-delta, not an absolute facing).
-
-`Line.activate` executes the special directly, and the engine's lock
-check (`P_CheckKeys`) rejects a null activator — so the bash lends the
-Doom key cards (`RedCard`/`BlueCard`/`YellowCard`) to the activator for
-one native `activate(activator, clear=True)` and reclaims them
-immediately.
-
-`bd.sectors()` tags (verified live): **sector 7** (the player start
-room, light 144) carries **tag 13**; **sectors 40-43** (the drowned
-passage beyond the red door, light 128) carry **tag 7**; **sector 47**
-(the corpse-light hall, light 96) carries **tag 12**. The door approach
-point and the south corridor are untagged (sectors 38 and 0), which
-makes them safe autotest fixtures for the forced-darkness rest
-experiments. `sector_entered` fires for teleports with
-`set_position(..., check=False)` and for the initial spawn at t=0.
-
-One checkpoint caveat, probe-verified: candle/fluorescent programs draw
-from the deterministic script RNG on every step, and after a savegame
-load their task phase re-anchors to the load time — so a checkpoint
-taken mid-flicker cannot resume the *exact* RNG stream. The autotest
-therefore quiesces the light programs just before the save and re-arms
-them after the stream assertion; interactive play lets them ride
-`HorrorState` persistence normally.
+| `pyscripts/content.py` | **Pure data + factories.** The three classes with their level-1/level-2 active features, preset standard arrays and card prose, `make_delver`, the contract factory, skill constants (CQB/dead-eye/trap-sense/religion/examine), the health-unification contract, the modifier table, boon definitions, tuning, the MAP02 autotest door fixture (clearly commented), display-list ids, prose. No engine calls at import. |
+| `pyscripts/systems.py` | **Behavior.** The health sync (`arm_health_sync`, the actor_damaged hook, ratio heals, hard resync), `hit_bonus_for` (level + Deadly + CQB + dead-eye), `announce_check`, trap sense, the examine probe and grading, religion-aware rests, the founding, the contract (census, crown, modifiers, depth, tribute/warden death handling, fanfare), `DoorBashRules`, `ReflexSaveRule`, class actives, boons (`queue_boon`/`pick_boon`/persistence), the cold restore, the two-line strip. Registers no events at import. |
+| `pyscripts/ui.py` | **Interface.** The world-paused founding window, the full Delver window, and the world-paused boon chooser. No-op headless. |
+| `pyscripts/main.py` | **Bootstrap + autotest.** Object wiring, custom actions and aliases, the map_load/founding/arm flow, and the full deterministic test schedule. |
 
 ## Running it
 
@@ -166,84 +185,97 @@ Or directly:
     -file examples/python/29_dnd_dungeon +map MAP02
 ```
 
-Any map works — `+map MAP01`, a megawad, Heretic or Hexen with their own
-bestiary rows: the crypt's set pieces stay home on MAP02 and the rules
-layer (XP, toughened blows, rests, bashing, reflex saves, the hound)
-travels with you.
+Any map works, any game with a tabled bestiary (Doom, Heretic, Hexen):
+the loop is identical everywhere.
 
-Controls: **Custom Action 1** (auto-bound to **Q**; or `toggle_sheet`
-at the console) opens/closes the reliquary sheet; **Custom Action 2**
-(auto-bound to **V**; or `crypt_rest`) attempts a rest — find light
->= 160 for a true sanctuary rest that mends body and sheet; **Custom
-Action 3** (auto-bound to **C**; or `second_wind`) spends the Second
-Wind charge to heal by the hit die plus your level. All three appear as
-"Custom Action N" under Options -> Customize Controls, Custom Actions,
-and any binding you set there is respected. Kill anything tabled for XP
-(the "+XP" flashes stack into the level-up flash and a harder-hitting
-marine), brave the dart trap on MAP02 by leaving the entrance chamber
-and walking back in, then follow the corridor and **use the sealed
-door**: the bash check rolls in the Omens — "The door holds fast." on a
-failure, and the door grinds open on a success. The same bash works on
-any locked door in the game.
-
-Headless autotest (deterministic; asserts the whole rules engine
-including the `CreationWizard`/`CharacterClass` classes layer, the light
-programs, the nightmare/fitful/sanctuary rest branches on sheet and
-pawn, the generic door-bash dispatcher, the level-damage filter, the
-Second Wind press, the companion spawn/damage-sync/teleport/kill/revive
-paths and its death toll, the real door-bash and trap paths, then a
-checkpoint save/load round-trip verifying the script RNG stream resumes
-exactly and all character, party, companion, and light-program state
-survives):
+Headless autotest (deterministic; asserts the founding through the same
+function the cards call, all three classes' presets/features/actives,
+the contract end to end (deterministic Warden pick, credited-only
+tribute counting, the Warden kill and its depth-scaled bounty,
+completion XP and fanfare, the deterministic modifier from the same
+seed function), the visible-roll log (real line-111 bash drive, reflex
+save, both rest branches, the WIS religion roll, the trap-sense roll),
+health sync both ways (pawn wound to sheet ratio, diff-detected gain,
+RPG heal to pawn ratio, level-up hard resync), CQB and dead-eye at
+planted distances, the nightmare spawn (hostile, not FRIENDLY), the
+examine probe and its Insight gating, class actives (heal/blur/burst),
+the boons (queue on level-up, each card's effect, checkpoint
+persistence), the companion (damage sync, teleport catch-up, the
+stuck-teleport across a 136-unit drop, kill knell, revive), and a
+checkpoint round-trip (RNG stream, CharacterState, PartyState,
+companion rebind, contract + depth + modifier + boon state)):
 
 ```bash
 BD_EXAMPLE_AUTOTEST=1 ./build/biaseddoom -headless \
     -iwad ~/games/doom2.wad -file examples/python/29_dnd_dungeon \
-    -python -scripttest 1400 4 -nosound +map MAP02
+    -python -scripttest 1800 4 -nosound +map MAP02
 # -> SCRIPT TEST: PASS
 ```
 
-Cross-map smoke (the point of the redesign — nothing MAP02-specific may
-fire, and nothing may error, on another map):
+Universality smokes (headless founds the default Fighter; the contract
+must crown a Warden and nothing may error):
 
 ```bash
-./build/biaseddoom -headless \
-    -iwad ~/games/doom2.wad -file examples/python/29_dnd_dungeon \
-    -python -scripttest 400 4 -nosound +map MAP01
-# -> SCRIPT TEST: PASS (no scenario, no errors; rules layer idle-safe)
+./build/biaseddoom -headless -iwad ~/games/doom2.wad \
+    -file examples/python/29_dnd_dungeon -python -scripttest 400 4 \
+    -nosound +map MAP01
+# -> SCRIPT TEST: PASS (Warden of MAP01 crowned, zero errors)
+./build/biaseddoom -headless -iwad ~/games/doom2.wad \
+    -file examples/python/29_dnd_dungeon -python -scripttest 400 4 \
+    -nosound +map MAP03
+# -> SCRIPT TEST: PASS (Warden of MAP03 crowned, zero errors)
 ```
 
-Screenshot capture (writes `/tmp/sunken_crypt.png` a few seconds in):
+Screenshot capture (writes `/tmp/the_delve.png` a few seconds in):
 
 ```bash
 BD_EXAMPLE_SCREENSHOT=1 xvfb-run -a ./build/biaseddoom \
     -iwad ~/games/doom2.wad -file examples/python/29_dnd_dungeon \
-    -python +map MAP02
+    -python -nosound +map MAP01
 ```
 
-## Expanding the crypt
+## Probe appendix (autotest fixtures only)
 
-- **New monsters worth XP**: the roster lives in bd_dnd's
-  `DEFAULT_XP_TABLE` (Doom II, Heretic, Hexen); a mod may override it
-  per class or pass its own table to `track_xp_from_kills`. MAP02's
-  opening tribute is `MONSTER_SPAWNS` in `content.py`.
-- **Re-rolling Morrow**: edit `HERO_ABILITY_SCORES` or the skill picks
-  in `content.make_hero_via_wizard()`; the wizard validates the build
-  (standard array, point buy, or rolled scores) and `bind_class` applies
-  the level-1 feature package.
-- **New traps**: construct another `bd_dnd.TrapZone` with a different
-  tag/DC/damage, armed from `on_map` when `systems.is_crypt_map()` (or
-  your own map gate) holds.
-- **More darkness**: add tags to `CANDLE_TAGS` / `CORPSE_LIGHT_TAGS`
-  (probe with `bd.sectors()`). Want the Dread meter and its heartbeat
-  back? `bd_horror.Dread` still ships in the framework —
-  `horror.dread.start()` is one call away; this example just chooses
-  silence.
-- **Rest rules**: tune `SANCTUARY_LIGHT`, `NIGHTMARE_DC`, and
-  `FITFUL_HEAL_FRACTION` in `content.py`; the branches and toasts live
-  in `systems.try_long_rest`.
-- **Progression tuning**: `LEVEL_DAMAGE_BONUS_CAP`, `SAVE_DC`,
-  `SAVE_COOLDOWN_TICS`, and `HUD_REFRESH_TICS` in `content.py`.
-- **Presentation**: re-tint the whole interface by editing
-  `bd_horror.theme.PALETTE` before `apply()`, or add sections to
-  `ui._draw_reliquary_body`.
+The rebuild kept a handful of probed fixtures, all autotest-only.
+MAP02's red door is engine special 13 (`Door_LockedRaise`) with args
+`[7, 64, 0, 129, 0]` (lock 129 = red key) on **lines 111/112**,
+approached from **(752, 1328, 48)** facing **angle 270**; the bash's
+card-lending `activate(activator, clear=True)` consumes the special
+(13 -> 0), which the test asserts directly. The stuck-teleport fixture
+uses two probed spots: the corridor floor at **(820, 1236, 48)** and
+the water hall at **(500, 1100, -88)**, with an unclimbable 136-unit
+wall and ~348 units of separation (inside `teleport_distance`, so only
+the stuck-teleport can close it). The burst fixture: GZDoom's radius
+falloff subtracts the target's radius (probe-verified), so a
+point-blank target takes the burst's full damage. The examine probe is
+pure geometry (`bd.actor_refs` with the C++ sphere push-down, one
+`bd.actor_field_batch` read, a bearing/pitch cone, `check_sight` for
+walls); it fires nothing, because even a zero-damage `bd.line_attack`
+spawns BulletPuffs and bullet decals along the trace. The trap-sense
+stage drives a synthetic `sector_entered` over a temporarily damaging
+sector (`sector.damage` is writable), because MAP02 carries no nukage
+of its own.
+
+## Expanding the Delve
+
+- **A fourth class card**: add a `CharacterClass` (features granting the
+  active's charge at level 1 and +1 max at level 2), a `CLASS_PRESETS`
+  row, a `CLASS_ACTIVES` row, and an effect branch in
+  `systems.use_class_active`. The founding window picks it up from
+  `CLASS_LIST` on its own.
+- **A fifth boon**: add a row to `content.BOONS` and an effect branch
+  in `systems.pick_boon`; the chooser renders it from the table.
+- **New modifiers**: add a weighted row to `content.CONTRACT_MODIFIERS`
+  and wire its id into the `systems` helpers (warden mults, tribute
+  goal, reward, sanctuary threshold, nightmare DC, hound buff).
+- **Skill tuning**: `CQB_RANGE` / `CQB_BONUS`, `DEADEYE_RANGE` /
+  `DEADEYE_BONUS`, `TRAP_SENSE_DC`, `RELIGION_SANCTUARY_LIGHT`,
+  `DEADLY_BASE_BOUNTY` / `THREAT_MULTIPLIER` in `content.py`.
+- **Rest tuning**: `SANCTUARY_LIGHT`, `NIGHTMARE_DC`,
+  `FITFUL_HEAL_FRACTION`, `REST_COOLDOWN_TICS`, and the nightmare spawn
+  table.
+- **Contract/depth tuning**: `WARDEN_HEALTH_MULT(_PER_DEPTH/_CAP)`,
+  `WARDEN_XP_MULT(_PER_DEPTH/_CAP)`, `TRIBUTE_GOAL_PER_DEPTH`,
+  `CONTRACT_XP(_PER_DEPTH)`, and the modifier deltas.
+- **Presentation**: re-tint the interface via `bd_horror.theme.PALETTE`
+  before `apply()`, or add sections to the Delver window's body.

@@ -304,6 +304,19 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		uniform vec4 uFogGradientDirection;
 		uniform vec4 uFogQuality;
 		uniform float uFogMinVisibility;
+		uniform float uLightContrast;
+		uniform float uSpecularPowerScale;
+		uniform float uRimLightStrength;
+		uniform float uRimLightPower;
+		uniform float uAmbientGradientStrength;
+		uniform vec4 uAmbientGradientColor;
+		uniform float uSceneTime;
+		uniform float uDynLightFlicker;
+		uniform float uAerialStrength;
+		uniform float uAerialDistance;
+		uniform vec4 uSpecularTintColor;
+		uniform vec4 uSectorBleedBounds;
+		uniform vec4 uSectorBleedParams;
 
 		uniform int uTextureMode;
 		uniform vec2 uClipSplit;
@@ -362,6 +375,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		// textures
 		uniform sampler2D tex;
 		uniform sampler2D ShadowMap;
+		uniform sampler2D SectorBleed;
 		uniform sampler2D texture2;
 		uniform sampler2D texture3;
 		uniform sampler2D texture4;
@@ -623,6 +637,19 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 	shaderData->muFogGradientDirection.Init(shaderData->hShader, "uFogGradientDirection");
 	shaderData->muFogQuality.Init(shaderData->hShader, "uFogQuality");
 	shaderData->muFogMinVisibility.Init(shaderData->hShader, "uFogMinVisibility");
+	shaderData->muLightContrast.Init(shaderData->hShader, "uLightContrast");
+	shaderData->muSpecularPowerScale.Init(shaderData->hShader, "uSpecularPowerScale");
+	shaderData->muRimLightStrength.Init(shaderData->hShader, "uRimLightStrength");
+	shaderData->muRimLightPower.Init(shaderData->hShader, "uRimLightPower");
+	shaderData->muAmbientGradientStrength.Init(shaderData->hShader, "uAmbientGradientStrength");
+	shaderData->muAmbientGradientColor.Init(shaderData->hShader, "uAmbientGradientColor");
+	shaderData->muSceneTime.Init(shaderData->hShader, "uSceneTime");
+	shaderData->muDynLightFlicker.Init(shaderData->hShader, "uDynLightFlicker");
+	shaderData->muAerialStrength.Init(shaderData->hShader, "uAerialStrength");
+	shaderData->muAerialDistance.Init(shaderData->hShader, "uAerialDistance");
+	shaderData->muSpecularTintColor.Init(shaderData->hShader, "uSpecularTintColor");
+	shaderData->muSectorBleedBounds.Init(shaderData->hShader, "uSectorBleedBounds");
+	shaderData->muSectorBleedParams.Init(shaderData->hShader, "uSectorBleedParams");
 	////
 
 	shaderData->muDesaturation.Init(shaderData->hShader, "uDesaturationFactor");
@@ -679,6 +706,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 
 	int shadowmapindex = glGetUniformLocation(shaderData->hShader, "ShadowMap");
 	if (shadowmapindex >= 0) glUniform1i(shadowmapindex, 16);
+
+	GLint textureUnits = 0;
+	glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &textureUnits);
+	int sectorBleedIndex = glGetUniformLocation(shaderData->hShader, "SectorBleed");
+	if (sectorBleedIndex >= 0 && textureUnits > 18) glUniform1i(sectorBleedIndex, 18);
 
 	glUseProgram(0);
 

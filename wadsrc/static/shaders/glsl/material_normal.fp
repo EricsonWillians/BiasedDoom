@@ -86,16 +86,16 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 
 	if ( uLightBlendMode == 1 )
 	{	// COLOR_CORRECT_CLAMPING 
-	vec3 lightcolor = ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength));
+	vec3 lightcolor = ApplyBiasedAmbientFloor(ApplyBiasedAmbientGradient(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), normal));
 		frag = material.Base.rgb * ((lightcolor / max(max(max(lightcolor.r, lightcolor.g), lightcolor.b), 1.4) * 1.4));
 	}
 	else if ( uLightBlendMode == 2 )
 	{	// UNCLAMPED 
-	frag = material.Base.rgb * ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength));
+	frag = material.Base.rgb * ApplyBiasedAmbientFloor(ApplyBiasedAmbientGradient(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), normal));
 	}
 	else
 	{
-	frag = material.Base.rgb * clamp(ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength)), 0.0, 1.4);
+	frag = material.Base.rgb * clamp(ApplyBiasedAmbientFloor(ApplyBiasedAmbientGradient(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), normal)), 0.0, 1.4);
 	}
 
 	if (uLightIndex >= 0)

@@ -1301,7 +1301,7 @@ PyObject* ActorCallZScript(PyObject* object, PyObject* args)
 
 PyMethodDef ActorMethods[] = {
 	{ "snapshot", ActorSnapshotMethod, METH_NOARGS, "Return a serialization-friendly snapshot." },
-	{ "set_position", BD_GAME_KEYWORD_FUNCTION(ActorSetPosition), METH_VARARGS | METH_KEYWORDS, "Move immediately, optionally checking collision." },
+	{ "set_position", BD_GAME_KEYWORD_FUNCTION(ActorSetPosition), METH_VARARGS | METH_KEYWORDS, "Move immediately, optionally checking collision. Returns True when the actor moved." },
 	{ "set_velocity", BD_GAME_KEYWORD_FUNCTION(ActorSetVelocity), METH_VARARGS | METH_KEYWORDS, "Replace or add to velocity." },
 	{ "thrust", BD_GAME_KEYWORD_FUNCTION(ActorThrust), METH_VARARGS | METH_KEYWORDS, "Apply horizontal/vertical thrust." },
 	{ "damage", BD_GAME_KEYWORD_FUNCTION(ActorDamage), METH_VARARGS | METH_KEYWORDS, "Apply native gameplay damage." },

@@ -87,14 +87,14 @@ level. The stats panel shows a live XP bar.
 Player-centered feedback lives in `playerfx.py`, built on the same
 `bd.draw_world_ring` primitive as the monster auras:
 
-- **Level up**: a gold aura ring bursts around your feet (auto-expiring),
-  with a soft gold `bd.screen_flash` and a pickup sound.
+- **Level up**: a gold aura ring bursts around your feet (auto-expiring)
+  with a pickup sound.
 - **VAMPIRE proc**: every kill that feeds you 2 HP pulses a brief green
   ring under you.
-- **Affix damage feedback**: taking a hit from an affixed monster flashes
-  the screen in ITS affix color (subtle, damage-scaled, capped) — a
-  Burning zombie's hit burns orange, a Frozen one's bites blue. Plain
-  monsters keep vanilla Doom's red feedback.
+
+No screen tints anywhere in this example: full-view flashes, fades, and
+frame overlays fight your aim mid-combat, so first-person feedback stays
+in the world (rings) or in the HUD (text color).
 
 ## Mutators
 

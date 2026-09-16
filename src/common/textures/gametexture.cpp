@@ -115,6 +115,15 @@ FGameTexture::~FGameTexture()
 
 }
 
+void FGameTexture::DeleteMaterials()
+{
+	for (auto &mat : Material)
+	{
+		if (mat != nullptr) delete mat;
+		mat = nullptr;
+	}
+}
+
 //==========================================================================
 //
 //

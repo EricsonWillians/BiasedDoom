@@ -32,6 +32,7 @@ VkTextureManager::VkTextureManager(VulkanRenderDevice* fb) : fb(fb)
 	CreateNullTexture();
 	CreateShadowmap();
 	CreateLightmap();
+	CreateSectorBleed();
 }
 
 VkTextureManager::~VkTextureManager()
@@ -177,6 +178,63 @@ void VkTextureManager::CreateShadowmap()
 	VkImageTransition()
 		.AddImage(&Shadowmap, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true)
 		.Execute(fb->GetCommands()->GetDrawCommands());
+}
+
+void VkTextureManager::CreateSectorBleed()
+{
+	TArray<uint8_t> data;
+	data.Push(0);
+	data.Push(0);
+	data.Push(0);
+	data.Push(255);
+	SetSectorBleed(1, 1, data);
+}
+
+void VkTextureManager::SetSectorBleed(int width, int height, const TArray<uint8_t>& data)
+{
+	SectorBleed.Reset(fb);
+
+	SectorBleed.Image = ImageBuilder()
+		.Size(width, height)
+		.Format(VK_FORMAT_R8G8B8A8_UNORM)
+		.Usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+		.DebugName("VkRenderBuffers.SectorBleed")
+		.Create(fb->device.get());
+
+	SectorBleed.View = ImageViewBuilder()
+		.Image(SectorBleed.Image.get(), VK_FORMAT_R8G8B8A8_UNORM)
+		.DebugName("VkRenderBuffers.SectorBleedView")
+		.Create(fb->device.get());
+
+	auto cmdbuffer = fb->GetCommands()->GetTransferCommands();
+	const int totalSize = width * height * 4;
+
+	auto stagingBuffer = BufferBuilder()
+		.Size(totalSize)
+		.Usage(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY)
+		.DebugName("VkHardwareTexture.SectorBleedStaging")
+		.Create(fb->device.get());
+
+	memcpy(stagingBuffer->Map(0, totalSize), data.Data(), totalSize);
+	stagingBuffer->Unmap();
+
+	VkImageTransition()
+		.AddImage(&SectorBleed, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true)
+		.Execute(cmdbuffer);
+
+	VkBufferImageCopy region = {};
+	region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	region.imageSubresource.layerCount = 1;
+	region.imageExtent.depth = 1;
+	region.imageExtent.width = width;
+	region.imageExtent.height = height;
+	cmdbuffer->copyBufferToImage(stagingBuffer->buffer, SectorBleed.Image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+	VkImageTransition()
+		.AddImage(&SectorBleed, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false)
+		.Execute(cmdbuffer);
+
+	fb->GetCommands()->TransferDeleteList->Add(std::move(stagingBuffer));
 }
 
 void VkTextureManager::CreateLightmap()

@@ -332,6 +332,12 @@ public:
 
 	void CleanHardwareData(bool full = true);
 
+	// Deletes the backend-created materials; they are recreated lazily by the
+	// active backend. Needed when the video backend is switched at runtime,
+	// because FMaterial subclasses may hold pointers into their creating
+	// render device.
+	void DeleteMaterials();
+
 	void GetLayers(TArray<FTexture*>& layers)
 	{
 		layers.Clear();

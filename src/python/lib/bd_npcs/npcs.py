@@ -204,6 +204,11 @@ class NPCManager:
     ``bd.state[dispositions.state_key]["tids"]`` (the manager shares the
     store's state key so everything lands in one bucket). Definitions
     and actor handles are never persisted.
+
+    :meth:`retire` takes an NPC off duty (the recruit who joins the
+    party as a follower): the actor leaves the world, the manager stops
+    tracking and respawning it, and the retired set round-trips through
+    the same state bucket. Standings survive retirement.
     """
 
     def __init__(self, dispositions: Optional[Disposition] = None) -> None:
@@ -212,6 +217,7 @@ class NPCManager:
         self._defs: Dict[str, NPCDefinition] = {}
         self._handles: Dict[str, Any] = {}
         self._tids: Dict[str, int] = {}
+        self._retired: set = set()
         self._persistence_armed: bool = False
 
     # -- registration ------------------------------------------------------------
@@ -241,6 +247,47 @@ class NPCManager:
         """The definition for ``npc_id``, or None."""
         return self._defs.get(str(npc_id))
 
+    # -- retirement (an NPC leaves duty) ------------------------------------------
+
+    @property
+    def retired(self) -> Tuple[str, ...]:
+        """The retired NPC ids, in sorted order."""
+        return tuple(sorted(self._retired))
+
+    def is_retired(self, npc_id: str) -> bool:
+        """True when ``npc_id`` has been retired."""
+        return str(npc_id) in self._retired
+
+    def retire(self, npc_id: str, destroy_actor: bool = True) -> bool:
+        """Take a live NPC off duty: gone from the world, not forgotten.
+
+        The actor is destroyed (default) or simply released
+        (``destroy_actor=False``, for a mod adopting the actor itself,
+        e.g. turning a recruit into a follower), the handle and the
+        persisted TID are dropped so :meth:`nearest`, :meth:`prompt`,
+        and the savegame rebind stop tracking it, and later
+        :meth:`spawn_all` calls skip the definition, on this map and
+        after a checkpoint load (the retired set round-trips through the
+        same ``bd.state`` bucket as the TIDs). The disposition standing
+        is kept: a companion who joined you still has its standing.
+        Returns True when the id was registered (known), False
+        otherwise.
+        """
+        npc_id = str(npc_id)
+        if npc_id not in self._defs:
+            return False
+        handle = self.actor_for(npc_id)
+        if destroy_actor and handle is not None:
+            try:
+                handle.destroy()
+            except Exception as exc:
+                bd.warn(f"bd_npcs: could not destroy retired NPC "
+                        f"{npc_id!r}: {exc!r}")
+        self._handles.pop(npc_id, None)
+        self._tids.pop(npc_id, None)
+        self._retired.add(npc_id)
+        return True
+
     # -- spawning ------------------------------------------------------------------
 
     def spawn_all(self, from_savegame: bool = False) -> List[Any]:
@@ -264,6 +311,8 @@ class NPCManager:
             bd.warn("bd_npcs: no player pawn; NPCs spawn at their "
                     "offsets from the map origin")
         for index, definition in enumerate(self._defs.values()):
+            if definition.id in self._retired:
+                continue  # off duty (e.g. recruited away): never respawns
             handle = None
             if from_savegame:
                 handle = self._rebind(definition)
@@ -562,24 +611,28 @@ class NPCManager:
                 bd.warn(f"bd_npcs: could not restore NPC tids: {exc!r}")
 
     def _save_tids(self) -> None:
-        self._bucket()["tids"] = {npc_id: int(tid)
-                                  for npc_id, tid in self._tids.items()
-                                  if tid}
+        bucket = self._bucket()
+        bucket["tids"] = {npc_id: int(tid)
+                          for npc_id, tid in self._tids.items()
+                          if tid}
+        bucket["retired"] = sorted(self._retired)
 
     def _load_tids(self) -> None:
         bucket = bd.state.get(self.dispositions.state_key)
         data = bucket.get("tids") if isinstance(bucket, dict) else None
-        if not isinstance(data, dict):
-            return
-        tids: Dict[str, int] = {}
-        for npc_id, tid in data.items():
-            try:
-                tid = int(tid)
-            except (TypeError, ValueError):
-                continue
-            if tid > 0:
-                tids[str(npc_id)] = tid
-        self._tids = tids
+        if isinstance(data, dict):
+            tids: Dict[str, int] = {}
+            for npc_id, tid in data.items():
+                try:
+                    tid = int(tid)
+                except (TypeError, ValueError):
+                    continue
+                if tid > 0:
+                    tids[str(npc_id)] = tid
+            self._tids = tids
+        retired = bucket.get("retired") if isinstance(bucket, dict) else None
+        if isinstance(retired, (list, tuple)):
+            self._retired = {str(npc_id) for npc_id in retired}
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (f"<NPCManager npcs={len(self._defs)} "

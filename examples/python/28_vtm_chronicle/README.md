@@ -22,7 +22,7 @@ are definition-only when executed; `main.py` imports them as siblings via
 | Module | Role |
 |---|---|
 | `pyscripts/content.py` | Pure data: the mortal herd (names/tints), Sabbat pack and ambush pack, discipline set, faction matrix, quests, prose, and every hunt tunable. **No engine calls at import time.** |
-| `pyscripts/systems.py` | The rules engine: stock `bd_vtm` wiring plus the hunt layer — cowering mortals, hunger-driven dread, darkness-aware feeding, the breach ambush, the frenzy vignette storm. |
+| `pyscripts/systems.py` | The rules engine: stock `bd_vtm` wiring plus the hunt layer — cowering mortals, hunger-driven dread, darkness-aware feeding, the breach ambush, the frenzy heartbeat storm. |
 | `pyscripts/ui.py` | `VitaeHud` (blood/hunger/humanity/exposure bars, blood-drop hunger row, dread) and `DisciplinePanel` (discipline buttons with cooldown sweeps, feed/frenzy actions, the active chronicle). |
 | `pyscripts/main.py` | Thin bootstrap: sibling imports, `engine_start`/`map_load` wiring, the manual `toggle_hud` alias/key bridge, the full deterministic autotest. |
 
@@ -37,8 +37,9 @@ are definition-only when executed; `main.py` imports them as siblings via
 - **The answering pack** — a Masquerade breach (5 violations) spawns a
   Sabbat ambush around you, behind your back where possible, with a harm
   toast.
-- **Frenzy vignette storm** — while the Beast drives, the screen pulses
-  red and the heartbeat runs at maximum rate.
+- **Frenzy heartbeat storm** — while the Beast drives, the heartbeat
+  runs at maximum rate (the red screen pulses were cut: full-view tints
+  fight your aim).
 
 Engine-honesty note: `bd_vtm.feed`'s witness scan trusts the engine sight
 check — anything alive with line of sight counts, including dropped items

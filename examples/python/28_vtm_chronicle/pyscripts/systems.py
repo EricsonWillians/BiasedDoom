@@ -138,7 +138,6 @@ def build_chronicle(content):
 
     def on_frenzy(hunger, roll):
         bd.center_message(content.MSG_FRENZY)
-        bd.screen_flash(160, 0, 0, 0.5)
         toasts.toast(content.TOAST_FRENZY, kind="harm")
         start_frenzy_storm(chron, content)
 
@@ -398,7 +397,8 @@ def _ambush(chron, content, reason):
 
 
 def start_frenzy_storm(chron, content):
-    """Red screen pulses and a racing heartbeat while the Beast drives."""
+    """A racing heartbeat while the Beast drives (no screen tint: the
+    pulses used to fade the view red, which fought the player's aim)."""
     if chron.storm["active"]:
         return
     chron.storm["active"] = True
@@ -408,11 +408,6 @@ def start_frenzy_storm(chron, content):
         if not chron.storm["active"]:
             return
         count = chron.storm["pulses"]
-        alpha = 0.16 + 0.14 * (count % 2)  # alternating throb
-        try:
-            bd.screen_fade(120, 6, 6, alpha, seconds=0.25)
-        except Exception:
-            pass
         try:
             bd.play_ui_sound(content.STORM_HEARTBEAT, volume=0.7)
         except Exception:

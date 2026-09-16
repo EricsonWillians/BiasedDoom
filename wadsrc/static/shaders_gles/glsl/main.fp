@@ -97,7 +97,20 @@ vec3 ApplyBiasedDynamicLight(vec3 light)
 	vec3 styled = light * max(uDynLightIntensity, 0.0);
 	float gray = dot(styled, vec3(0.3, 0.56, 0.14));
 	styled = mix(vec3(gray), styled, max(uDynLightSaturation, 0.0));
-	return max(ApplyBiasedLightTemperature(styled), vec3(0.0));
+	styled = max(ApplyBiasedLightTemperature(styled), vec3(0.0));
+	// S-curve contrast above 1.0, softening lift below 1.0.
+	float contrast = clamp(uLightContrast, 0.0, 2.0);
+	styled = mix(styled, styled * styled * (3.0 - 2.0 * styled), clamp(contrast - 1.0, 0.0, 1.0));
+	styled = mix(styled, sqrt(max(styled, vec3(0.0))), clamp(1.0 - contrast, 0.0, 1.0));
+	// Per-light flicker: no light position reaches this point, so hash the
+	// attenuation-invariant chroma of the incoming light instead.
+	if (uDynLightFlicker > 0.0)
+	{
+		vec3 chroma = light / max(dot(light, vec3(1.0)), 0.0001);
+		float n = fract(sin(dot(chroma.xy + chroma.z, vec2(12.9898, 78.233)) + floor(uSceneTime * 8.0) * 0.37) * 43758.5453);
+		styled *= 1.0 - uDynLightFlicker * 0.4 * n;
+	}
+	return styled;
 }
 
 float BiasedLightRadius(float radius)
@@ -149,6 +162,44 @@ vec3 ApplyBiasedAmbientFloor(vec3 light)
 vec3 ApplyBiasedSpecularLight(vec3 light)
 {
 	return light * max(uLightSpecularScale, 0.0);
+}
+
+// View-dependent fresnel rim light, modulated by the local light level so it
+// never glows in fully dark areas. vWorldNormal is not set on sprites (their
+// vertex data has no normals, so it can be zero or even NaN after
+// normalize()), so those fragments are skipped. Written as !(d > 0.5) because
+// a NaN length would fail a plain <= comparison and let NaN leak through.
+vec3 ApplyBiasedRimLight(vec3 color)
+{
+	float strength = clamp(uRimLightStrength, 0.0, 1.0);
+	if (strength <= 0.0)
+		return color;
+	// Sprites and other geometry without normals can deliver a zero, NaN, or
+	// infinite vWorldNormal. Only accept plausible interpolated normals; a
+	// plain <= comparison would let NaN through, and a one-sided check would
+	// let Inf through (normalize(Inf) is NaN).
+	float normalLenSq = dot(vWorldNormal.xyz, vWorldNormal.xyz);
+	if (!(normalLenSq > 0.25 && normalLenSq < 4.0))
+		return color;
+	vec3 normal = normalize(vWorldNormal.xyz);
+	vec3 viewDir = normalize(uCameraPos.xyz - pixelpos.xyz);
+	float rim = pow(1.0 - abs(dot(normal, viewDir)), max(uRimLightPower, 0.001));
+	float lightlevel = clamp(dot(color, vec3(0.3, 0.56, 0.14)), 0.0, 1.0);
+	return color + vec3(rim * strength * lightlevel);
+}
+
+// Height-tinted ambient: up-facing surfaces pick up the sky tint, down-facing
+// surfaces lose a bit of ambient. Shader world space has Y as the height axis.
+vec3 ApplyBiasedAmbientGradient(vec3 ambient, vec3 normal)
+{
+	float strength = clamp(uAmbientGradientStrength, 0.0, 1.0);
+	if (strength <= 0.0)
+		return ambient;
+	float h = 0.5;
+	if (dot(normal, normal) > 0.25)
+		h = clamp(normalize(normal).y * 0.5 + 0.5, 0.0, 1.0);
+	ambient += uAmbientGradientColor.rgb * (strength * h);
+	return max(ambient - vec3(strength * (1.0 - h) * 0.25), vec3(0.0));
 }
 
 //===========================================================================
@@ -448,7 +499,7 @@ void SetMaterialProps(inout Material material, vec2 texCoord)
 vec4 getLightColor(Material material, float fogdist, float fogfactor)
 {
 	vec4 color = vColor;
-	
+
 #if (DEF_USE_U_LIGHT_LEVEL == 1)
 	{
 		float newlightlevel = 1.0 - R_DoomLightingEquation(uLightLevel);
@@ -473,6 +524,16 @@ vec4 getLightColor(Material material, float fogdist, float fogfactor)
 		#endif
 	}
 #endif	
+
+#ifndef LEGACY_USER_SHADER
+	if (uSectorBleedParams.x > 0.0 && abs(vWorldNormal.z) > 0.5)
+	{
+		vec2 bleedUV = (pixelpos.xy - uSectorBleedBounds.xy) * uSectorBleedBounds.zw;
+		vec3 bleedTarget = texture2D(SectorBleed, bleedUV).rgb;
+		vec3 localLightScale = clamp(color.rgb / max(vColor.rgb, vec3(1.0 / 255.0)), vec3(0.0), vec3(4.0));
+		color.rgb = mix(color.rgb, bleedTarget * localLightScale, uSectorBleedParams.x);
+	}
+#endif
 
 
 	//
@@ -516,7 +577,7 @@ vec4 getLightColor(Material material, float fogdist, float fogfactor)
 	//
 	// apply dynamic lights
 	//
-	return vec4(ProcessMaterialLight(material, color.rgb), material.Base.a * vColor.a);
+	return vec4(ApplyBiasedRimLight(ProcessMaterialLight(material, color.rgb)), material.Base.a * vColor.a);
 }
 
 //===========================================================================
@@ -793,6 +854,18 @@ void main()
 		} 
 	}
 #endif
+
+	// Aerial perspective: fade distant fragments toward a desaturated haze.
+	// fogdist is block-scoped above, so recompute the radial distance here.
+	if (uAerialStrength > 0.0)
+	{
+		float aerialDist = max(16.0, distance(pixelpos.xyz, uCameraPos.xyz));
+		float aerial = clamp(aerialDist / max(uAerialDistance, 64.0), 0.0, 1.0) * uAerialStrength;
+		float lum = dot(frag.rgb, vec3(0.2126, 0.7152, 0.0722));
+		vec3 haze = mix(uFogColor.rgb, uAmbientGradientColor.rgb, 0.5);
+		vec3 target = mix(vec3(lum), haze, 0.35) * (0.85 + 0.15 * lum);
+		frag.rgb = mix(frag.rgb, target, aerial * 0.6);
+	}
 
 	gl_FragColor = frag;
 

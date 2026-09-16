@@ -247,6 +247,42 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 		clamp<float>(bd_fog_turbulence_scale, 0.0001f, 0.1f)
 	};
 	VPUniforms.mFogMinVisibility = clamp<float>(bd_fog_min_visibility, 0.0f, 1.0f);
+	VPUniforms.mLightContrast = bd_light_contrast;
+	VPUniforms.mSpecularPowerScale = bd_specular_power_scale;
+	VPUniforms.mRimLightStrength = bd_rimlight_strength;
+	VPUniforms.mRimLightPower = bd_rimlight_power;
+	VPUniforms.mAmbientGradientStrength = bd_ambient_gradient_strength;
+	PalEntry ambientGradient((uint32_t)bd_ambient_gradient_color & 0xffffff);
+	VPUniforms.mAmbientGradientColor = {
+		ambientGradient.r / 255.0f,
+		ambientGradient.g / 255.0f,
+		ambientGradient.b / 255.0f,
+		0.0f
+	};
+	VPUniforms.mSceneTime = (float)((screen->FrameTime % 100000) * 0.001);
+	VPUniforms.mDynLightFlicker = bd_dynlight_flicker;
+	VPUniforms.mAerialStrength = bd_aerial_strength;
+	VPUniforms.mAerialDistance = bd_aerial_distance;
+	HW_UpdateSectorLightBleed(Level, lightmode);
+	VPUniforms.mSectorBleedBounds = {
+		Level->SectorBleedMinX,
+		Level->SectorBleedMinY,
+		Level->SectorBleedInvWidth,
+		Level->SectorBleedInvHeight
+	};
+	VPUniforms.mSectorBleedParams = {
+		bd_sectorlight_bleed && !(Level->flags3 & LEVEL3_NOLIGHTFADE) && screen->SupportsSectorBleed() && Level->SectorBleedData.Size() != 0 ? bd_sectorlight_strength : 0.0f,
+		0.0f,
+		0.0f,
+		0.0f
+	};
+	PalEntry specularTint((uint32_t)bd_specular_tint & 0xffffff);
+	VPUniforms.mSpecularTintColor = {
+		specularTint.r / 255.0f,
+		specularTint.g / 255.0f,
+		specularTint.b / 255.0f,
+		0.0f
+	};
 	SetBiasedFogGradientUniforms(VPUniforms);
 
 	mClipper->SetViewpoint(Viewpoint);

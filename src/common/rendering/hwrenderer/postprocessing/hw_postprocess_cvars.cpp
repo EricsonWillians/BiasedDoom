@@ -22,27 +22,45 @@
 #include "hw_postprocess_cvars.h"
 #include "v_video.h"
 
-static bool GApplyingGraphicsPreset = false;
-static bool GApplyingLightingPreset = false;
-static bool GApplyingFogPreset = false;
-static constexpr int MaxGraphicsPreset = 30;
-static constexpr int MaxLightingPreset = 12;
+static int GApplyingPresetCount = 0;
+static constexpr int MaxGraphicsPreset = 64;
+static constexpr int MaxLightingPreset = 38;
+static constexpr int MaxFogPreset = 16;
 static constexpr int MaxSelectableTonemap = 14;
 
+static bool IsApplyingPreset()
+{
+  return GApplyingPresetCount > 0 || C_InInitialCallbackReplay();
+}
+
+class FPresetApplyScope
+{
+public:
+  FPresetApplyScope() { ++GApplyingPresetCount; }
+  ~FPresetApplyScope() { --GApplyingPresetCount; }
+
+  FPresetApplyScope(const FPresetApplyScope &) = delete;
+  FPresetApplyScope &operator=(const FPresetApplyScope &) = delete;
+};
+
+EXTERN_CVAR(Bool, gl_light_shadowmap)
+EXTERN_CVAR(Int, gl_shadowmap_quality)
+EXTERN_CVAR(Int, gl_shadowmap_filter)
+
 static void SetPresetDirtyFromFeatureChange() {
-  if (!GApplyingGraphicsPreset && !bd_preset_locked && bd_graphics_preset != 0) {
+  if (!IsApplyingPreset() && !bd_preset_locked && bd_graphics_preset != 0) {
     bd_graphics_preset = 0;
   }
 }
 
 static void SetLightingPresetDirtyFromFeatureChange()
 {
-  if (!GApplyingLightingPreset && bd_lighting_preset != 0)
+  if (!IsApplyingPreset() && !bd_preset_locked && bd_lighting_preset != 0)
     bd_lighting_preset = 0;
 }
 
 static void EnsurePostFxActive() {
-  if (GApplyingGraphicsPreset)
+  if (IsApplyingPreset())
     return;
 
   if (!bd_postfx_enable)
@@ -72,30 +90,31 @@ static void OnPresetFeatureChanged(FColorCVar &)
   SetPresetDirtyFromFeatureChange();
 }
 
-static void OnLightingFeatureChanged(FIntCVar &self)
+static void OnLightingFeatureChanged(FIntCVar &)
 {
   SetLightingPresetDirtyFromFeatureChange();
-  OnPresetFeatureChanged(self);
 }
 
-static void OnLightingFeatureChanged(FFloatCVar &self)
+static void OnLightingFeatureChanged(FFloatCVar &)
 {
   SetLightingPresetDirtyFromFeatureChange();
-  OnPresetFeatureChanged(self);
 }
 
-static void OnLightingFeatureChanged(FBoolCVar &self)
+static void OnLightingFeatureChanged(FBoolCVar &)
 {
   SetLightingPresetDirtyFromFeatureChange();
-  OnPresetFeatureChanged(self);
+}
+
+static void OnLightingFeatureChanged(FColorCVar &)
+{
+  SetLightingPresetDirtyFromFeatureChange();
 }
 
 template <class TCVar>
-static void OnFogFeatureChanged(TCVar &self)
+static void OnFogFeatureChanged(TCVar &)
 {
-  if (!GApplyingFogPreset && bd_fog_preset != 0)
+  if (!IsApplyingPreset() && !bd_preset_locked && bd_fog_preset != 0)
     bd_fog_preset = 0;
-  OnPresetFeatureChanged(self);
 }
 
 static void SetFogPresetColor(int color)
@@ -107,7 +126,12 @@ static void SetLightingValues(int falloffMode, float falloffExponent, float inte
                               float temperature, float ambientFloor, float specularScale, float emissiveBoost,
                               bool giAmbient, float giAmbientStrength, bool refineSprites,
                               float rangeScale = 1.0f, float falloffSoftness = 0.0f, float wrap = 0.0f,
-                              float indirect = 0.0f, float shadowStrength = 1.0f)
+                              float indirect = 0.0f, float shadowStrength = 1.0f,
+                              float lightContrast = 1.0f, float specularPowerScale = 1.0f,
+                              float rimStrength = 0.0f, float rimPower = 3.0f,
+                              float ambientGradient = 0.0f, uint32_t ambientGradientColor = 0x8899bb,
+                              float flicker = 0.0f, float aerial = 0.0f, float aerialDist = 2048.0f,
+                              uint32_t specularTint = 0xffffff)
 {
   bd_dynlight_falloff_mode = falloffMode;
   bd_dynlight_falloff_exponent = falloffExponent;
@@ -125,6 +149,16 @@ static void SetLightingValues(int falloffMode, float falloffExponent, float inte
   bd_gi_ambient_enable = giAmbient;
   bd_gi_ambient_strength = giAmbientStrength;
   bd_sprite_lighting_refine = refineSprites;
+  bd_light_contrast = lightContrast;
+  bd_specular_power_scale = specularPowerScale;
+  bd_rimlight_strength = rimStrength;
+  bd_rimlight_power = rimPower;
+  bd_ambient_gradient_strength = ambientGradient;
+  bd_ambient_gradient_color->SetGenericRep(CVarValue<CVAR_Color>((int)ambientGradientColor), CVAR_Color);
+  bd_dynlight_flicker = flicker;
+  bd_aerial_strength = aerial;
+  bd_aerial_distance = aerialDist;
+  bd_specular_tint->SetGenericRep(CVarValue<CVAR_Color>((int)specularTint), CVAR_Color);
 }
 
 static void ApplyLightingPreset(int preset)
@@ -181,6 +215,154 @@ static void ApplyLightingPreset(int preset)
     SetLightingValues(2, 3.10f, 0.70f, 0.50f, -0.45f, 0.015f, 0.72f, 0.16f, true, 0.16f, true,
                       1.22f, 0.26f, 0.06f, 0.05f, 1.0f);
     return;
+  case 13: // Studio Soft
+    SetLightingValues(1, 1.60f, 1.10f, 1.00f, 0.10f, 0.06f, 1.00f, 0.10f, true, 0.32f, true,
+                      1.20f, 0.50f, 0.30f, 0.15f, 0.70f,
+                      0.85f, 1.0f, 0.10f, 3.0f);
+    return;
+  case 14: // Overcast Day
+    SetLightingValues(1, 1.70f, 1.00f, 0.95f, -0.15f, 0.15f, 0.90f, 0.05f, true, 0.40f, true,
+                      1.25f, 0.55f, 0.35f, 0.18f, 0.60f,
+                      0.80f, 0.8f, 0.0f, 3.0f);
+    return;
+  case 15: // Golden Hour
+    SetLightingValues(1, 1.95f, 1.25f, 1.15f, 0.45f, 0.04f, 1.40f, 0.30f, true, 0.30f, true,
+                      1.30f, 0.40f, 0.22f, 0.15f, 0.75f,
+                      1.15f, 1.5f, 0.15f, 3.0f);
+    return;
+  case 16: // Cold Industrial
+    SetLightingValues(2, 2.60f, 1.10f, 0.90f, -0.50f, 0.03f, 1.40f, 0.15f, true, 0.22f, true,
+                      1.15f, 0.10f, 0.05f, 0.05f, 0.90f,
+                      1.20f, 2.0f, 0.0f, 4.0f);
+    return;
+  case 17: // Pitch Black
+    SetLightingValues(2, 2.90f, 0.75f, 0.60f, -0.20f, 0.0f, 0.90f, 0.05f, true, 0.10f, true,
+                      1.05f, 0.12f, 0.02f, 0.02f, 1.0f,
+                      1.60f, 1.0f, 0.20f, 3.5f);
+    return;
+  case 18: // Arcade Bright
+    SetLightingValues(1, 1.60f, 1.50f, 1.20f, 0.0f, 0.08f, 1.10f, 0.35f, true, 0.35f, true,
+                      1.35f, 0.35f, 0.25f, 0.15f, 0.55f,
+                      0.90f, 1.0f, 0.0f, 3.0f);
+    return;
+  case 19: // Rim Drama
+    SetLightingValues(2, 2.20f, 1.05f, 1.05f, -0.10f, 0.02f, 1.30f, 0.20f, true, 0.20f, true,
+                      1.25f, 0.30f, 0.10f, 0.08f, 0.90f,
+                      1.30f, 1.3f, 0.50f, 2.5f);
+    return;
+  case 20: // Gradient Ambience
+    SetLightingValues(1, 1.75f, 1.08f, 0.96f, 0.06f, 0.06f, 1.10f, 0.10f, true, 0.36f, true,
+                      1.30f, 0.55f, 0.30f, 0.20f, 0.62f,
+                      1.0f, 1.0f, 0.0f, 3.0f, 0.5f, 0x7fa8d8);
+    return;
+  case 21: // Flickering Candlelight
+    SetLightingValues(2, 2.40f, 0.90f, 0.95f, 0.50f, 0.010f, 1.00f, 0.20f, true, 0.20f, true,
+                      1.10f, 0.20f, 0.10f, 0.05f, 1.00f,
+                      1.30f, 1.20f, 0.05f, 3.0f, 0.0f, 0x8899bb,
+                      0.55f);
+    return;
+  case 22: // Aerial Vista
+    SetLightingValues(1, 1.75f, 1.08f, 0.96f, -0.05f, 0.06f, 1.10f, 0.10f, true, 0.36f, true,
+                      1.30f, 0.40f, 0.20f, 0.20f, 0.62f,
+                      1.0f, 1.0f, 0.0f, 3.0f, 0.30f, 0x7fa8d8,
+                      0.0f, 0.50f, 3000.0f);
+    return;
+  case 23: // Candlelit Crypt
+    SetLightingValues(2, 2.35f, 0.88f, 1.05f, 0.55f, 0.02f, 0.95f, 0.28f, true, 0.20f, true,
+                      1.12f, 0.28f, 0.12f, 0.08f, 0.90f,
+                      1.18f, 1.35f, 0.28f, 2.8f, 0.18f, 0x9a6840,
+                      0.62f, 0.12f, 900.0f, 0xffc080);
+    return;
+  case 24: // Moonlit Expanse
+    SetLightingValues(1, 1.70f, 1.02f, 0.88f, -0.55f, 0.10f, 1.05f, 0.08f, true, 0.38f, true,
+                      1.45f, 0.50f, 0.28f, 0.22f, 0.70f,
+                      0.92f, 1.10f, 0.18f, 3.5f, 0.34f, 0x6f8fc8,
+                      0.0f, 0.42f, 4200.0f, 0xb8c8ff);
+    return;
+  case 25: // Emergency Strobe
+    SetLightingValues(2, 2.25f, 1.18f, 1.20f, -0.08f, 0.03f, 1.35f, 0.35f, true, 0.22f, true,
+                      1.18f, 0.18f, 0.08f, 0.08f, 0.82f,
+                      1.38f, 1.60f, 0.32f, 2.6f, 0.10f, 0x506070,
+                      0.68f, 0.08f, 1200.0f, 0xff4040);
+    return;
+  case 26: // Aurora Veil
+    SetLightingValues(1, 1.55f, 1.18f, 1.55f, -0.35f, 0.07f, 1.25f, 0.45f, true, 0.36f, true,
+                      1.50f, 0.60f, 0.34f, 0.30f, 0.58f,
+                      0.96f, 1.20f, 0.25f, 3.2f, 0.55f, 0x58c8a8,
+                      0.0f, 0.45f, 3600.0f, 0x9fd8ff);
+    return;
+  case 27: // Dusty Archive
+    SetLightingValues(1, 1.90f, 0.98f, 0.82f, 0.28f, 0.11f, 0.92f, 0.08f, true, 0.34f, true,
+                      1.22f, 0.48f, 0.26f, 0.24f, 0.72f,
+                      0.90f, 0.95f, 0.08f, 3.8f, 0.38f, 0xa58f68,
+                      0.04f, 0.32f, 2400.0f, 0xd8c8a8);
+    return;
+  case 28: // Ruby Corridor
+    SetLightingValues(2, 2.05f, 1.25f, 1.38f, 0.30f, 0.04f, 1.45f, 0.42f, true, 0.25f, true,
+                      1.26f, 0.32f, 0.18f, 0.14f, 0.76f,
+                      1.28f, 1.45f, 0.40f, 2.4f, 0.22f, 0x8c3040,
+                      0.12f, 0.16f, 1500.0f, 0xff7888);
+    return;
+  case 29: // Surgical White
+    SetLightingValues(1, 1.50f, 1.08f, 0.72f, -0.12f, 0.16f, 1.55f, 0.02f, true, 0.42f, true,
+                      1.38f, 0.42f, 0.24f, 0.18f, 0.66f,
+                      0.84f, 1.80f, 0.04f, 4.2f, 0.12f, 0xb8c8c8,
+                      0.0f, 0.10f, 2600.0f, 0xe8ffff);
+    return;
+  case 30: // Ectoplasm
+    SetLightingValues(1, 1.65f, 1.12f, 1.65f, -0.42f, 0.08f, 1.15f, 0.55f, true, 0.32f, true,
+                      1.42f, 0.58f, 0.30f, 0.26f, 0.60f,
+                      0.95f, 1.15f, 0.34f, 2.9f, 0.48f, 0x5fbf7a,
+                      0.10f, 0.36f, 2100.0f, 0x88ffb0);
+    return;
+  case 31: // Storm Front
+    SetLightingValues(2, 2.45f, 1.04f, 0.86f, -0.38f, 0.05f, 1.28f, 0.12f, true, 0.24f, true,
+                      1.24f, 0.24f, 0.12f, 0.10f, 0.84f,
+                      1.22f, 1.50f, 0.30f, 3.1f, 0.25f, 0x4d6578,
+                      0.36f, 0.48f, 2800.0f, 0x90b8d8);
+    return;
+  case 32: // Amber Ember
+    SetLightingValues(2, 2.00f, 1.34f, 1.28f, 0.62f, 0.04f, 1.25f, 0.48f, true, 0.28f, true,
+                      1.30f, 0.36f, 0.20f, 0.16f, 0.78f,
+                      1.18f, 1.25f, 0.22f, 2.7f, 0.18f, 0x9a5830,
+                      0.18f, 0.22f, 1700.0f, 0xffb060);
+    return;
+  case 33: // Deep Cavern
+    SetLightingValues(2, 3.00f, 0.72f, 0.58f, -0.28f, 0.00f, 0.78f, 0.10f, true, 0.14f, true,
+                      1.08f, 0.12f, 0.04f, 0.04f, 1.00f,
+                      1.55f, 1.10f, 0.26f, 3.6f, 0.10f, 0x2f3f50,
+                      0.0f, 0.20f, 1300.0f, 0x7890a8);
+    return;
+  case 34: // Cathedral Bloom
+    SetLightingValues(1, 1.80f, 1.18f, 1.12f, 0.18f, 0.09f, 1.35f, 0.38f, true, 0.40f, true,
+                      1.36f, 0.52f, 0.28f, 0.24f, 0.62f,
+                      0.98f, 1.35f, 0.42f, 2.5f, 0.50f, 0xb89a68,
+                      0.0f, 0.38f, 3400.0f, 0xffd8a0);
+    return;
+  case 35: // Neon Noir
+    SetLightingValues(2, 2.20f, 1.08f, 1.70f, -0.48f, 0.02f, 1.60f, 0.68f, true, 0.22f, true,
+                      1.34f, 0.26f, 0.10f, 0.10f, 0.88f,
+                      1.34f, 1.70f, 0.52f, 2.2f, 0.28f, 0x3a2f68,
+                      0.08f, 0.18f, 1900.0f, 0xd080ff);
+    return;
+  case 36: // Desert Heat
+    SetLightingValues(1, 1.60f, 1.12f, 1.02f, 0.70f, 0.14f, 0.95f, 0.12f, true, 0.36f, true,
+                      1.48f, 0.46f, 0.30f, 0.28f, 0.68f,
+                      0.88f, 0.90f, 0.10f, 4.0f, 0.26f, 0xc89a58,
+                      0.0f, 0.55f, 5000.0f, 0xffd098);
+    return;
+  case 37: // Arctic Facility
+    SetLightingValues(1, 1.70f, 1.00f, 0.78f, -0.72f, 0.12f, 1.45f, 0.05f, true, 0.38f, true,
+                      1.40f, 0.40f, 0.22f, 0.18f, 0.70f,
+                      0.86f, 1.90f, 0.08f, 4.5f, 0.20f, 0x8fb8d8,
+                      0.0f, 0.40f, 4600.0f, 0xc8e8ff);
+    return;
+  case 38: // Soft Dawn
+    SetLightingValues(1, 1.65f, 1.10f, 1.04f, 0.25f, 0.13f, 1.05f, 0.18f, true, 0.42f, true,
+                      1.32f, 0.58f, 0.36f, 0.30f, 0.58f,
+                      0.90f, 1.05f, 0.06f, 3.2f, 0.42f, 0xd8a898,
+                      0.0f, 0.34f, 3800.0f, 0xffc8b0);
+    return;
   default:
     return;
   }
@@ -195,6 +377,9 @@ static void SetGraphicsPresetLightingStyle(int preset)
   {
   case 1:
   case 6:
+  case 33:
+  case 36:
+  case 37:
     SetLightingValues(0, 2.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, false,
                       1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
     break;
@@ -216,7 +401,9 @@ static void SetGraphicsPresetLightingStyle(int preset)
   case 27:
   case 28:
     SetLightingValues(2, 2.65f, 0.92f, 0.78f, -0.10f, 0.030f, 0.88f, 0.10f, true, 0.26f, true,
-                      1.12f, 0.24f, 0.08f, 0.05f, 0.98f);
+                      1.12f, 0.24f, 0.08f, 0.05f, 0.98f,
+                      1.0f, 1.0f, 0.0f, 3.0f, 0.0f, 0x8899bb,
+                      0.40f, 0.25f, 1800.0f);
     break;
   case 5:
   case 11:
@@ -227,11 +414,15 @@ static void SetGraphicsPresetLightingStyle(int preset)
     break;
   case 29:
     SetLightingValues(2, 2.25f, 1.38f, 1.22f, 0.45f, 0.045f, 1.44f, 0.50f, true, 0.30f, true,
-                      1.34f, 0.42f, 0.24f, 0.18f, 0.78f);
+                      1.34f, 0.42f, 0.24f, 0.18f, 0.78f,
+                      1.0f, 1.0f, 0.0f, 3.0f, 0.0f, 0x8899bb,
+                      0.35f, 0.30f, 1600.0f);
     break;
   case 30:
     SetLightingValues(2, 2.80f, 0.78f, 0.56f, -0.34f, 0.050f, 0.76f, 0.18f, true, 0.24f, true,
-                      1.20f, 0.28f, 0.06f, 0.05f, 1.0f);
+                      1.20f, 0.28f, 0.06f, 0.05f, 1.0f,
+                      1.0f, 1.0f, 0.0f, 3.0f, 0.0f, 0x8899bb,
+                      0.50f, 0.30f, 1400.0f);
     break;
   case 7:
   case 8:
@@ -239,12 +430,62 @@ static void SetGraphicsPresetLightingStyle(int preset)
   case 18:
   case 22:
     SetLightingValues(2, 2.55f, 0.90f, 0.78f, -0.14f, 0.040f, 0.92f, 0.12f, true, 0.30f, true,
-                      1.18f, 0.28f, 0.10f, 0.06f, 0.96f);
+                      1.18f, 0.28f, 0.10f, 0.06f, 0.96f,
+                      1.0f, 1.0f, 0.0f, 3.0f, 0.0f, 0x8899bb,
+                      0.35f, 0.30f, 1800.0f);
     break;
   case 9:
   case 14:
+  case 32:
     SetLightingValues(1, 1.45f, 1.60f, 1.62f, -0.22f, 0.045f, 1.58f, 0.66f, true, 0.30f, true,
                       1.55f, 0.58f, 0.34f, 0.24f, 0.58f);
+    break;
+  case 31:
+  case 39:
+    SetLightingValues(2, 2.10f, 1.30f, 1.10f, 0.34f, 0.055f, 1.36f, 0.40f, true, 0.32f, true,
+                      1.30f, 0.42f, 0.24f, 0.17f, 0.76f,
+                      1.05f, 1.3f, 0.10f, 3.0f);
+    break;
+  case 34:
+    SetLightingValues(1, 1.80f, 1.15f, 1.10f, 0.0f, 0.05f, 1.20f, 0.10f, true, 0.30f, true,
+                      1.20f, 0.20f, 0.20f, 0.10f, 0.85f,
+                      1.40f, 1.2f, 0.0f, 3.0f);
+    break;
+  case 35:
+    SetLightingValues(1, 1.90f, 1.15f, 0.95f, 0.30f, 0.05f, 1.10f, 0.15f, true, 0.30f, true,
+                      1.25f, 0.40f, 0.25f, 0.15f, 0.75f,
+                      1.0f, 1.0f, 0.05f, 3.0f);
+    break;
+  case 38:
+    SetLightingValues(1, 1.55f, 1.18f, 1.00f, 0.02f, 0.085f, 1.05f, 0.14f, true, 0.42f, true,
+                      1.38f, 0.50f, 0.30f, 0.20f, 0.58f,
+                      1.0f, 1.0f, 0.10f, 3.0f);
+    break;
+  case 40:
+    SetLightingValues(1, 1.85f, 1.22f, 1.10f, 0.04f, 0.035f, 1.28f, 0.24f, true, 0.28f, true,
+                      1.25f, 0.38f, 0.22f, 0.13f, 0.80f,
+                      1.10f, 1.50f, 0.15f, 3.0f, 0.0f, 0x8899bb,
+                      0.0f, 0.25f, 3000.0f);
+    break;
+  case 41: // Divine Radiance: golden
+    SetLightingValues(1, 1.90f, 1.25f, 1.12f, 0.40f, 0.04f, 1.30f, 0.30f, true, 0.30f, true,
+                      1.30f, 0.40f, 0.22f, 0.15f, 0.78f,
+                      1.10f, 1.40f, 0.10f, 3.0f, 0.15f, 0xd8b088);
+    break;
+  case 42: // Analog Cinema: warm cinematic neutral-ish with slight rim
+    SetLightingValues(2, 2.10f, 1.30f, 1.10f, 0.30f, 0.055f, 1.30f, 0.35f, true, 0.32f, true,
+                      1.28f, 0.42f, 0.24f, 0.16f, 0.80f,
+                      1.05f, 1.20f, 0.10f, 3.0f);
+    break;
+  case 43: // Clarity Max: crisp neutral, no rim, GI off
+    SetLightingValues(1, 1.80f, 1.10f, 1.00f, 0.0f, 0.05f, 1.10f, 0.10f, false, 0.0f, true,
+                      1.20f, 0.20f, 0.10f, 0.05f, 0.90f,
+                      1.0f, 1.20f, 0.0f, 3.0f);
+    break;
+  case 44: // Dreamlike: soft dreamy with cool ambient gradient
+    SetLightingValues(1, 1.75f, 1.10f, 1.00f, 0.05f, 0.06f, 1.05f, 0.15f, true, 0.32f, true,
+                      1.25f, 0.50f, 0.30f, 0.18f, 0.70f,
+                      0.90f, 1.0f, 0.05f, 3.0f, 0.30f, 0x8fa5c8);
     break;
   case 12:
   case 17:
@@ -364,6 +605,176 @@ static void ApplyFogPreset(int preset)
     bd_fog_sky_horizon = 0.82f;
     SetFogGradientPreset(2, 0x392719, 0.32f, 1.05f, 28.0f, -5.0f);
     break;
+  case 7: // Morning Mist: soft cool white-blue haze, gentle gradient.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.90f;
+    bd_fog_density = 85.0f;
+    SetFogPresetColor(0xc9d6de);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.35f;
+    bd_fog_sky_strength = 0.50f;
+    bd_fog_thick_distance = 800.0f;
+    bd_fog_thick_multiplier = 2.5f;
+    bd_fog_quality = 1;
+    bd_fog_height_falloff = 0.50f;
+    bd_fog_turbulence = 0.08f;
+    bd_fog_turbulence_scale = 0.008f;
+    bd_fog_sky_horizon = 0.70f;
+    SetFogGradientPreset(1, 0x8fa5b5, 0.14f, 0.80f, 0.0f, 0.0f);
+    break;
+  case 8: // Toxic Haze: green-yellow tint, thick mid-distance fog.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.05f;
+    bd_fog_density = 170.0f;
+    SetFogPresetColor(0x8f9c46);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.60f;
+    bd_fog_sky_strength = 0.60f;
+    bd_fog_thick_distance = 450.0f;
+    bd_fog_thick_multiplier = 5.0f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.80f;
+    bd_fog_turbulence = 0.25f;
+    bd_fog_turbulence_scale = 0.010f;
+    bd_fog_sky_horizon = 0.80f;
+    SetFogGradientPreset(1, 0x4a5226, 0.28f, 1.0f, 0.0f, -3.0f);
+    break;
+  case 9: // Blackout: near-field visibility with a hard oppressive wall.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.25f;
+    bd_fog_density = 210.0f;
+    SetFogPresetColor(0x050607);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.78f;
+    bd_fog_sky_strength = 0.80f;
+    bd_fog_thick_distance = 300.0f;
+    bd_fog_thick_multiplier = 8.0f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 1.20f;
+    bd_fog_turbulence = 0.18f;
+    bd_fog_turbulence_scale = 0.008f;
+    bd_fog_sky_horizon = 0.90f;
+    SetFogGradientPreset(1, 0x000000, 0.45f, 1.25f, 0.0f, 0.0f);
+    break;
+  case 10: // Green Valley: soft cool vegetation haze.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.82f;
+    bd_fog_density = 95.0f;
+    SetFogPresetColor(0x9fbf9a);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.38f;
+    bd_fog_sky_strength = 0.52f;
+    bd_fog_thick_distance = 820.0f;
+    bd_fog_thick_multiplier = 2.6f;
+    bd_fog_quality = 1;
+    bd_fog_height_falloff = 0.42f;
+    bd_fog_turbulence = 0.12f;
+    bd_fog_turbulence_scale = 0.009f;
+    bd_fog_sky_horizon = 0.72f;
+    SetFogGradientPreset(1, 0x6f9470, 0.18f, 0.85f, 0.0f, -4.0f);
+    break;
+  case 11: // Blue Hour: deep blue dusk falloff.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.95f;
+    bd_fog_density = 145.0f;
+    SetFogPresetColor(0x50688f);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.58f;
+    bd_fog_sky_strength = 0.68f;
+    bd_fog_thick_distance = 560.0f;
+    bd_fog_thick_multiplier = 4.2f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.75f;
+    bd_fog_turbulence = 0.16f;
+    bd_fog_turbulence_scale = 0.007f;
+    bd_fog_sky_horizon = 0.82f;
+    SetFogGradientPreset(2, 0x18243c, 0.34f, 1.10f, -20.0f, -8.0f);
+    break;
+  case 12: // Crimson Eclipse: directional red-brown gloom.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.08f;
+    bd_fog_density = 175.0f;
+    SetFogPresetColor(0x7a3b32);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.66f;
+    bd_fog_sky_strength = 0.72f;
+    bd_fog_thick_distance = 430.0f;
+    bd_fog_thick_multiplier = 5.8f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.88f;
+    bd_fog_turbulence = 0.20f;
+    bd_fog_turbulence_scale = 0.009f;
+    bd_fog_sky_horizon = 0.84f;
+    SetFogGradientPreset(2, 0x2a0f0c, 0.40f, 1.20f, 36.0f, -6.0f);
+    break;
+  case 13: // Underwater: dense blue-green depth haze.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.15f;
+    bd_fog_density = 190.0f;
+    SetFogPresetColor(0x2f6f74);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.70f;
+    bd_fog_sky_strength = 0.78f;
+    bd_fog_thick_distance = 380.0f;
+    bd_fog_thick_multiplier = 6.4f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 1.05f;
+    bd_fog_turbulence = 0.28f;
+    bd_fog_turbulence_scale = 0.012f;
+    bd_fog_sky_horizon = 0.88f;
+    SetFogGradientPreset(1, 0x143c42, 0.42f, 1.30f, 0.0f, 0.0f);
+    break;
+  case 14: // Dust Storm: warm dry rolling dust.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.00f;
+    bd_fog_density = 155.0f;
+    SetFogPresetColor(0xb08a5f);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.62f;
+    bd_fog_sky_strength = 0.70f;
+    bd_fog_thick_distance = 500.0f;
+    bd_fog_thick_multiplier = 5.2f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.55f;
+    bd_fog_turbulence = 0.34f;
+    bd_fog_turbulence_scale = 0.014f;
+    bd_fog_sky_horizon = 0.80f;
+    SetFogGradientPreset(2, 0x5c4028, 0.34f, 1.15f, 18.0f, -4.0f);
+    break;
+  case 15: // Polar Whiteout: bright, cold, low-contrast distance loss.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.92f;
+    bd_fog_density = 165.0f;
+    SetFogPresetColor(0xdce7ec);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.72f;
+    bd_fog_sky_strength = 0.82f;
+    bd_fog_thick_distance = 390.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.35f;
+    bd_fog_turbulence = 0.14f;
+    bd_fog_turbulence_scale = 0.006f;
+    bd_fog_sky_horizon = 0.86f;
+    SetFogGradientPreset(1, 0xb8cbd8, 0.38f, 0.90f, 0.0f, 0.0f);
+    break;
+  case 16: // Cathedral Haze: luminous vertical shafts and gentle depth.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.88f;
+    bd_fog_density = 115.0f;
+    SetFogPresetColor(0xbcae91);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.48f;
+    bd_fog_sky_strength = 0.58f;
+    bd_fog_thick_distance = 680.0f;
+    bd_fog_thick_multiplier = 3.2f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 1.35f;
+    bd_fog_turbulence = 0.10f;
+    bd_fog_turbulence_scale = 0.007f;
+    bd_fog_sky_horizon = 0.76f;
+    SetFogGradientPreset(1, 0x766a54, 0.30f, 1.45f, 0.0f, 8.0f);
+    break;
   default:
     break;
   }
@@ -400,14 +811,14 @@ static void KeepPresetPlayable(int preset)
     bd_bloom_strength = ClampPresetFloat(bd_bloom_strength, 0.45f, 2.0f);
 
   if (bd_vignette_enable)
-    bd_vignette_strength = ClampPresetFloat(bd_vignette_strength, 0.0f, 0.42f);
+    bd_vignette_strength = ClampPresetFloat(bd_vignette_strength, 0.0f, 0.55f);
 
   if (bd_chromatic_enable)
     bd_chromatic_strength = ClampPresetFloat(bd_chromatic_strength, 0.0f, 0.22f);
 
   if (bd_filmgrain_enable)
   {
-    bd_filmgrain_strength = ClampPresetFloat(bd_filmgrain_strength, 0.0f, 0.22f);
+    bd_filmgrain_strength = ClampPresetFloat(bd_filmgrain_strength, 0.0f, 0.35f);
     bd_filmgrain_scale = ClampPresetFloat(bd_filmgrain_scale, 1.0f, 3.0f);
   }
 
@@ -422,6 +833,54 @@ static void KeepPresetPlayable(int preset)
     bd_vhs_evil = ClampPresetFloat(bd_vhs_evil, 0.0f, 0.12f);
     bd_vhs_panic_enable = false;
   }
+
+  if (bd_vibrance_enable)
+    bd_vibrance_strength = ClampPresetFloat(bd_vibrance_strength, 0.0f, 0.80f);
+
+  if (bd_whitebalance_enable)
+  {
+    bd_whitebalance_temperature = ClampPresetFloat(bd_whitebalance_temperature, -0.60f, 0.60f);
+    bd_whitebalance_tint = ClampPresetFloat(bd_whitebalance_tint, -0.60f, 0.60f);
+  }
+
+  if (bd_grade_enable)
+  {
+    bd_grade_lift_r = ClampPresetFloat(bd_grade_lift_r, -0.20f, 0.20f);
+    bd_grade_lift_g = ClampPresetFloat(bd_grade_lift_g, -0.20f, 0.20f);
+    bd_grade_lift_b = ClampPresetFloat(bd_grade_lift_b, -0.20f, 0.20f);
+    bd_grade_gamma_r = ClampPresetFloat(bd_grade_gamma_r, 0.70f, 1.40f);
+    bd_grade_gamma_g = ClampPresetFloat(bd_grade_gamma_g, 0.70f, 1.40f);
+    bd_grade_gamma_b = ClampPresetFloat(bd_grade_gamma_b, 0.70f, 1.40f);
+    bd_grade_gain_r = ClampPresetFloat(bd_grade_gain_r, 0.70f, 1.40f);
+    bd_grade_gain_g = ClampPresetFloat(bd_grade_gain_g, 0.70f, 1.40f);
+    bd_grade_gain_b = ClampPresetFloat(bd_grade_gain_b, 0.70f, 1.40f);
+  }
+
+  if (bd_hueshift_enable)
+    bd_hueshift_degrees = ClampPresetFloat(bd_hueshift_degrees, -45.0f, 45.0f);
+
+  if (bd_posterize_enable)
+    bd_posterize_levels = ClampPresetFloat(bd_posterize_levels, 4.0f, 16.0f);
+
+  if (bd_edgeglow_enable)
+    bd_edgeglow_strength = ClampPresetFloat(bd_edgeglow_strength, 0.0f, 0.80f);
+
+  if (bd_godrays_enable)
+    bd_godrays_strength = ClampPresetFloat(bd_godrays_strength, 0.0f, 0.60f);
+
+  if (bd_lensflare_enable)
+    bd_lensflare_strength = ClampPresetFloat(bd_lensflare_strength, 0.0f, 0.50f);
+
+  if (bd_clarity_enable)
+    bd_clarity_strength = ClampPresetFloat(bd_clarity_strength, 0.0f, 0.60f);
+
+  bd_bloom_radius = ClampPresetFloat(bd_bloom_radius, 0.5f, 2.0f);
+  bd_bloom_threshold = ClampPresetFloat(bd_bloom_threshold, 0.50f, 1.20f);
+  bd_bloom_knee = ClampPresetFloat(bd_bloom_knee, 0.05f, 1.0f);
+  bd_bloom_intensity = ClampPresetFloat(bd_bloom_intensity, 0.25f, 2.0f);
+  bd_dynlight_flicker = ClampPresetFloat(bd_dynlight_flicker, 0.0f, 0.70f);
+  bd_aerial_strength = ClampPresetFloat(bd_aerial_strength, 0.0f, 0.60f);
+  bd_aerial_distance = ClampPresetFloat(bd_aerial_distance, 1024.0f, 16384.0f);
 
   bd_colorgrade_strength = ClampPresetFloat(bd_colorgrade_strength, 0.0f, 0.55f);
   gl_atmosphere_intensity = ClampPresetFloat(gl_atmosphere_intensity, 0.0f, 0.68f);
@@ -438,6 +897,11 @@ static void KeepPresetPlayable(int preset)
   bd_light_ambient_floor = ClampPresetFloat(bd_light_ambient_floor, 0.0f, 0.16f);
   bd_light_specular_scale = ClampPresetFloat(bd_light_specular_scale, 0.50f, 2.0f);
   bd_emissive_boost = ClampPresetFloat(bd_emissive_boost, 0.0f, 0.60f);
+  bd_light_contrast = ClampPresetFloat(bd_light_contrast, 0.70f, 1.60f);
+  bd_specular_power_scale = ClampPresetFloat(bd_specular_power_scale, 0.50f, 2.50f);
+  bd_rimlight_strength = ClampPresetFloat(bd_rimlight_strength, 0.0f, 0.60f);
+  bd_rimlight_power = ClampPresetFloat(bd_rimlight_power, 1.0f, 5.0f);
+  bd_ambient_gradient_strength = ClampPresetFloat(bd_ambient_gradient_strength, 0.0f, 0.70f);
 
   if (bd_gi_ambient_enable)
     bd_gi_ambient_strength = ClampPresetFloat(bd_gi_ambient_strength, 0.24f, 0.42f);
@@ -483,10 +947,64 @@ static void KeepPresetPlayable(int preset)
   }
 }
 
+// Resets the filter and performance additions that the original preset
+// cases predate, so that switching between any two presets is deterministic.
+// Runs under FPresetApplyScope, so these assignments never dirty any preset
+// selector; the enable flags go first so the neutral parameter writes cannot
+// re-arm a filter's auto-enable coupling.
+static void ResetAdvancedPresetFeatures()
+{
+  gl_ssao = 0;
+  gl_fxaa = 0;
+  gl_light_shadowmap = false;
+  gl_shadowmap_quality = 512;
+  gl_shadowmap_filter = 1;
+  bd_vibrance_enable = false;
+  bd_vibrance_strength = 0.0f;
+  bd_whitebalance_enable = false;
+  bd_whitebalance_temperature = 0.0f;
+  bd_whitebalance_tint = 0.0f;
+  bd_grade_enable = false;
+  bd_grade_lift_r = 0.0f;
+  bd_grade_lift_g = 0.0f;
+  bd_grade_lift_b = 0.0f;
+  bd_grade_gamma_r = 1.0f;
+  bd_grade_gamma_g = 1.0f;
+  bd_grade_gamma_b = 1.0f;
+  bd_grade_gain_r = 1.0f;
+  bd_grade_gain_g = 1.0f;
+  bd_grade_gain_b = 1.0f;
+  bd_hueshift_enable = false;
+  bd_hueshift_degrees = 0.0f;
+  bd_posterize_enable = false;
+  bd_posterize_levels = 6.0f;
+  bd_edgeglow_enable = false;
+  bd_edgeglow_strength = 0.0f;
+  bd_edgeglow_threshold = 0.1f;
+  bd_godrays_enable = false;
+  bd_godrays_strength = 0.0f;
+  bd_godrays_length = 1.0f;
+  bd_godrays_threshold = 0.75f;
+  bd_lensflare_enable = false;
+  bd_lensflare_strength = 0.0f;
+  bd_clarity_enable = false;
+  bd_clarity_strength = 0.0f;
+  bd_bloom_radius = 1.0f;
+  bd_bloom_threshold = 0.92f;
+  bd_bloom_knee = 0.55f;
+  bd_bloom_intensity = 1.0f;
+  bd_dynlight_max_per_surface = 0;
+  bd_dynlight_cull_distance = 0.0f;
+  bd_shadowmap_max_lights = 1024;
+}
+
 static void ApplyGraphicsPreset(int preset) {
-  switch (preset) {
-  case 0: // Custom
+  if (preset <= 0) // Custom
     return;
+
+  ResetAdvancedPresetFeatures();
+
+  switch (preset) {
   case 1: // Vanilla+
     bd_postfx_enable = true;
     bd_postfx_quality = 1;
@@ -636,6 +1154,8 @@ static void ApplyGraphicsPreset(int preset) {
     bd_fog_thick_distance = 900.0f;
     bd_fog_thick_multiplier = 1.5f;
     SetFogGradientPreset(0, 0x58625b, 0.0f, 0.75f, 0.0f, 0.0f);
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.15f;
     return;
   case 4: // VHS Horror
     bd_postfx_enable = true;
@@ -1186,6 +1706,9 @@ static void ApplyGraphicsPreset(int preset) {
     bd_fog_thick_distance = 620.0f;
     bd_fog_thick_multiplier = 4.0f;
     SetFogGradientPreset(2, 0x141b3a, 0.25f, 0.9f, 80.0f, -3.0f);
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.30f;
+    bd_bloom_radius = 1.3f;
     return;
   case 15: // Bleach Bunker
     bd_postfx_enable = true;
@@ -1336,6 +1859,11 @@ static void ApplyGraphicsPreset(int preset) {
     bd_fog_thick_distance = 500.0f;
     bd_fog_thick_multiplier = 5.0f;
     SetFogGradientPreset(2, 0x211a30, 0.30f, 1.05f, -60.0f, -5.0f);
+    bd_godrays_enable = true;
+    bd_godrays_strength = 0.20f;
+    bd_godrays_length = 1.2f;
+    bd_godrays_threshold = 0.70f;
+    bd_bloom_radius = 1.8f;
     return;
   case 18: // Low Light Realism
     bd_postfx_enable = true;
@@ -1410,6 +1938,8 @@ static void ApplyGraphicsPreset(int preset) {
     bd_gi_ambient_strength = 0.38f;
     bd_fog_mode = 0;
     SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.30f;
     return;
   case 20: // Warm Cinematic
     ApplyGraphicsPreset(13);
@@ -1769,6 +2299,1367 @@ static void ApplyGraphicsPreset(int preset) {
     bd_fog_thick_multiplier = 6.5f;
     SetFogGradientPreset(2, 0x000000, 0.38f, 1.20f, 0.0f, -6.0f);
     return;
+  case 31: // Cinematic Ultra
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.3f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.35f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.15f;
+    bd_filmgrain_scale = 1.6f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.15f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 14;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 1.9f;
+    bd_emissive_boost = 0.20f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.30f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 140.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.20f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.15f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = true;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.02f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.05f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 0.95f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    gl_ssao = 2;
+    gl_fxaa = 0;
+    gl_light_shadowmap = true;
+    gl_shadowmap_quality = 1024;
+    gl_shadowmap_filter = 2;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    bd_godrays_enable = true;
+    bd_godrays_strength = 0.25f;
+    bd_godrays_length = 1.2f;
+    bd_godrays_threshold = 0.70f;
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.20f;
+    bd_bloom_radius = 1.4f;
+    return;
+  case 32: // Neon Vibrance
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.35f;
+    bd_vignette_enable = false;
+    bd_vignette_strength = 0.0f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.15f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_filmgrain_scale = 1.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.20f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 14;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 1.6f;
+    bd_emissive_boost = 0.50f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.28f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 140.0f;
+    SetFogPresetColor(0xd0d4cf);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.70f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.20f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = false;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.0f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.0f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 1.0f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    gl_ssao = 0;
+    gl_fxaa = 0;
+    gl_light_shadowmap = false;
+    gl_shadowmap_quality = 512;
+    gl_shadowmap_filter = 1;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.20f;
+    bd_bloom_radius = 1.2f;
+    return;
+  case 33: // Retro Poster
+    bd_postfx_enable = true;
+    bd_postfx_quality = 1;
+    bd_bloom_enable = false;
+    bd_bloom_strength = 1.4f;
+    bd_vignette_enable = false;
+    bd_vignette_strength = 0.0f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_filmgrain_scale = 1.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.40f;
+    bd_retro_pixel_enable = true;
+    bd_retro_pixel_scale = 2.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 0;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 0;
+    bd_dynlight_falloff_exponent = 2.0f;
+    bd_emissive_boost = 0.0f;
+    bd_gi_ambient_enable = false;
+    bd_gi_ambient_strength = 0.0f;
+    bd_sprite_lighting_refine = false;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 150.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.65f;
+    bd_fog_sky_strength = 0.85f;
+    bd_fog_thick_distance = 384.0f;
+    bd_fog_thick_multiplier = 8.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = false;
+    bd_vibrance_strength = 0.0f;
+    bd_whitebalance_enable = false;
+    bd_whitebalance_temperature = 0.0f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = true;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.0f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.08f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 0.92f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = true;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    gl_ssao = 0;
+    gl_fxaa = 0;
+    gl_light_shadowmap = false;
+    gl_shadowmap_quality = 512;
+    gl_shadowmap_filter = 1;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    return;
+  case 34: // Cel Comic
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = false;
+    bd_bloom_strength = 1.4f;
+    bd_vignette_enable = false;
+    bd_vignette_strength = 0.0f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_filmgrain_scale = 1.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.20f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 0;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 1.8f;
+    bd_emissive_boost = 0.10f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.30f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 150.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = false;
+    bd_vibrance_strength = 0.0f;
+    bd_whitebalance_enable = false;
+    bd_whitebalance_temperature = 0.0f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = false;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.0f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.0f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 1.0f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = true;
+    bd_posterize_levels = 8.0f;
+    bd_edgeglow_enable = true;
+    bd_edgeglow_strength = 0.70f;
+    bd_edgeglow_threshold = 0.08f;
+    gl_ssao = 0;
+    gl_fxaa = 0;
+    gl_light_shadowmap = false;
+    gl_shadowmap_quality = 512;
+    gl_shadowmap_filter = 1;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    return;
+  case 35: // Sepia Archive
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.80f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.50f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.30f;
+    bd_filmgrain_scale = 2.4f;
+    bd_sharpen_enable = false;
+    bd_sharpen_strength = 0.0f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 13;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 2.0f;
+    bd_emissive_boost = 0.10f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.30f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 150.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = false;
+    bd_vibrance_strength = 0.0f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.50f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = false;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.0f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.0f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 1.0f;
+    bd_hueshift_enable = true;
+    bd_hueshift_degrees = -10.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    gl_ssao = 0;
+    gl_fxaa = 0;
+    gl_light_shadowmap = false;
+    gl_shadowmap_quality = 512;
+    gl_shadowmap_filter = 1;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    return;
+  case 36: // Ultra Lightweight
+    bd_postfx_enable = true;
+    bd_postfx_quality = 1;
+    bd_bloom_enable = false;
+    bd_bloom_strength = 1.4f;
+    bd_vignette_enable = false;
+    bd_vignette_strength = 0.0f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_filmgrain_scale = 1.0f;
+    bd_sharpen_enable = false;
+    bd_sharpen_strength = 0.0f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 0;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 0;
+    bd_dynlight_falloff_exponent = 2.0f;
+    bd_emissive_boost = 0.0f;
+    bd_gi_ambient_enable = false;
+    bd_gi_ambient_strength = 0.0f;
+    bd_sprite_lighting_refine = false;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 150.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.65f;
+    bd_fog_sky_strength = 0.0f;
+    bd_fog_thick_distance = 0.0f;
+    bd_fog_thick_multiplier = 1.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = false;
+    bd_vibrance_strength = 0.0f;
+    bd_whitebalance_enable = false;
+    bd_whitebalance_temperature = 0.0f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = false;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.0f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.0f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 1.0f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    gl_ssao = 0;
+    gl_fxaa = 0;
+    gl_light_shadowmap = false;
+    gl_shadowmap_quality = 512;
+    gl_shadowmap_filter = 1;
+    bd_dynlight_max_per_surface = 8;
+    bd_dynlight_cull_distance = 1500.0f;
+    bd_shadowmap_max_lights = 256;
+    return;
+  case 37: // Balanced Performance
+    bd_postfx_enable = true;
+    bd_postfx_quality = 2;
+    bd_bloom_enable = false;
+    bd_bloom_strength = 1.4f;
+    bd_vignette_enable = false;
+    bd_vignette_strength = 0.0f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_filmgrain_scale = 1.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.30f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 0;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 0;
+    bd_dynlight_falloff_exponent = 2.0f;
+    bd_emissive_boost = 0.0f;
+    bd_gi_ambient_enable = false;
+    bd_gi_ambient_strength = 0.0f;
+    bd_sprite_lighting_refine = false;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 150.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.65f;
+    bd_fog_sky_strength = 0.0f;
+    bd_fog_thick_distance = 0.0f;
+    bd_fog_thick_multiplier = 1.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.25f;
+    bd_whitebalance_enable = false;
+    bd_whitebalance_temperature = 0.0f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = false;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.0f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.0f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 1.0f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    gl_ssao = 0;
+    gl_fxaa = 3;
+    gl_light_shadowmap = false;
+    gl_shadowmap_quality = 512;
+    gl_shadowmap_filter = 1;
+    bd_dynlight_max_per_surface = 16;
+    bd_dynlight_cull_distance = 2500.0f;
+    bd_shadowmap_max_lights = 512;
+    return;
+  case 38: // Competitive Clarity
+    ApplyGraphicsPreset(2);
+    bd_bloom_enable = false;
+    bd_bloom_strength = 1.4f;
+    bd_vignette_enable = false;
+    bd_vignette_strength = 0.0f;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.35f;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 14;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 1.8f;
+    bd_emissive_boost = 0.12f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.38f;
+    bd_fog_mode = 0;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    gl_ssao = 0;
+    gl_fxaa = 3;
+    gl_light_shadowmap = false;
+    gl_shadowmap_quality = 512;
+    gl_shadowmap_filter = 1;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 2000.0f;
+    bd_shadowmap_max_lights = 256;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.30f;
+    return;
+  case 39: // HDR Showcase
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.6f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.20f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_filmgrain_scale = 1.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.15f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 14;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 1.9f;
+    bd_emissive_boost = 0.25f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.30f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 140.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.30f;
+    bd_whitebalance_enable = false;
+    bd_whitebalance_temperature = 0.0f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = true;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.015f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.04f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 0.96f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    gl_ssao = 2;
+    gl_fxaa = 0;
+    gl_light_shadowmap = true;
+    gl_shadowmap_quality = 1024;
+    gl_shadowmap_filter = 2;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    bd_bloom_radius = 1.4f;
+    return;
+  case 40: // Maxed Out
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.5f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.25f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.05f;
+    bd_filmgrain_scale = 1.2f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.25f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 14;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 1.85f;
+    bd_emissive_boost = 0.24f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.28f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 145.0f;
+    SetFogPresetColor(0xd0d4cf);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.20f;
+    bd_whitebalance_enable = false;
+    bd_whitebalance_temperature = 0.0f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = false;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.0f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.0f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 1.0f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    gl_ssao = 3;
+    gl_fxaa = 3;
+    gl_light_shadowmap = true;
+    gl_shadowmap_quality = 1024;
+    gl_shadowmap_filter = 3;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    bd_godrays_enable = true;
+    bd_godrays_strength = 0.30f;
+    bd_godrays_length = 1.2f;
+    bd_godrays_threshold = 0.70f;
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.15f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.20f;
+    bd_bloom_radius = 1.5f;
+    return;
+  case 41: // Divine Radiance
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.2f;
+    bd_bloom_radius = 1.6f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.20f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_filmgrain_scale = 1.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.15f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 14;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 1.9f;
+    bd_emissive_boost = 0.25f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.30f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 140.0f;
+    SetFogPresetColor(0xd8cfc0);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.25f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.20f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = false;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.0f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.0f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 1.0f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    bd_godrays_enable = true;
+    bd_godrays_strength = 0.45f;
+    bd_godrays_length = 1.3f;
+    bd_godrays_threshold = 0.65f;
+    bd_lensflare_enable = false;
+    bd_lensflare_strength = 0.0f;
+    bd_clarity_enable = false;
+    bd_clarity_strength = 0.0f;
+    gl_ssao = 2;
+    gl_fxaa = 0;
+    gl_light_shadowmap = true;
+    gl_shadowmap_quality = 1024;
+    gl_shadowmap_filter = 2;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    return;
+  case 42: // Analog Cinema
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.0f;
+    bd_bloom_radius = 1.2f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.40f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.10f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.25f;
+    bd_filmgrain_scale = 2.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.10f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 13;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 2;
+    bd_dynlight_falloff_exponent = 2.10f;
+    bd_emissive_boost = 0.15f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.30f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 145.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.20f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.10f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = true;
+    bd_grade_lift_r = -0.02f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.03f;
+    bd_grade_gamma_r = 1.05f;
+    bd_grade_gamma_g = 1.05f;
+    bd_grade_gamma_b = 1.05f;
+    bd_grade_gain_r = 1.06f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 0.94f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    bd_godrays_enable = false;
+    bd_godrays_strength = 0.0f;
+    bd_godrays_length = 1.0f;
+    bd_godrays_threshold = 0.75f;
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.35f;
+    bd_clarity_enable = false;
+    bd_clarity_strength = 0.0f;
+    gl_ssao = 2;
+    gl_fxaa = 0;
+    gl_light_shadowmap = true;
+    gl_shadowmap_quality = 1024;
+    gl_shadowmap_filter = 2;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    return;
+  case 43: // Clarity Max
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = false;
+    bd_bloom_strength = 1.4f;
+    bd_bloom_radius = 1.0f;
+    bd_vignette_enable = false;
+    bd_vignette_strength = 0.0f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_filmgrain_scale = 1.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.40f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 14;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 1.8f;
+    bd_emissive_boost = 0.10f;
+    bd_gi_ambient_enable = false;
+    bd_gi_ambient_strength = 0.0f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 0;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 140.0f;
+    SetFogPresetColor(0xd0d4cf);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.30f;
+    bd_whitebalance_enable = false;
+    bd_whitebalance_temperature = 0.0f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = false;
+    bd_grade_lift_r = 0.0f;
+    bd_grade_lift_g = 0.0f;
+    bd_grade_lift_b = 0.0f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 1.0f;
+    bd_grade_gain_g = 1.0f;
+    bd_grade_gain_b = 1.0f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    bd_godrays_enable = false;
+    bd_godrays_strength = 0.0f;
+    bd_godrays_length = 1.0f;
+    bd_godrays_threshold = 0.75f;
+    bd_lensflare_enable = false;
+    bd_lensflare_strength = 0.0f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.50f;
+    gl_ssao = 0;
+    gl_fxaa = 3;
+    gl_light_shadowmap = false;
+    gl_shadowmap_quality = 512;
+    gl_shadowmap_filter = 1;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    return;
+  case 44: // Dreamlike
+    bd_postfx_enable = true;
+    bd_postfx_quality = 3;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.8f;
+    bd_bloom_radius = 2.0f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.15f;
+    gl_crt_mode = 0;
+    bd_chromatic_enable = false;
+    bd_chromatic_strength = 0.0f;
+    bd_filmgrain_enable = false;
+    bd_filmgrain_strength = 0.0f;
+    bd_filmgrain_scale = 1.0f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.10f;
+    bd_retro_pixel_enable = false;
+    bd_retro_pixel_scale = 1.0f;
+    bd_vhs_enable = false;
+    bd_vhs_strength = 0.0f;
+    bd_vhs_scanline = 0.0f;
+    bd_vhs_jitter = 0.0f;
+    bd_vhs_tracking = 0.0f;
+    bd_vhs_ghosting = 0.0f;
+    bd_vhs_noise = 0.0f;
+    bd_vhs_evil = 0.0f;
+    bd_vhs_panic_enable = false;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_colorgrade_lut = 0;
+    gl_tonemap = 14;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
+    bd_dynlight_falloff_mode = 1;
+    bd_dynlight_falloff_exponent = 1.9f;
+    bd_emissive_boost = 0.20f;
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.32f;
+    bd_sprite_lighting_refine = true;
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.90f;
+    bd_fog_density = 85.0f;
+    SetFogPresetColor(0xc9d6de);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.35f;
+    bd_fog_sky_strength = 0.50f;
+    bd_fog_thick_distance = 800.0f;
+    bd_fog_thick_multiplier = 2.5f;
+    SetFogGradientPreset(1, 0x8fa5b5, 0.14f, 0.80f, 0.0f, 0.0f);
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.25f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.10f;
+    bd_whitebalance_tint = 0.0f;
+    bd_grade_enable = true;
+    bd_grade_lift_r = 0.02f;
+    bd_grade_lift_g = 0.02f;
+    bd_grade_lift_b = 0.03f;
+    bd_grade_gamma_r = 1.0f;
+    bd_grade_gamma_g = 1.0f;
+    bd_grade_gamma_b = 1.0f;
+    bd_grade_gain_r = 0.98f;
+    bd_grade_gain_g = 0.98f;
+    bd_grade_gain_b = 0.98f;
+    bd_hueshift_enable = false;
+    bd_hueshift_degrees = 0.0f;
+    bd_posterize_enable = false;
+    bd_posterize_levels = 6.0f;
+    bd_edgeglow_enable = false;
+    bd_edgeglow_strength = 0.0f;
+    bd_edgeglow_threshold = 0.1f;
+    bd_godrays_enable = true;
+    bd_godrays_strength = 0.30f;
+    bd_godrays_length = 1.2f;
+    bd_godrays_threshold = 0.70f;
+    bd_lensflare_enable = false;
+    bd_lensflare_strength = 0.0f;
+    bd_clarity_enable = false;
+    bd_clarity_strength = 0.0f;
+    gl_ssao = 2;
+    gl_fxaa = 0;
+    gl_light_shadowmap = true;
+    gl_shadowmap_quality = 1024;
+    gl_shadowmap_filter = 2;
+    bd_dynlight_max_per_surface = 0;
+    bd_dynlight_cull_distance = 0.0f;
+    bd_shadowmap_max_lights = 1024;
+    return;
+  case 45: // Soft Bloom
+    ApplyGraphicsPreset(2);
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.05f;
+    bd_bloom_radius = 1.8f;
+    bd_bloom_threshold = 0.78f;
+    bd_bloom_knee = 0.70f;
+    bd_bloom_intensity = 0.85f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.12f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.12f;
+    return;
+  case 46: // Neon Bloom
+    ApplyGraphicsPreset(32);
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.75f;
+    bd_bloom_radius = 2.0f;
+    bd_bloom_threshold = 0.58f;
+    bd_bloom_knee = 0.45f;
+    bd_bloom_intensity = 1.30f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.08f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.42f;
+    return;
+  case 47: // Subtle Film
+    ApplyGraphicsPreset(2);
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.08f;
+    bd_filmgrain_scale = 1.5f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.12f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.75f;
+    bd_bloom_radius = 1.2f;
+    bd_bloom_threshold = 0.92f;
+    return;
+  case 48: // Muted Pastels
+    ApplyGraphicsPreset(35);
+    bd_colorgrade_mode = 3;
+    bd_colorgrade_strength = 0.18f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.14f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.08f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.65f;
+    bd_bloom_threshold = 0.88f;
+    return;
+  case 49: // Dark Ambient
+    ApplyGraphicsPreset(18);
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.34f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.70f;
+    bd_bloom_radius = 1.4f;
+    bd_bloom_threshold = 0.86f;
+    bd_bloom_intensity = 0.75f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.22f;
+    return;
+  case 50: // Bright Ambient
+    ApplyGraphicsPreset(19);
+    bd_gi_ambient_enable = true;
+    bd_gi_ambient_strength = 0.42f;
+    bd_light_ambient_floor = 0.12f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.65f;
+    bd_bloom_radius = 1.3f;
+    bd_bloom_threshold = 0.95f;
+    return;
+  case 51: // Sharp Retro
+    ApplyGraphicsPreset(1);
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.48f;
+    bd_retro_pixel_enable = true;
+    bd_retro_pixel_scale = 2.0f;
+    gl_fxaa = 3;
+    bd_bloom_enable = false;
+    return;
+  case 52: // Soft Retro
+    ApplyGraphicsPreset(3);
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.60f;
+    bd_bloom_radius = 1.8f;
+    bd_bloom_threshold = 0.82f;
+    bd_bloom_knee = 0.75f;
+    gl_crt_mode = 2;
+    gl_crt_scanline = 0.12f;
+    gl_crt_mask_intensity = 0.08f;
+    return;
+  case 53: // Noir Punch
+    ApplyGraphicsPreset(10);
+    gl_tonemap = 7;
+    bd_colorgrade_mode = 5;
+    bd_colorgrade_strength = 0.38f;
+    bd_grade_enable = true;
+    bd_grade_lift_r = -0.04f;
+    bd_grade_lift_g = -0.04f;
+    bd_grade_lift_b = -0.03f;
+    bd_grade_gain_r = 1.08f;
+    bd_grade_gain_g = 1.06f;
+    bd_grade_gain_b = 1.02f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.90f;
+    bd_bloom_threshold = 0.80f;
+    return;
+  case 54: // Cel Shadows
+    ApplyGraphicsPreset(34);
+    bd_posterize_enable = true;
+    bd_posterize_levels = 5.0f;
+    bd_edgeglow_enable = true;
+    bd_edgeglow_strength = 0.22f;
+    bd_edgeglow_threshold = 0.12f;
+    bd_bloom_enable = false;
+    return;
+  case 55: // Watercolor Dream
+    ApplyGraphicsPreset(44);
+    bd_bloom_strength = 1.35f;
+    bd_bloom_radius = 2.0f;
+    bd_bloom_threshold = 0.74f;
+    bd_bloom_knee = 0.85f;
+    bd_colorgrade_mode = 6;
+    bd_colorgrade_strength = 0.30f;
+    bd_sharpen_enable = false;
+    bd_clarity_enable = false;
+    return;
+  case 56: // Overexposed
+    ApplyGraphicsPreset(41);
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.60f;
+    bd_bloom_radius = 1.7f;
+    bd_bloom_threshold = 0.60f;
+    bd_bloom_knee = 0.60f;
+    bd_bloom_intensity = 1.20f;
+    bd_godrays_strength = 0.38f;
+    return;
+  case 57: // Clean Lens
+    ApplyGraphicsPreset(38);
+    bd_bloom_enable = false;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.45f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.42f;
+    gl_fxaa = 3;
+    return;
+  case 58: // Low Glow
+    ApplyGraphicsPreset(6);
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.70f;
+    bd_bloom_radius = 1.2f;
+    bd_bloom_threshold = 1.00f;
+    bd_bloom_knee = 0.35f;
+    bd_bloom_intensity = 0.60f;
+    bd_vignette_enable = false;
+    return;
+  case 59: // Spectral
+    ApplyGraphicsPreset(30);
+    bd_hueshift_enable = true;
+    bd_hueshift_degrees = 18.0f;
+    bd_edgeglow_enable = true;
+    bd_edgeglow_strength = 0.34f;
+    bd_edgeglow_threshold = 0.08f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.10f;
+    bd_bloom_radius = 1.6f;
+    bd_bloom_threshold = 0.72f;
+    return;
+  case 60: // Golden Film
+    ApplyGraphicsPreset(42);
+    bd_colorgrade_mode = 1;
+    bd_colorgrade_strength = 0.32f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.10f;
+    bd_bloom_radius = 1.5f;
+    bd_bloom_threshold = 0.78f;
+    bd_vignette_strength = 0.25f;
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.22f;
+    return;
+  case 61: // Cold Facility
+    ApplyGraphicsPreset(12);
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.30f;
+    bd_whitebalance_tint = 0.05f;
+    bd_colorgrade_lut = 5;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.80f;
+    bd_bloom_threshold = 0.86f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.28f;
+    return;
+  case 62: // Violet Dusk
+    ApplyGraphicsPreset(14);
+    bd_hueshift_enable = true;
+    bd_hueshift_degrees = -12.0f;
+    bd_colorgrade_mode = 7;
+    bd_colorgrade_strength = 0.28f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.20f;
+    bd_bloom_radius = 1.6f;
+    bd_bloom_threshold = 0.76f;
+    return;
+  case 63: // Soft Focus
+    ApplyGraphicsPreset(44);
+    bd_bloom_strength = 1.30f;
+    bd_bloom_radius = 2.0f;
+    bd_bloom_threshold = 0.75f;
+    bd_bloom_knee = 0.90f;
+    bd_bloom_intensity = 1.05f;
+    bd_sharpen_enable = false;
+    bd_clarity_enable = false;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.04f;
+    return;
+  case 64: // Arcade Neon
+    ApplyGraphicsPreset(32);
+    bd_posterize_enable = true;
+    bd_posterize_levels = 5.0f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.50f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.30f;
+    bd_bloom_radius = 1.5f;
+    bd_bloom_threshold = 0.70f;
+    bd_bloom_intensity = 1.10f;
+    return;
   default:
     return;
   }
@@ -1780,10 +3671,9 @@ static void SetGraphicsPreset(FIntCVar &self) {
   if (self > MaxGraphicsPreset)
     self = MaxGraphicsPreset;
 
-  GApplyingGraphicsPreset = true;
+  FPresetApplyScope applyScope;
   ApplyGraphicsPreset(self);
   KeepPresetPlayable(self);
-  GApplyingGraphicsPreset = false;
 }
 
 //==========================================================================
@@ -1899,7 +3789,8 @@ CUSTOM_CVAR(Bool, gl_paltonemap_reverselookup, true,
 
 CVAR(Float, gl_menu_blur, -1.0f, CVAR_ARCHIVE)
 
-CUSTOM_CVAR(Int, bd_graphics_preset, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+CUSTOM_CVAR(Int, bd_graphics_preset, 0,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
   SetGraphicsPreset(self);
 }
 
@@ -1919,6 +3810,46 @@ CUSTOM_CVAR(Float, bd_bloom_strength, 1.4f,
 
   if (gl_bloom_amount != self)
     gl_bloom_amount = self;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_bloom_radius, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.5f)
+    self = 0.5f;
+  if (self > 3.0f)
+    self = 3.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_bloom_threshold, 0.92f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 4.0f)
+    self = 4.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_bloom_knee, 0.55f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.01f)
+    self = 0.01f;
+  if (self > 2.0f)
+    self = 2.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_bloom_intensity, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 4.0f)
+    self = 4.0f;
 
   OnPresetFeatureChanged(self);
 }
@@ -1958,6 +3889,371 @@ CUSTOM_CVAR(Float, bd_vignette_strength, 0.0f,
     EnsurePostFxActive();
     if (!bd_vignette_enable)
       bd_vignette_enable = true;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Bool, bd_vibrance_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self)
+  {
+    EnsurePostFxActive();
+    if (bd_vibrance_strength <= 0.0f)
+      bd_vibrance_strength = 0.5f;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_vibrance_strength, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  if (self > 0.0f)
+  {
+    EnsurePostFxActive();
+    if (!bd_vibrance_enable)
+      bd_vibrance_enable = true;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Bool, bd_whitebalance_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self)
+  {
+    EnsurePostFxActive();
+    if (bd_whitebalance_temperature == 0.0f && bd_whitebalance_tint == 0.0f)
+      bd_whitebalance_temperature = 0.1f;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_whitebalance_temperature, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < -1.0f)
+    self = -1.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  if (self != 0.0f)
+  {
+    EnsurePostFxActive();
+    if (!bd_whitebalance_enable)
+      bd_whitebalance_enable = true;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_whitebalance_tint, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < -1.0f)
+    self = -1.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  if (self != 0.0f)
+  {
+    EnsurePostFxActive();
+    if (!bd_whitebalance_enable)
+      bd_whitebalance_enable = true;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+
+static bool GradeComponentsNeutral()
+{
+  return bd_grade_lift_r == 0.0f && bd_grade_lift_g == 0.0f &&
+         bd_grade_lift_b == 0.0f && bd_grade_gamma_r == 1.0f &&
+         bd_grade_gamma_g == 1.0f && bd_grade_gamma_b == 1.0f &&
+         bd_grade_gain_r == 1.0f && bd_grade_gain_g == 1.0f &&
+         bd_grade_gain_b == 1.0f;
+}
+
+static void OnGradeComponentChanged(FFloatCVar &self, float neutral)
+{
+  if (self != neutral)
+  {
+    EnsurePostFxActive();
+    if (!bd_grade_enable)
+      bd_grade_enable = true;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Bool, bd_grade_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self)
+  {
+    EnsurePostFxActive();
+    if (GradeComponentsNeutral())
+    {
+      bd_grade_gain_r = 1.1f;
+      bd_grade_gain_g = 1.1f;
+      bd_grade_gain_b = 1.1f;
+    }
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_grade_lift_r, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < -0.5f)
+    self = -0.5f;
+  if (self > 0.5f)
+    self = 0.5f;
+
+  OnGradeComponentChanged(self, 0.0f);
+}
+CUSTOM_CVAR(Float, bd_grade_lift_g, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < -0.5f)
+    self = -0.5f;
+  if (self > 0.5f)
+    self = 0.5f;
+
+  OnGradeComponentChanged(self, 0.0f);
+}
+CUSTOM_CVAR(Float, bd_grade_lift_b, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < -0.5f)
+    self = -0.5f;
+  if (self > 0.5f)
+    self = 0.5f;
+
+  OnGradeComponentChanged(self, 0.0f);
+}
+CUSTOM_CVAR(Float, bd_grade_gamma_r, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.5f)
+    self = 0.5f;
+  if (self > 2.0f)
+    self = 2.0f;
+
+  OnGradeComponentChanged(self, 1.0f);
+}
+CUSTOM_CVAR(Float, bd_grade_gamma_g, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.5f)
+    self = 0.5f;
+  if (self > 2.0f)
+    self = 2.0f;
+
+  OnGradeComponentChanged(self, 1.0f);
+}
+CUSTOM_CVAR(Float, bd_grade_gamma_b, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.5f)
+    self = 0.5f;
+  if (self > 2.0f)
+    self = 2.0f;
+
+  OnGradeComponentChanged(self, 1.0f);
+}
+CUSTOM_CVAR(Float, bd_grade_gain_r, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.5f)
+    self = 0.5f;
+  if (self > 2.0f)
+    self = 2.0f;
+
+  OnGradeComponentChanged(self, 1.0f);
+}
+CUSTOM_CVAR(Float, bd_grade_gain_g, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.5f)
+    self = 0.5f;
+  if (self > 2.0f)
+    self = 2.0f;
+
+  OnGradeComponentChanged(self, 1.0f);
+}
+CUSTOM_CVAR(Float, bd_grade_gain_b, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.5f)
+    self = 0.5f;
+  if (self > 2.0f)
+    self = 2.0f;
+
+  OnGradeComponentChanged(self, 1.0f);
+}
+
+CUSTOM_CVAR(Bool, bd_hueshift_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self)
+  {
+    EnsurePostFxActive();
+    if (bd_hueshift_degrees == 0.0f)
+      bd_hueshift_degrees = 15.0f;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_hueshift_degrees, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < -180.0f)
+    self = -180.0f;
+  if (self > 180.0f)
+    self = 180.0f;
+
+  if (self != 0.0f)
+  {
+    EnsurePostFxActive();
+    if (!bd_hueshift_enable)
+      bd_hueshift_enable = true;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Bool, bd_posterize_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self)
+    EnsurePostFxActive();
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_posterize_levels, 6.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 2.0f)
+    self = 2.0f;
+  if (self > 16.0f)
+    self = 16.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Bool, bd_edgeglow_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self)
+  {
+    EnsurePostFxActive();
+    if (bd_edgeglow_strength <= 0.0f)
+      bd_edgeglow_strength = 0.5f;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_edgeglow_strength, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  if (self > 0.0f)
+  {
+    EnsurePostFxActive();
+    if (!bd_edgeglow_enable)
+      bd_edgeglow_enable = true;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_edgeglow_threshold, 0.1f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Bool, bd_godrays_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self)
+  {
+    EnsurePostFxActive();
+    if (bd_godrays_strength <= 0.0f)
+      bd_godrays_strength = 0.3f;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_godrays_strength, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  if (self > 0.0f)
+  {
+    EnsurePostFxActive();
+    if (!bd_godrays_enable)
+      bd_godrays_enable = true;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_godrays_length, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.25f)
+    self = 0.25f;
+  if (self > 2.0f)
+    self = 2.0f;
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_godrays_threshold, 0.75f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Bool, bd_lensflare_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self)
+  {
+    EnsurePostFxActive();
+    if (bd_lensflare_strength <= 0.0f)
+      bd_lensflare_strength = 0.5f;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_lensflare_strength, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  if (self > 0.0f)
+  {
+    EnsurePostFxActive();
+    if (!bd_lensflare_enable)
+      bd_lensflare_enable = true;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Bool, bd_clarity_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self)
+  {
+    EnsurePostFxActive();
+    if (bd_clarity_strength <= 0.0f)
+      bd_clarity_strength = 0.5f;
+  }
+
+  OnPresetFeatureChanged(self);
+}
+CUSTOM_CVAR(Float, bd_clarity_strength, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  if (self > 0.0f)
+  {
+    EnsurePostFxActive();
+    if (!bd_clarity_enable)
+      bd_clarity_enable = true;
   }
 
   OnPresetFeatureChanged(self);
@@ -2197,17 +4493,14 @@ CUSTOM_CVAR(Float, bd_dynlight_falloff_exponent, 2.0f,
 }
 
 CUSTOM_CVAR(Int, bd_lighting_preset, 0,
-            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
   if (self < 0)
     self = 0;
   if (self > MaxLightingPreset)
     self = MaxLightingPreset;
 
-  GApplyingLightingPreset = true;
+  FPresetApplyScope applyScope;
   ApplyLightingPreset(self);
-  GApplyingLightingPreset = false;
-
-  OnPresetFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_dynlight_intensity, 1.0f,
@@ -2280,6 +4573,32 @@ CUSTOM_CVAR(Float, bd_dynlight_shadow_strength, 1.0f,
   OnLightingFeatureChanged(self);
 }
 
+// Performance knobs. These only clamp: they must not trigger the
+// OnLightingFeatureChanged / OnPresetFeatureChanged style callbacks.
+CUSTOM_CVAR(Int, bd_dynlight_max_per_surface, 0,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0)
+    self = 0;
+  if (self > 256)
+    self = 256;
+}
+
+CUSTOM_CVAR(Float, bd_dynlight_cull_distance, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 65536.0f)
+    self = 65536.0f;
+}
+
+CUSTOM_CVAR(Int, bd_shadowmap_max_lights, 1024,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 64)
+    self = 64;
+  if (self > 1024)
+    self = 1024;
+}
+
 CUSTOM_CVAR(Float, bd_light_temperature, 0.0f,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < -1.0f)
@@ -2333,21 +4652,109 @@ CUSTOM_CVAR(Float, bd_gi_ambient_strength, 0.0f,
   OnLightingFeatureChanged(self);
 }
 
+CUSTOM_CVAR(Float, bd_light_contrast, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 2.0f)
+    self = 2.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_specular_power_scale, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.25f)
+    self = 0.25f;
+  if (self > 4.0f)
+    self = 4.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_rimlight_strength, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_rimlight_power, 3.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.5f)
+    self = 0.5f;
+  if (self > 8.0f)
+    self = 8.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_ambient_gradient_strength, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Color, bd_ambient_gradient_color, 0x8899bb,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_dynlight_flicker, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_aerial_strength, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_aerial_distance, 2048.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 256.0f)
+    self = 256.0f;
+  if (self > 16384.0f)
+    self = 16384.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Color, bd_specular_tint, 0xffffff,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  OnLightingFeatureChanged(self);
+}
+
 CUSTOM_CVAR(Bool, bd_sprite_lighting_refine, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   OnLightingFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Int, bd_fog_preset, 0,
-            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
   if (self < 0)
     self = 0;
-  if (self > 6)
-    self = 6;
+  if (self > MaxFogPreset)
+    self = MaxFogPreset;
 
-  GApplyingFogPreset = true;
+  FPresetApplyScope applyScope;
   ApplyFogPreset(self);
-  GApplyingFogPreset = false;
-  OnPresetFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Int, bd_fog_mode, 1,

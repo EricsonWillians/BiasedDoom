@@ -47,7 +47,6 @@ SLIM_HINT = 542
 POPUP_BASE = 600          # 600..649 round-robin score/XP popups
 POPUP_SLOTS = 50
 PLAYER_RING = 560         # player aura ring (level-up, vampire proc)
-PLAYER_FRAME = 561        # full-screen frame flash (level-up, vampire proc)
 MONSTER_VISUAL_BASE = 700  # + slot * 3: ground ring, health bar, title text
 HUD_ANNOUNCE = 1          # bd.hud_text id (separate namespace from canvas ids)
 

@@ -25,12 +25,16 @@
 **
 **/
 
+#include <algorithm>
+
 #include "actorinlines.h"
 #include "a_dynlight.h"
 #include "hw_dynlightdata.h"
 #include"hw_cvars.h"
 #include "v_video.h"
+#include "r_utility.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
 // If we want to share the array to avoid constant allocations it needs to be thread local unless it'd be littered with expensive synchronization.
 thread_local FDynLightData lightdata;
@@ -48,6 +52,20 @@ CVAR (Bool, gl_light_particles, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 
 //==========================================================================
 //
+// Performance culling: skip lights too far away from the current viewpoint.
+// Uses squared distances so no square root is needed per light.
+//
+//==========================================================================
+static bool LightBeyondCullDistance(const DVector3 &pos)
+{
+	if (bd_dynlight_cull_distance <= 0.0f) return false;
+	double maxdist = (double)bd_dynlight_cull_distance;
+	DVector3 delta = pos - r_viewpoint.Pos;
+	return delta.LengthSquared() > maxdist * maxdist;
+}
+
+//==========================================================================
+//
 // Sets up the parameters to render one dynamic light onto one plane
 //
 //==========================================================================
@@ -60,6 +78,7 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 
 	if (radius <= 0.f) return false;
 	if (dist > radius) return false;
+	if (LightBeyondCullDistance(pos)) return false;
 	if (checkside && p.PointOnSide((float)pos.X, (float)pos.Z, (float)pos.Y))
 	{
 		return false;
@@ -80,6 +99,8 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 
 	DVector3 pos = light->PosRelative(group);
 	float radius = light->GetRadius();
+
+	if (LightBeyondCullDistance(pos)) return;
 
 	float cs;
 	if (light->IsAdditive()) 
@@ -159,5 +180,42 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	data[13] = spotOuterAngle;
 	data[14] = 0.0f; // unused
 	data[15] = 0.0f; // unused
+}
+
+//==========================================================================
+//
+// Truncates each light group to the maxLights strongest entries.
+// Strength is estimated from the stored light record: radius first
+// (data[3], larger reach usually means a stronger contribution), then
+// color intensity (data[4..6]) as tie breaker.
+//
+//==========================================================================
+void FDynLightData::LimitPerSurface(int maxLights)
+{
+	if (maxLights <= 0) return;
+
+	for (int group = 0; group < 3; group++)
+	{
+		auto &arr = arrays[group];
+		int count = (int)arr.Size() / 16;
+		if (count <= maxLights) continue;
+
+		TArray<int> order(count, true);
+		for (int i = 0; i < count; i++) order[i] = i;
+		std::sort(order.begin(), order.end(), [&](int a, int b)
+		{
+			float ra = arr[a * 16 + 3];
+			float rb = arr[b * 16 + 3];
+			if (ra != rb) return ra > rb;
+			float ia = arr[a * 16 + 4] + arr[a * 16 + 5] + arr[a * 16 + 6];
+			float ib = arr[b * 16 + 4] + arr[b * 16 + 5] + arr[b * 16 + 6];
+			return ia > ib;
+		});
+
+		TArray<float> kept(maxLights * 16, true);
+		for (int i = 0; i < maxLights; i++)
+			memcpy(&kept[i * 16], &arr[order[i] * 16], 16 * sizeof(float));
+		arr = std::move(kept);
+	}
 }
 

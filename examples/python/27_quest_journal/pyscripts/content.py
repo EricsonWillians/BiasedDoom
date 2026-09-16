@@ -1,6 +1,6 @@
-"""Whispers in the Walls — content: pure data tables and factories.
+"""Whispers in the Walls, content: pure data tables and factories.
 
-This module makes **no engine calls at import time** (and none at all —
+This module makes **no engine calls at import time** (and none at all:
 the factories only build plain ``bd_quests`` data objects). systems.py
 turns these tables into a living campaign, ui.py renders them, and
 main.py wires both to engine events.
@@ -25,11 +25,18 @@ RITUAL_SPOT = (96.0, 448.0, 152.0)
 BLACKOUT_TICS = 35
 FLICKER_DELAY_TICS = 44
 
+#: The rite beacon, drawn while quest 2 is current: a vertical beam rising
+#: from the circle's heart (RITUAL_SPOT sits on the walkway floor, probed)
+#: so the walkway can be found from the halls below. systems.py clamps the
+#: beam to the sector ceiling; this height is the fallback.
+RITE_BEACON_COLOR = (150, 24, 40)        # liturgical red, like its answer
+RITE_BEACON_HEIGHT = 224.0
+
 # --- cast -----------------------------------------------------------------------
 
 #: The three desecrated pages (a custom ZScript pickup, see the ZSCRIPT
 #: lump), scattered in an east-west line across the flat entry hall
-#: (sector 7, floor 56 — verified with in-engine probes). The autotest
+#: (sector 7, floor 56, verified with in-engine probes). The autotest
 #: walks the line west to east from PAGE_WALK_START.
 PAGE_CLASS = "RitualPage"
 PAGE_TIDS = (9101, 9102, 9103)
@@ -37,6 +44,12 @@ PAGE_POSITIONS = ((-160.0, 800.0, 56.0), (-96.0, 800.0, 56.0),
                   (-32.0, 800.0, 56.0))
 PAGE_WALK_START = (-184.0, 800.0, 56.0)
 PAGE_WALK_ANGLE = 0.0                 # face due east, down the line
+
+#: Page markers, drawn while quest 1 is active: a pale ground ring at each
+#: uncollected page's feet and a floating "!" above it.
+PAGE_MARKER_COLOR = (236, 222, 184)      # bone-pale, the pages' own tint
+PAGE_MARKER_RADIUS = 18.0
+PAGE_MARKER_TEXT = "!"
 
 #: The whispering dead: the pack that rises when the circle is entered.
 WAVE_CLASS = "ZombieMan"
@@ -120,16 +133,31 @@ QUESTS = [
 
 # --- prose -----------------------------------------------------------------------
 
+#: The opening beat (fresh maps only, never on savegame loads): the goal
+#: centered after INTRO_CENTER_TICS, then the (delay, line) whispers,
+#: staggered so each lands alone. systems.play_intro schedules them.
+INTRO_CENTER = "The walls whisper. Take back the three desecrated pages."
+INTRO_CENTER_TICS = 3
+INTRO_TOASTS = (
+    (38, "press J to open the Grimoire; every hunt is inked there."),
+    (70, "pale markers light the way to what the walls still hold."),
+)
+
 #: Toast lines. ``{p}``/``{n}`` are filled with objective progress.
 TOAST_PAGE_PROGRESS = "a page folds itself into your coat ({p}/{n})"
 TOAST_PAGES_DONE = ("the pages shiver in your grip. the circle waits above "
                     "the cistern.")
 TOAST_XP_REWARD = "the parish owes you {total} favor (+{amount})"
 TOAST_RITE_ENTERED = "the light dies. something kneels down beside you."
+#: The rite's one rule, stated plainly the moment the rite begins.
+TOAST_RITE_RULE = ("Stay inside the circle until the dead fall. "
+                   "Leaving breaks the rite.")
 TOAST_WAVE_PROGRESS = "another whisper throttles silent ({p}/{n})"
 TOAST_RITE_DONE = "the circle gutters out. above you, the Choir draws breath."
 TOAST_RITE_FAILED = "the circle drinks your absence. the rite is broken."
 TOAST_CHOIR_DONE = "the walls forget your name. for now."
+#: Center-screen announcement when the Choir steps out of the circle.
+CHOIR_ANNOUNCE = "The Choir answers the rite. Silence it."
 TOAST_SCREENSHOT_OMEN = "the mortar has learned your name"
 
 # --- factories ---------------------------------------------------------------------

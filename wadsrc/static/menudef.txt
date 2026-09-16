@@ -85,6 +85,32 @@ OptionValue "BDLightingPresetModes"
 	10, "Low Light Realism"
 	11, "Hellfire Glow"
 	12, "Void Dread"
+	13, "Studio Soft"
+	14, "Overcast Day"
+	15, "Golden Hour"
+	16, "Cold Industrial"
+	17, "Pitch Black"
+	18, "Arcade Bright"
+	19, "Rim Drama"
+	20, "Gradient Ambience"
+	21, "Flickering Candlelight"
+	22, "Aerial Vista"
+	23, "Candlelit Crypt"
+	24, "Moonlit Expanse"
+	25, "Emergency Strobe"
+	26, "Aurora Veil"
+	27, "Dusty Archive"
+	28, "Ruby Corridor"
+	29, "Surgical White"
+	30, "Ectoplasm"
+	31, "Storm Front"
+	32, "Amber Ember"
+	33, "Deep Cavern"
+	34, "Cathedral Bloom"
+	35, "Neon Noir"
+	36, "Desert Heat"
+	37, "Arctic Facility"
+	38, "Soft Dawn"
 }
 
 OptionValue "BDFogModes"
@@ -103,6 +129,16 @@ OptionValue "BDFogPresets"
 	4, "Cinematic Layers"
 	5, "Dense Horror"
 	6, "Directional Dusk"
+	7, "Morning Mist"
+	8, "Toxic Haze"
+	9, "Blackout"
+	10, "Green Valley"
+	11, "Blue Hour"
+	12, "Crimson Eclipse"
+	13, "Underwater"
+	14, "Dust Storm"
+	15, "Polar Whiteout"
+	16, "Cathedral Haze"
 }
 
 OptionValue "BDFogQualityModes"
@@ -159,6 +195,40 @@ OptionValue "PostfxPresetModes"
 	28, "Possessed VHS"
 	29, "Blood Moon Evil"
 	30, "Void Ritual"
+	31, "Cinematic Ultra"
+	32, "Neon Vibrance"
+	33, "Retro Poster"
+	34, "Cel Comic"
+	35, "Sepia Archive"
+	36, "Ultra Lightweight"
+	37, "Balanced Performance"
+	38, "Competitive Clarity"
+	39, "HDR Showcase"
+	40, "Maxed Out"
+	41, "Divine Radiance"
+	42, "Analog Cinema"
+	43, "Clarity Max"
+	44, "Dreamlike"
+	45, "Soft Bloom"
+	46, "Neon Bloom"
+	47, "Subtle Film"
+	48, "Muted Pastels"
+	49, "Dark Ambient"
+	50, "Bright Ambient"
+	51, "Sharp Retro"
+	52, "Soft Retro"
+	53, "Noir Punch"
+	54, "Cel Shadows"
+	55, "Watercolor Dream"
+	56, "Overexposed"
+	57, "Clean Lens"
+	58, "Low Glow"
+	59, "Spectral"
+	60, "Golden Film"
+	61, "Cold Facility"
+	62, "Violet Dusk"
+	63, "Soft Focus"
+	64, "Arcade Neon"
 }
 
 OptionValue "PostfxQualityModes"
@@ -1392,6 +1462,7 @@ OptionMenu "VideoOptions" protected
 		Option "$VIDMNU_RENDERMODE",		"vid_rendermode", "RenderMode"
 	}
 	Option "$DSPLYMNU_VSYNC",					"vid_vsync", "OnOff"
+	Option "$DSPLYMNU_VSYNC_ADAPTIVE",			"vid_vsync_adaptive", "OnOff"
 	Slider "$VIDMNU_MAXFPS",					"vid_maxfps", 35, 500, 1
 	StaticText " "
 
@@ -1418,6 +1489,7 @@ OptionMenu "AdvDisplayOptions" protected
 {
 	Title "$DSPLYMNU_ADVANCED"
 	Submenu "$OPTMNU_LIGHT", 					"LightOptions"
+	Submenu "Performance",						"PerfOptions"
 	Submenu "$GLMNU_TEXOPT", 					"GLTextureGLOptions"
 	Submenu "$GLMNU_POSTPROCESS",				"PostProcessMenu"
 	Submenu "$GLPREFMNU_VRMODE",				"VR3DMenu"
@@ -1503,6 +1575,10 @@ OptionMenu "LightOptions" protected
 	Title "$OPTMNU_LIGHT"
 
 	Option "Light Style Preset",					bd_lighting_preset,				"BDLightingPresetModes"
+	Submenu "Browse Lighting Presets",			"LightingPresetBrowser"
+	Option "Sector Light Bleed",					bd_sectorlight_bleed,			"OnOff"
+	Slider "Sector Bleed Distance",				bd_sectorlight_distance,		16.0, 512.0, 16.0, 0
+	Slider "Sector Bleed Strength",				bd_sectorlight_strength,		0.0, 1.0, 0.05, 2
 	StaticText " "
 	Option "$GLPREFMNU_SECLIGHTMODE",			gl_lightmode,					"LightingModes"
 	Option "$GLPREFMNU_FOGMODE",				gl_fogmode,						"FogMode"
@@ -1525,6 +1601,16 @@ OptionMenu "LightOptions" protected
 	Slider "Emissive Boost",					bd_emissive_boost,				0.0, 2.0, 0.05, 1
 	Option "GI Ambient",						bd_gi_ambient_enable,			"OnOff"
 	Slider "GI Ambient Strength",				bd_gi_ambient_strength,			0.0, 1.0, 0.05, 1
+	Slider "Light Contrast",					bd_light_contrast,				0.0, 2.0, 0.05, 2
+	Slider "Specular Focus",					bd_specular_power_scale,		0.25, 4.0, 0.05, 2
+	Slider "Rim Light Strength",				bd_rimlight_strength,			0.0, 1.0, 0.05, 2
+	Slider "Rim Light Power",					bd_rimlight_power,				0.5, 8.0, 0.25, 2
+	Slider "Ambient Gradient",					bd_ambient_gradient_strength,	0.0, 1.0, 0.05, 2
+	ColorPicker "Ambient Gradient Color",		"bd_ambient_gradient_color"
+	Slider "Light Flicker",						bd_dynlight_flicker,		0.0, 1.0, 0.05, 2
+	Slider "Aerial Perspective",				bd_aerial_strength,			0.0, 1.0, 0.05, 2
+	Slider "Aerial Distance",					bd_aerial_distance,			256.0, 16384.0, 256.0, 0
+	ColorPicker "Specular Tint",			"bd_specular_tint"
 	Option "Sprite Lighting Refine",			bd_sprite_lighting_refine,		"OnOff"
 	//Option "$GLPREFMNU_CORONAS",				gl_coronas,						"OnOff"
 	StaticText " "
@@ -1540,6 +1626,27 @@ OptionMenu "LightOptions" protected
 	StaticText " "
 	Option "$GLPREFMNU_ENV",					gl_enhanced_nightvision,		"OnOff"
 	Option "$GLPREFMNU_ENVSTEALTH",				gl_enhanced_nv_stealth,			"EnhancedStealth"
+}
+
+OptionMenu "PerfOptions" protected
+{
+	Title "Performance"
+
+	NumberField "Max Dynamic Lights Per Surface",	"bd_dynlight_max_per_surface",	0, 256
+	Slider "Dynamic Light Cull Distance",			"bd_dynlight_cull_distance",	0, 8192, 128, 0
+	StaticText " "
+	Option "$GLLIGHTMNU_LIGHTSHADOWMAP",			"gl_light_shadowmap",			"OnOff"
+	NumberField "Max Shadowmap Lights",				"bd_shadowmap_max_lights",		64, 1024
+	Option "$GLLIGHTMNU_LIGHTSHADOWMAPQUALITY",		"gl_shadowmap_quality",			"ShadowMapQuality"
+	Option "$GLLIGHTMNU_LIGHTSHADOWMAPFILTER",		"gl_shadowmap_filter",			"ShadowFilter"
+	StaticText " "
+	Option "$GLPREFMNU_MULTISAMPLE",				"gl_multisample",				"Multisample"
+	Option "$GLPREFMNU_SSAO",						"gl_ssao",						"SSAOModes"
+	Option "$GLPREFMNU_FXAA",						"gl_fxaa",						"FXAAQuality"
+	Option "$GLTEXMNU_ANISOTROPIC",					"gl_texture_filter_anisotropic", "Anisotropy"
+	Option "$GLTEXMNU_PRECACHETEX",					"gl_precache",					"OnOff"
+	StaticText " "
+	Slider "$VIDMNU_MAXFPS",						"vid_maxfps",					35, 500, 5
 }
 
 OptionMenu "SpriteOptions" protected
@@ -3345,6 +3452,7 @@ OptionMenu "PostProcessMenu" protected
 {
 	Title "$GLMNU_POSTPROCESS"
 	Option "Graphics Preset",						bd_graphics_preset,				"PostfxPresetModes"
+	Submenu "Browse Graphics Presets",			"GraphicsPresetBrowser"
 	Option "Preset Locked",							bd_preset_locked,				"OnOff"
 	Option "PostFX",								bd_postfx_enable,					"OnOff"
 	Option "PostFX Quality",						bd_postfx_quality,					"PostfxQualityModes"
@@ -3357,6 +3465,24 @@ OptionMenu "PostProcessMenu" protected
 	Submenu "Output / Performance",					"PostProcessOutputMenu"
 }
 
+OptionMenu "GraphicsPresetBrowser" protected
+{
+	Class "GraphicsPresetMenu"
+	Title "Graphics Presets"
+}
+
+OptionMenu "LightingPresetBrowser" protected
+{
+	Class "LightingPresetMenu"
+	Title "Lighting Presets"
+}
+
+OptionMenu "FogPresetBrowser" protected
+{
+	Class "FogPresetMenu"
+	Title "Fog Presets"
+}
+
 OptionMenu "PostProcessAtmosphereMenu" protected
 {
 	Title "Atmosphere / Fog"
@@ -3365,6 +3491,7 @@ OptionMenu "PostProcessAtmosphereMenu" protected
 	Slider "Atmosphere Contrast",					gl_atmosphere_contrast,				0.0, 2.0, 0.1, 1
 	StaticText " "
 	Option "Fog Preset",							bd_fog_preset,						"BDFogPresets"
+	Submenu "Browse Fog Presets",				"FogPresetBrowser"
 	Option "Fog Mode",								bd_fog_mode,						"BDFogModes"
 	Option "Fog Quality",							bd_fog_quality,					"BDFogQualityModes"
 	ColorPicker "Fog Color",						"bd_fog_color"
@@ -3393,7 +3520,11 @@ OptionMenu "PostProcessImageMenu" protected
 	Title "Image Effects"
 	Option "$GLPREFMNU_BLOOM",						gl_bloom,							"OnOff"
 	Option "Bloom",									bd_bloom_enable,					"OnOff"
-	Slider "Bloom Strength",						bd_bloom_strength,					0.1, 4.0, 0.1, 1
+	Slider "Bloom Blur Width",					bd_bloom_strength,					0.1, 4.0, 0.1, 1
+	Slider "Bloom Radius",							bd_bloom_radius,					0.5, 3.0, 0.1, 1
+	Slider "Bloom Threshold",						bd_bloom_threshold,				0.0, 4.0, 0.01, 2
+	Slider "Bloom Soft Knee",						bd_bloom_knee,					0.01, 2.0, 0.01, 2
+	Slider "Bloom Intensity",						bd_bloom_intensity,				0.0, 4.0, 0.05, 2
 	Option "$GLPREFMNU_LENS",						gl_lens,							"OnOff"
 	Option "Vignette",								bd_vignette_enable,					"OnOff"
 	Slider "Vignette Strength",						bd_vignette_strength,				0.0, 1.0, 0.05, 1
@@ -3406,6 +3537,21 @@ OptionMenu "PostProcessImageMenu" protected
 	Slider "Sharpen Strength",						bd_sharpen_strength,				0.0, 1.0, 0.05, 1
 	Option "Retro Pixel",							bd_retro_pixel_enable,				"OnOff"
 	Slider "Retro Pixel Scale",						bd_retro_pixel_scale,				1.0, 16.0, 1.0, 0
+	Option "Vibrance",				bd_vibrance_enable,				"OnOff"
+	Slider "Vibrance Strength",			bd_vibrance_strength,				0.0, 1.0, 0.05, 1
+	Option "Posterize",				bd_posterize_enable,				"OnOff"
+	Slider "Posterize Levels",			bd_posterize_levels,				2.0, 16.0, 1.0, 0
+	Option "Edge Glow",				bd_edgeglow_enable,				"OnOff"
+	Slider "Edge Glow Strength",			bd_edgeglow_strength,				0.0, 1.0, 0.05, 1
+	Slider "Edge Glow Threshold",			bd_edgeglow_threshold,				0.0, 1.0, 0.05, 2
+	Option "God Rays",				bd_godrays_enable,				"OnOff"
+	Slider "God Rays Strength",			bd_godrays_strength,				0.0, 1.0, 0.05, 2
+	Slider "God Rays Length",			bd_godrays_length,				0.25, 2.0, 0.05, 2
+	Slider "God Rays Threshold",			bd_godrays_threshold,				0.0, 1.0, 0.05, 2
+	Option "Lens Flare",				bd_lensflare_enable,				"OnOff"
+	Slider "Lens Flare Strength",			bd_lensflare_strength,				0.0, 1.0, 0.05, 2
+	Option "Clarity",				bd_clarity_enable,				"OnOff"
+	Slider "Clarity Strength",			bd_clarity_strength,				0.0, 1.0, 0.05, 2
 }
 
 OptionMenu "PostProcessColorMenu" protected
@@ -3416,6 +3562,23 @@ OptionMenu "PostProcessColorMenu" protected
 	Slider "Color Grade Strength",					bd_colorgrade_strength,				0.0, 1.0, 0.05, 1
 	Option "Color Grade LUT",						bd_colorgrade_lut,					"ColorgradeLutModes"
 	StaticText " "
+	Option "White Balance",				bd_whitebalance_enable,				"OnOff"
+	Slider "White Balance Temperature",		bd_whitebalance_temperature,			-1.0, 1.0, 0.05, 2
+	Slider "White Balance Tint",			bd_whitebalance_tint,				-1.0, 1.0, 0.05, 2
+	Option "Hue Shift",				bd_hueshift_enable,				"OnOff"
+	Slider "Hue Shift Degrees",			bd_hueshift_degrees,				-180.0, 180.0, 5.0, 0
+	StaticText " "
+	Option "Lift/Gamma/Gain",			bd_grade_enable,				"OnOff"
+	Slider "Grade Lift R",				bd_grade_lift_r,				-0.5, 0.5, 0.01, 2
+	Slider "Grade Lift G",				bd_grade_lift_g,				-0.5, 0.5, 0.01, 2
+	Slider "Grade Lift B",				bd_grade_lift_b,				-0.5, 0.5, 0.01, 2
+	Slider "Grade Gamma R",				bd_grade_gamma_r,				0.5, 2.0, 0.01, 2
+	Slider "Grade Gamma G",				bd_grade_gamma_g,				0.5, 2.0, 0.01, 2
+	Slider "Grade Gamma B",				bd_grade_gamma_b,				0.5, 2.0, 0.01, 2
+	Slider "Grade Gain R",				bd_grade_gain_r,				0.5, 2.0, 0.01, 2
+	Slider "Grade Gain G",				bd_grade_gain_g,				0.5, 2.0, 0.01, 2
+	Slider "Grade Gain B",				bd_grade_gain_b,				0.5, 2.0, 0.01, 2
+	StaticText " "
 	Slider "$GLPREFMNU_PALTONEMAPPOWER",				gl_paltonemap_powtable,				0.2, 3.0, 0.1, 1
 	Option "$GLPREFMNU_PALTONEMAPORDER",				gl_paltonemap_reverselookup,		"LookupOrder"
 }
@@ -3424,6 +3587,10 @@ OptionMenu "PostProcessLightingMenu" protected
 {
 	Title "Lighting / Materials"
 	Option "Light Style Preset",					bd_lighting_preset,				"BDLightingPresetModes"
+	Submenu "Browse Lighting Presets",			"LightingPresetBrowser"
+	Option "Sector Light Bleed",					bd_sectorlight_bleed,			"OnOff"
+	Slider "Sector Bleed Distance",				bd_sectorlight_distance,		16.0, 512.0, 16.0, 0
+	Slider "Sector Bleed Strength",				bd_sectorlight_strength,		0.0, 1.0, 0.05, 2
 	Option "Dynamic Light Falloff",					bd_dynlight_falloff_mode,			"DynLightFalloffModes"
 	Slider "Dynamic Light Falloff Exp",				bd_dynlight_falloff_exponent,		0.5, 8.0, 0.1, 1
 	Slider "Dynamic Light Intensity",				bd_dynlight_intensity,				0.0, 3.0, 0.05, 1
@@ -3439,6 +3606,16 @@ OptionMenu "PostProcessLightingMenu" protected
 	Slider "Emissive Boost",						bd_emissive_boost,					0.0, 2.0, 0.05, 1
 	Option "GI Ambient",							bd_gi_ambient_enable,				"OnOff"
 	Slider "GI Ambient Strength",					bd_gi_ambient_strength,				0.0, 1.0, 0.05, 1
+	Slider "Light Contrast",						bd_light_contrast,					0.0, 2.0, 0.05, 2
+	Slider "Specular Focus",						bd_specular_power_scale,			0.25, 4.0, 0.05, 2
+	Slider "Rim Light Strength",					bd_rimlight_strength,				0.0, 1.0, 0.05, 2
+	Slider "Rim Light Power",						bd_rimlight_power,					0.5, 8.0, 0.25, 2
+	Slider "Ambient Gradient",						bd_ambient_gradient_strength,		0.0, 1.0, 0.05, 2
+	ColorPicker "Ambient Gradient Color",			"bd_ambient_gradient_color"
+	Slider "Light Flicker",							bd_dynlight_flicker,				0.0, 1.0, 0.05, 2
+	Slider "Aerial Perspective",					bd_aerial_strength,					0.0, 1.0, 0.05, 2
+	Slider "Aerial Distance",						bd_aerial_distance,					256.0, 16384.0, 256.0, 0
+	ColorPicker "Specular Tint",				"bd_specular_tint"
 	Option "Sprite Lighting Refine",					bd_sprite_lighting_refine,			"OnOff"
 }
 

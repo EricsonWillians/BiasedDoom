@@ -1262,6 +1262,32 @@ F2DVertexBuffer::F2DVertexBuffer()
 	mVertexBuffer->SetFormat(1, 3, sizeof(F2DDrawer::TwoDVertex), format);
 }
 
+static TArray<DShape2DBufferInfo*> ActiveShape2DBuffers;
+
+DShape2DBufferInfo::DShape2DBufferInfo()
+{
+	ActiveShape2DBuffers.Push(this);
+}
+
+DShape2DBufferInfo::~DShape2DBufferInfo()
+{
+	unsigned index = ActiveShape2DBuffers.Find(this);
+	if (index < ActiveShape2DBuffers.Size()) ActiveShape2DBuffers.Delete(index);
+}
+
+void InvalidateShape2DBuffers()
+{
+	for (auto info : ActiveShape2DBuffers)
+	{
+		info->buffers.Clear();
+		info->needsVertexUpload = true;
+		info->bufIndex = -1;
+		info->lastCommand = -1;
+		info->uploadedOnce = false;
+	}
+	buffersToDestroy.Clear();
+}
+
 //==========================================================================
 //
 //

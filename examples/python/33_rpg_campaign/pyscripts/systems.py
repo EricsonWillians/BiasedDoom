@@ -5,14 +5,30 @@ Owns the campaign's behavior:
 - **Character creation.** The shared ``CreationWizard`` (built at
   ``engine_start``) drives the UI window; :func:`finish_creation` validates
   and builds the hero, arms ``CharacterState`` persistence, hands out the
-  class starting equipment, and wires level-up feedback.
+  class starting equipment, wires level-up feedback, and sends the three
+  staggered onboarding pointers.
+- **Hero progression.** :func:`wire_hero_progression` (shared by creation
+  and the savegame cold-restore path) ties the RPG layer into real Doom
+  combat: ``bd_dnd.track_xp_from_kills`` pays tabled XP for every monster
+  the player kills, and an ``actor_before_damage`` mutable filter adds the
+  hero's level bonus (plus the Scout's Skirmisher note) to every hit the
+  local player lands on a live monster.
+- **Class actives.** Custom Action 3 (``+pyaction3``, auto-bound to C, the
+  ``class_active`` console alias rides the same ``pyui``/``ui_command``
+  bridge as ``talk``) fires the hero's one class active from
+  ``content.CLASS_ACTIVES``: the Mercenary's Second Wind heal, the Scout's
+  Uncanny Step blur, the Lightkeeper's radiant burst.
 - **The hub.** The ``NPCManager`` registration (definitions carry the content
   dialogue factories and the shop/services), the currency spawn probe, the
   savegame cold-restore path for the hero and party, and the shop stock
   snapshot persistence.
 - **Quest wiring.** Trackers, the xp sink into the hero, the disposition
   sink into the store, the yard-zombie spawn on acceptance, and the
-  prove-worth completion that rides on clear_yard.
+  kill-counter HUD feedback on every yard objective tick.
+- **In-world guidance.** :func:`refresh_markers` keeps gold "!" labels over
+  whichever NPC currently offers work and vertical beacons on the yard and
+  the cache while their quests run; a persistent two-line HUD strip (hero
+  status + the tracked objective) rides the display list.
 - **Talk interaction.** Custom Action 1 (``+pyaction1``, auto-bound to Q
   at ``engine_start`` unless the player already bound it under Options ->
   Customize Controls, Custom Actions) fires the ``custom_action`` event ->
@@ -57,6 +73,31 @@ currency_class = content.CURRENCY_CLASSES[0]
 currency_ready = False      # the spawn probe ran
 last_service_result = None  # {"ok", "message"} of the last service run
 
+# --- hero progression state -----------------------------------------------------
+
+_progression_wired = False    # wire_hero_progression runs once per session
+hero_damage_filter = None     # the actor_before_damage filter body (testable)
+
+# --- class active state -----------------------------------------------------------
+
+#: Test hook: when set, the class-active dice roll uses this rng double
+#: (any object with randint/int) instead of the engine's deterministic stream.
+class_active_rng = None
+last_active_message = ""      # the last class-active feedback line
+_blur_active = False          # the Scout's blur currently holds
+_blur_restore_task = None     # the scheduled blur-restore task id
+
+# --- guidance state (markers + HUD strip) -----------------------------------------
+
+#: Display-id -> what it currently shows ("sera", "dobb", "korr",
+#: "yard_beacon", "cache_beacon"); the autotest reads the marker lifecycle
+#: out of this dict headlessly.
+marker_state = {}
+_markers_task = None          # the 7-tic repeating map-local marker task
+_hud_task = None              # the 35-tic repeating HUD strip task
+_quest_start_seq = {}         # quest_id -> sequence number when first ACTIVE
+_quest_start_counter = 0
+
 
 def player_pawn():
     """Live handle to the local player's pawn, or None."""
@@ -68,6 +109,66 @@ def player_pawn():
         return pawn if pawn is not None and pawn.valid else None
     except RuntimeError:
         return None
+
+
+# --- hero progression (kill XP + the level damage bonus) -------------------------
+
+
+def _apply_hero_damage_bonus(event):
+    """The ``actor_before_damage`` filter: the hero's own hits hit harder.
+
+    Every hit the local player lands on a live monster gains
+    ``min(8, hero.level - 1)`` bonus damage plus the Scout's
+    ``mod_notes["skirmisher_damage"]`` value when present. The event dict
+    is the engine's mutable contract; only ``damage`` is rewritten. Kept as
+    a plain function (not a closure over ``hero``) so it always reads the
+    current module-level hero and the autotest can drive it with synthetic
+    event dicts.
+    """
+    try:
+        current = hero
+        if current is None:
+            return
+        if event.get("attacker_player_index") != 0:
+            return
+        ref = event.get("actor_ref")
+        if ref is None or not ref.valid or not ref.alive:
+            return
+        if not ref.is_monster:
+            return
+        bonus = min(8, max(0, int(current.level) - 1))
+        notes = getattr(current, "mod_notes", None) or {}
+        try:
+            bonus += int(notes.get("skirmisher_damage", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+        if bonus <= 0:
+            return
+        event["damage"] = int(event.get("damage") or 0) + bonus
+    except Exception as exc:
+        bd.warn(f"ashvale: damage filter failed: {exc!r}")
+
+
+def wire_hero_progression(target):
+    """Tie the hero into real Doom combat (once per session).
+
+    ``bd_dnd.track_xp_from_kills`` pays tabled XP for every monster the
+    local player kills (exact pawn credit), and the
+    ``actor_before_damage`` mutable filter adds the level bonus to the
+    player's hits. Both register permanent engine handlers, so this runs
+    exactly once; the handlers read the module-level ``hero`` at event
+    time, which keeps a cold-restored hero covered without double-wiring.
+    """
+    global _progression_wired, hero_damage_filter
+    if _progression_wired:
+        return
+    _progression_wired = True
+    hero_damage_filter = _apply_hero_damage_bonus
+    try:
+        bd_dnd.track_xp_from_kills(target, player_index=0)
+    except Exception as exc:
+        bd.warn(f"ashvale: kill xp wiring failed: {exc!r}")
+    bd.on("actor_before_damage")(_apply_hero_damage_bonus)
 
 
 # --- creation -------------------------------------------------------------------------
@@ -151,6 +252,7 @@ def finish_creation(wiz=None):
     hero = new_hero
     hero_state = bd_dnd.CharacterState(hero)
     hero_state.arm_persistence()
+    wire_hero_progression(hero)
     pawn = player_pawn()
     if pawn is not None and hero.cls is not None:
         for class_name, count in hero.cls.starting_equipment:
@@ -163,6 +265,7 @@ def finish_creation(wiz=None):
         bd.log("ashvale: no pawn yet; starting equipment waits for the map")
     bd.log(f"ashvale: {hero.name} the {hero.class_id} walks into Ashvale")
     ensure_hero_sheet()
+    _onboard_after_creation()
     return hero
 
 
@@ -181,15 +284,189 @@ def ensure_hero_sheet():
     return hero_sheet
 
 
+# --- class actives (Custom Action 3) ------------------------------------------------
+
+
+def _active_feedback(message):
+    """Toast + center-screen feedback for a class active; the last line is
+    kept in ``last_active_message`` so the autotest can assert it."""
+    global last_active_message
+    last_active_message = message
+    try:
+        from bd_horror import toasts
+        toasts.toast(message, kind="info")
+    except Exception:
+        pass
+    try:
+        bd.center_message(message)
+    except Exception:
+        pass
+
+
+def use_class_active():
+    """Fire the hero's one class active (Custom Action 3 / ``class_active``).
+
+    Spends one charge of the class's per-rest resource and applies the pawn
+    effect. With no charges left, says so (naming the resource and the rest
+    that refills it) and spends nothing.
+    """
+    current = hero
+    if current is None:
+        return
+    spec = content.CLASS_ACTIVES.get(getattr(current, "class_id", ""))
+    if spec is None:
+        return
+    resource = spec["resource"]
+    pawn = player_pawn()
+    if pawn is None:
+        return  # off-map: no pawn to affect, no charge spent
+    if not current.use_resource(resource):
+        _active_feedback(f"{spec['name']}: no {resource} charges left; "
+                         f"Wren's care restores them.")
+        return
+    try:
+        if spec["id"] == "second_wind":
+            _apply_second_wind(current, pawn)
+        elif spec["id"] == "uncanny_step":
+            _apply_uncanny_step(pawn)
+        elif spec["id"] == "light":
+            _apply_light(current, pawn)
+        else:
+            bd.warn(f"ashvale: no effect branch for active {spec['id']!r}")
+    except Exception as exc:
+        bd.warn(f"ashvale: class active {spec['id']!r} failed: {exc!r}")
+
+
+def _apply_second_wind(current, pawn):
+    """Mercenary: heal the sheet and the pawn by hit die + level."""
+    rng = class_active_rng if class_active_rng is not None else bd
+    amount = bd_dnd.roll(f"d{current.hit_die}", rng=rng)["total"] \
+        + int(current.level)
+    current.set_hp(current.hp + amount)
+    pawn.heal(amount)
+    _active_feedback(f"Second Wind rallies you: +{amount} blood.")
+
+
+def _apply_uncanny_step(pawn):
+    """Scout: a 175-tic blur; refreshing extends instead of stacking."""
+    global _blur_active, _blur_restore_task
+    if _blur_restore_task is not None:
+        try:
+            bd.cancel_task(_blur_restore_task)
+        except Exception:
+            pass
+        _blur_restore_task = None
+    pawn.damage_factor = content.UNCANNY_STEP_FACTOR
+    _blur_active = True
+
+    def _restore_blur():
+        global _blur_active, _blur_restore_task
+        _blur_restore_task = None
+        _blur_active = False
+        try:
+            live = player_pawn()
+            if live is not None:
+                live.damage_factor = 1.0
+        except Exception:
+            pass
+
+    try:
+        _blur_restore_task = bd.schedule(
+            _restore_blur, delay=content.UNCANNY_STEP_TICS, map_local=False)
+    except Exception as exc:
+        bd.warn(f"ashvale: blur restore could not be scheduled: {exc!r}")
+    _active_feedback("Uncanny Step: you blur (damage taken cut to about a "
+                     "third for five seconds).")
+
+
+def _reset_blur():
+    """map_unload guard: never let the blur's damage_factor leak."""
+    global _blur_active, _blur_restore_task
+    if _blur_restore_task is not None:
+        try:
+            bd.cancel_task(_blur_restore_task)
+        except Exception:
+            pass
+        _blur_restore_task = None
+    if not _blur_active:
+        return
+    _blur_active = False
+    try:
+        pawn = player_pawn()
+        if pawn is not None:
+            pawn.damage_factor = 1.0
+    except Exception:
+        pass
+
+
+def _apply_light(current, pawn):
+    """Lightkeeper: a radiant burst around the pawn."""
+    damage = 12 + 2 * int(current.level)
+    bd.radius_damage(pawn, damage, content.LIGHT_RADIUS, source=pawn,
+                     damage_type="Fire", hurt_source=False)
+    _active_feedback(f"Light: the burst burns for {damage}.")
+
+
+def _onboard_after_creation():
+    """Three staggered pointers for a brand-new hero on a live map.
+
+    Sent at ~1/2/3 seconds after the founding: who to talk to (the gold
+    marker and the talk key), the journal/sheet keys, and the class active
+    with its one-line effect. Off-map there is nobody to point at.
+    """
+    if player_pawn() is None:
+        return
+
+    def _hint(command, fallback):
+        try:
+            name = bd.input_binding(command)
+        except Exception:
+            name = None
+        return name or fallback
+
+    def _send(text):
+        try:
+            from bd_horror import toasts
+            toasts.toast(text, kind="info")
+        except Exception:
+            pass
+        try:
+            bd.center_message(text)
+        except Exception:
+            pass
+
+    spec = content.CLASS_ACTIVES.get(getattr(hero, "class_id", ""), {})
+    lines = (
+        (35, content.ONBOARD_TALK.format(talk_key=action_key_hint(1))),
+        (70, content.ONBOARD_WINDOWS.format(
+            journal_key=_hint("toggle_journal", "J"),
+            sheet_key=_hint("toggle_sheet", "K"))),
+        (105, content.ONBOARD_ACTIVE.format(
+            active_key=action_key_hint(3),
+            active_name=spec.get("name", "class active"),
+            active_effect=spec.get("effect", ""))),
+    )
+    for delay, text in lines:
+        try:
+            bd.schedule(lambda text=text: _send(text), delay=delay,
+                        map_local=True)
+        except Exception as exc:
+            bd.warn(f"ashvale: onboarding schedule failed: {exc!r}")
+
+
 # --- recruitment ------------------------------------------------------------------------
 
 
 def recruit_korr():
     """Bind Korr to the watch: party + companion actor + toast.
 
-    Idempotent: a second call reports the existing party. The companion is a
-    ``bd_dnd.Companion`` follower (the same actor class and tint as the camp
-    NPC); its descriptor rides ``PartyState`` through checkpoints.
+    Idempotent: a second call reports the existing party. The hub NPC's live
+    slot is captured as the companion's first-spawn anchor, then the NPC is
+    retired (the static actor is destroyed and the manager stops tracking or
+    respawning him, across savegames too), so the single resulting actor is
+    the ``bd_dnd.Companion`` follower, proactive combat included. When the
+    NPC is somehow gone the companion spawns beside the player instead. Its
+    descriptor rides ``PartyState`` through checkpoints.
     """
     global party, party_state, korr_companion, korr_recruited
     if hero is None:
@@ -206,7 +483,20 @@ def recruit_korr():
     party_state.add_companion(korr_companion)
     party_state.arm_persistence()
     korr_recruited = True
-    spawned = korr_companion.bind(party)
+    anchor = None
+    if manager is not None:
+        try:
+            npc_ref = manager.actor_for("korr")
+            if npc_ref is not None and npc_ref.valid:
+                anchor = (npc_ref.x, npc_ref.y, npc_ref.z, npc_ref.angle)
+        except Exception as exc:
+            bd.warn(f"ashvale: could not probe Korr's slot: {exc!r}")
+            anchor = None
+        try:
+            manager.retire("korr")  # destroys the static hub actor
+        except Exception as exc:
+            bd.warn(f"ashvale: retiring the hub Korr failed: {exc!r}")
+    spawned = korr_companion.bind(party, anchor=anchor)
     if spawned:
         try:
             ref = korr_companion.actor()
@@ -216,6 +506,14 @@ def recruit_korr():
                             content.NPC_TINTS["korr"] & 255)
         except Exception:
             pass
+    # The watch grows: completing the objective pays the quest's rewards.
+    try:
+        watch = bd_quests.log.get(content.QUEST_WATCH_GROWS)
+        if watch is not None and watch.state == bd_quests.Quest.ACTIVE:
+            bd_quests.log.complete_objective(content.QUEST_WATCH_GROWS,
+                                             "recruit_korr", 1)
+    except Exception as exc:
+        bd.warn(f"ashvale: watch_grows objective credit failed: {exc!r}")
     _toast_recruit()
     return True
 
@@ -245,6 +543,38 @@ def service_ctx(npc_id):
         "shop": dobb_shop if npc_id == "dobb" else None,
         "rng": bd,
     }
+
+
+def run_healer():
+    """Wren's heal service, doubled as the campaign's breather.
+
+    Runs her HealerService (fee, standing floor, pawn + sheet healing)
+    and, when the heal lands, restores the hero's class-active resource
+    pools: her care is the "rest" the class-active charges refer to, so
+    the no-charge message can point at her. Returns the result dict (the
+    message extended on success); the broke refusal restores nothing.
+    """
+    global last_service_result
+    definition = manager.definition("wren") if manager is not None else None
+    if definition is None or not definition.services:
+        last_service_result = {"ok": False, "message": "No such service."}
+        return last_service_result
+    result = definition.services[0].run("wren", service_ctx("wren"))
+    if result.get("ok") and hero is not None:
+        try:
+            hero.restore_resources()
+            result = dict(result)
+            result["message"] = (str(result.get("message", "")).rstrip(".")
+                                 + "; her care settles your breathing "
+                                   "(active charges restored).")
+        except Exception as exc:
+            bd.warn(f"ashvale: healer resource restore failed: {exc!r}")
+    last_service_result = result
+    try:
+        bd.center_message(str(result.get("message", "")))
+    except Exception:
+        pass
+    return result
 
 
 def run_service(npc_id, index, extra=None):
@@ -342,7 +672,7 @@ def action_key_hint(n):
 def on_custom_action(event):
     """Action 1 talks (the ui_command alias path), action 2 toggles the
     hero sheet through the same ``toggle()`` the K key and the
-    ``toggle_sheet`` alias use."""
+    ``toggle_sheet`` alias use, action 3 fires the hero's class active."""
     try:
         action = int(event.get("action") or 0)
         pressed = bool(event.get("pressed"))
@@ -353,6 +683,8 @@ def on_custom_action(event):
             talk()
         elif action == 2 and hero_sheet is not None:
             hero_sheet.toggle()
+        elif action == 3:
+            use_class_active()
     except Exception as exc:
         bd.warn(f"ashvale: custom action failed: {exc!r}")
 
@@ -378,11 +710,14 @@ def _on_clear_yard_started(quest):
     spawn_yard_zombies()
 
 
-def _on_clear_yard_completed(quest):
-    prove = bd_quests.log.get(content.QUEST_PROVE_WORTH)
-    if prove is not None and prove.state == bd_quests.Quest.ACTIVE:
-        bd_quests.log.complete_objective(content.QUEST_PROVE_WORTH,
-                                         "yard_cleared", 1)
+def _on_clear_yard_progress(quest, objective):
+    """Kill-counter feedback on every yard objective tick."""
+    try:
+        bd.hud_text(f"Risen dead put down: {objective.progress}/"
+                    f"{objective.count}", id=90013, y=0.28, color="gold",
+                    hold=1.0, fade=0.4)
+    except Exception:
+        pass  # headless: no status bar to flash
 
 
 # --- quest + reward sinks --------------------------------------------------------------------
@@ -412,7 +747,7 @@ def _wire_quests():
     quests = content.build_quests()
     clear = quests[content.QUEST_CLEAR_YARD]
     clear.on_start = _on_clear_yard_started
-    clear.on_complete = _on_clear_yard_completed
+    clear.on_objective_progress = _on_clear_yard_progress
     for quest in quests.values():
         bd_quests.log.add(quest)
     bd_quests.log.track_kills(content.QUEST_CLEAR_YARD, "kill_zombies",
@@ -421,6 +756,204 @@ def _wire_quests():
                                content.GAME_CONTENT["cache_class"], 1)
     bd_quests.log.on_xp_reward.append(_xp_sink)
     bd_quests.log.on_disposition_reward.append(_disposition_sink)
+
+
+# --- in-world markers + the objective HUD strip ------------------------------------
+
+
+def _marker_clear(draw_id):
+    """Drop one marker: clear the display-list item and the bookkeeping."""
+    if draw_id not in marker_state:
+        return
+    marker_state.pop(draw_id, None)
+    try:
+        bd.draw_clear(draw_id)
+    except Exception:
+        pass  # headless or no display list: the bookkeeping still moved
+
+
+def _marker_npc(npc_id, draw_id, show):
+    """A gold "!" over a registered NPC while ``show`` holds."""
+    ref = None
+    if show and manager is not None:
+        try:
+            if not manager.is_retired(npc_id):
+                ref = manager.actor_for(npc_id)
+        except Exception:
+            ref = None
+        if ref is not None:
+            try:
+                if not (ref.valid and ref.alive):
+                    ref = None
+            except Exception:
+                ref = None
+    if ref is None:
+        _marker_clear(draw_id)
+        return
+    try:
+        bd.draw_world_text(ref, id=draw_id, text="!", color=content.MARKER_GOLD,
+                           height=0.05, occlude=True, layer=8)
+        marker_state[draw_id] = npc_id
+    except Exception:
+        _marker_clear(draw_id)
+
+
+def _marker_beacon(pos, draw_id, tag, show):
+    """A vertical gold beacon line over a fixed point while ``show`` holds."""
+    if not show:
+        _marker_clear(draw_id)
+        return
+    try:
+        x, y, z = pos
+        bd.draw_world_line((x, y, z), (x, y, z + 96.0), id=draw_id,
+                           color=content.MARKER_GOLD, layer=8)
+        marker_state[draw_id] = tag
+    except Exception:
+        _marker_clear(draw_id)
+
+
+def refresh_markers():
+    """Maintain the in-world quest markers (runs every 7 tics, map-local).
+
+    A gold "!" floats over Sera while clear_yard waits to be taken, over
+    Dobb while fetch_cache waits, and over Korr while watch_grows is open
+    and he has not signed on (never over retired NPCs); a vertical beacon
+    stands at the yard while clear_yard runs and at the cache while
+    fetch_cache runs. Everything else is cleared.
+    """
+    try:
+        clear = bd_quests.log.get(content.QUEST_CLEAR_YARD)
+        fetch = bd_quests.log.get(content.QUEST_FETCH_CACHE)
+        watch = bd_quests.log.get(content.QUEST_WATCH_GROWS)
+    except Exception:
+        return
+    clear_state = clear.state if clear is not None else None
+    fetch_state = fetch.state if fetch is not None else None
+    watch_state = watch.state if watch is not None else None
+    _marker_npc("sera", content.MARKER_SERA_ID,
+                clear_state == bd_quests.Quest.INACTIVE)
+    _marker_npc("dobb", content.MARKER_DOBB_ID,
+                fetch_state == bd_quests.Quest.INACTIVE)
+    _marker_npc("korr", content.MARKER_KORR_ID,
+                watch_state == bd_quests.Quest.ACTIVE and not korr_recruited)
+    _marker_beacon(content.YARD_CENTER, content.MARKER_YARD_BEACON_ID,
+                   "yard_beacon", clear_state == bd_quests.Quest.ACTIVE)
+    _marker_beacon(content.CACHE_POS, content.MARKER_CACHE_BEACON_ID,
+                   "cache_beacon", fetch_state == bd_quests.Quest.ACTIVE)
+
+
+def _arm_markers():
+    """(Re)arm the marker refresh task on every map load (map-local)."""
+    global _markers_task
+    if _markers_task is not None:
+        try:
+            bd.cancel_task(_markers_task)
+        except Exception:
+            pass
+        _markers_task = None
+    try:
+        _markers_task = bd.schedule(refresh_markers, delay=7, repeat=7,
+                                    map_local=True)
+    except Exception as exc:
+        bd.warn(f"ashvale: marker task failed to arm: {exc!r}")
+        _markers_task = None
+    refresh_markers()  # land the bookkeeping immediately, not in 7 tics
+
+
+def _note_quest_starts():
+    """Record when each quest first reads ACTIVE (start order for the HUD).
+
+    Quests start from dialogue effects and world events, so the tracker
+    polls: an ACTIVE quest with no sequence number yet gets the next one.
+    """
+    global _quest_start_counter
+    try:
+        for quest in bd_quests.log.all():
+            if quest.state == bd_quests.Quest.ACTIVE \
+                    and quest.id not in _quest_start_seq:
+                _quest_start_counter += 1
+                _quest_start_seq[quest.id] = _quest_start_counter
+    except Exception:
+        pass
+
+
+def _tracked_objective_text():
+    """HUD line 2: the most recently started ACTIVE quest's current step."""
+    try:
+        best = None
+        for quest in bd_quests.log.all():
+            if quest.state != bd_quests.Quest.ACTIVE:
+                continue
+            obj = quest.current_objective
+            if obj is None:
+                continue
+            seq = _quest_start_seq.get(quest.id, 0)
+            if best is None or seq > best[0]:
+                best = (seq, quest, obj)
+    except Exception:
+        return ""
+    if best is None:
+        return content.HUD_NO_OBJECTIVE
+    _seq, quest, obj = best
+    return f"{quest.name}: {obj.text} ({obj.progress}/{obj.count})"
+
+
+def _refresh_hud_strip():
+    """Redraw the persistent two-line bottom strip (runs every 35 tics)."""
+    current = hero
+    if current is None:
+        line1 = content.HUD_PRE_FOUNDING
+    else:
+        try:
+            next_xp = current.xp_for_next_level()
+        except Exception:
+            next_xp = None
+        next_text = str(next_xp) if next_xp is not None else "MAX"
+        spec = content.CLASS_ACTIVES.get(getattr(current, "class_id", ""))
+        active_text = ""
+        if spec:
+            try:
+                charges = int(current.resources.get(spec["resource"], 0))
+            except Exception:
+                charges = 0
+            active_text = (f"  [{action_key_hint(3)}] {spec['name']} "
+                           f"x{charges}")
+        line1 = (f"{current.name} the {getattr(current, 'class_id', '?')}  "
+                 f"Lv {current.level}  XP {current.xp}/{next_text}  "
+                 f"Blood {current.hp}/{current.max_hp}{active_text}")
+    _note_quest_starts()
+    line2 = _tracked_objective_text()
+    try:
+        bd.draw_text(line1, id=content.HUD_STRIP_STATUS_ID, x=0.01, y=0.90,
+                     color="gold", height=0.022, shadow=True, layer=8)
+        bd.draw_text(line2, id=content.HUD_STRIP_OBJECTIVE_ID, x=0.01,
+                     y=0.93, color=(230, 230, 230), height=0.02,
+                     shadow=True, layer=8)
+    except Exception:
+        pass  # headless or no display list: the strip simply does not draw
+
+
+def _arm_hud_strip():
+    """(Re)arm the HUD strip refresh task; exactly one ever lives.
+
+    Scheduled tasks are not savegame state and the engine may drop them
+    across a map change, so map_load re-arms: cancel the old id (if any)
+    and schedule fresh. Called from engine_start and on_map.
+    """
+    global _hud_task
+    if _hud_task is not None:
+        try:
+            bd.cancel_task(_hud_task)
+        except Exception:
+            pass
+        _hud_task = None
+    try:
+        _hud_task = bd.schedule(_refresh_hud_strip, delay=35, repeat=35,
+                                map_local=False)
+    except Exception as exc:
+        bd.warn(f"ashvale: HUD strip task failed to arm: {exc!r}")
+        _hud_task = None
+    _refresh_hud_strip()  # draw the strip immediately, not in 35 tics
 
 
 # --- currency probe -------------------------------------------------------------------------
@@ -494,6 +1027,7 @@ def _cold_restore():
             if hero.cls is not None:
                 hero.on_level_up.append(_class_level_hook)
             hero_state.arm_persistence()
+            wire_hero_progression(hero)
             bd.log(f"ashvale: restored {hero.name} (level {hero.level}) "
                    f"from the save")
     saved_party = bd.state.get(bd_dnd.PARTY_STATE_KEY)
@@ -650,19 +1184,24 @@ def setup_campaign(event):
             bd.warn(f"ashvale: shop restore failed: {exc!r}")
         _cold_restore()
 
-    # Console alias through the pyui/ui_command bridge; the keys live on
-    # Custom Actions 1 (talk) and 2 (sheet), auto-bound below and
-    # rebindable in Options -> Customize Controls, Custom Actions.
+    # Console aliases through the pyui/ui_command bridge; the keys live on
+    # Custom Actions 1 (talk), 2 (sheet), and 3 (class active), auto-bound
+    # below and rebindable in Options -> Customize Controls, Custom Actions.
     bd.execute('alias talk "pyui talk"')
+    bd.execute('alias class_active "pyui class_active"')
     ensure_custom_action_binding(1, "q")
     ensure_custom_action_binding(2, "v")
+    ensure_custom_action_binding(3, "c")
+    _arm_hud_strip()
 
 
 @bd.on("ui_command")
 def on_ui_command(event):
-    if event.get("command") != "talk":
-        return
-    talk()
+    command = event.get("command")
+    if command == "talk":
+        talk()
+    elif command == "class_active":
+        use_class_active()
 
 
 @bd.on("map_load")
@@ -673,22 +1212,20 @@ def on_map(event):
     from_savegame = bool(event.get("from_savegame"))
     if manager is not None:
         manager.spawn_all(from_savegame=from_savegame)
+    _arm_markers()
+    _arm_hud_strip()
     if from_savegame:
         return
     pawn = player_pawn()
     if pawn is None:
         return
-    # The buried cache sits at the west end of the entry hall.
+    # The buried cache sits at the west end of the entry hall; Dobb's
+    # dialogue starts the fetch quest (no silent auto-start).
     try:
         bd.spawn(content.GAME_CONTENT["cache_class"], *content.CACHE_POS,
                  angle=0.0, tid=content.CACHE_TID, force=True)
     except Exception as exc:
         bd.warn(f"ashvale: cache spawn failed: {exc!r}")
-    # The fetch quest is ambient (a crate visible in the hall from tic 0);
-    # savegame loads keep their restored state instead.
-    fetch = bd_quests.log.get(content.QUEST_FETCH_CACHE)
-    if fetch is not None and fetch.state == bd_quests.Quest.INACTIVE:
-        fetch.start()
     # Returning to the hub mid-quest: the yard fills back up.
     clear = bd_quests.log.get(content.QUEST_CLEAR_YARD)
     if clear is not None and clear.state == bd_quests.Quest.ACTIVE:
@@ -703,6 +1240,7 @@ def on_map_unload(event):
     session = None
     shop_open = False
     discard_creation_pause()
+    _reset_blur()
 
 
 # --- sibling-import registration ----------------------------------------------------

@@ -30,5 +30,5 @@ private:
 
 	VulkanRenderDevice* fb = nullptr;
 	std::array<std::unique_ptr<VulkanSampler>, NUMSAMPLERS> mSamplers;
-	std::array<std::unique_ptr<VulkanSampler>, 4> mPPSamplers;
+	std::array<std::unique_ptr<VulkanSampler>, 6> mPPSamplers;
 };

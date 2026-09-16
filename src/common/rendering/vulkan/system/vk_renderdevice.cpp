@@ -25,6 +25,7 @@
 #include <inttypes.h>
 
 #include "v_video.h"
+#include "i_video.h"
 #include "m_png.h"
 #include "m_misc.h"
 
@@ -43,6 +44,7 @@
 #include "hwrenderer/data/shaderuniforms.h"
 #include "hw_lightbuffer.h"
 #include "hw_bonebuffer.h"
+#include "hwrenderer/postprocessing/hw_postprocess.h"
 
 #include "vk_renderdevice.h"
 #include "vk_hwbuffer.h"
@@ -136,6 +138,10 @@ VulkanRenderDevice::VulkanRenderDevice(void *hMonitor, bool fullscreen, std::sha
 VulkanRenderDevice::~VulkanRenderDevice()
 {
 	vkDeviceWaitIdle(device->device); // make sure the GPU is no longer using any objects before RAII tears them down
+
+	// PPShader backends in the global postprocess chain point back at this
+	// device; reset them while it is still valid.
+	PPResource::ResetAll();
 
 	delete mVertexData;
 	delete mSkyData;
@@ -483,8 +489,17 @@ void VulkanRenderDevice::InitLightmap(int LMTextureSize, int LMTextureCount, TAr
 	if (LMTextureData.Size() > 0)
 	{
 		GetTextureManager()->SetLightmap(LMTextureSize, LMTextureCount, LMTextureData);
-		LMTextureData.Reset(); // We no longer need this, release the memory
+
+		// Keep the source pixels on SDL so a live backend switch can upload
+		// them to the replacement device. Other platforms require a restart.
+		if (!I_SupportsLiveBackendSwitch()) LMTextureData.Reset();
 	}
+}
+
+void VulkanRenderDevice::InitSectorBleed(int width, int height, const TArray<uint8_t>& data)
+{
+	if (width > 0 && height > 0 && data.Size() >= unsigned(width * height * 4))
+		GetTextureManager()->SetSectorBleed(width, height, data);
 }
 
 void VulkanRenderDevice::Draw2D()

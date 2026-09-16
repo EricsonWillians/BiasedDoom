@@ -140,11 +140,15 @@ class LootRules:
     to let any death drop. On a drop the killer gets the rarity flash
     (:data:`RARITIES` color via ``bd.screen_flash``) and rarity sound
     (``bd.play_ui_sound``), and every ``on_drop`` listener fires with
-    ``(event, entry, rarity, spawned_ref)``.
+    ``(event, entry, rarity, spawned_ref)``. Construct with
+    ``screen_feedback=False`` to skip the screen flash (full-view tints
+    can fight the player's aim); the rarity sound still plays.
     """
 
-    def __init__(self, require_player: bool = True) -> None:
+    def __init__(self, require_player: bool = True,
+                 screen_feedback: bool = True) -> None:
         self.require_player: bool = bool(require_player)
+        self.screen_feedback: bool = bool(screen_feedback)
         self._rules: List[tuple] = []
         self._armed: bool = False
         self.on_drop: List[Callable] = []
@@ -198,7 +202,7 @@ class LootRules:
             spawned = table.drop_for(ref, killer_index)
             if spawned is None:
                 return
-            self._rarity_flash(rarity)
+            self._rarity_feedback(rarity)
             entry = {"class_name": spawned.class_name, "count": 1}
             for listener in list(self.on_drop):
                 try:
@@ -207,12 +211,12 @@ class LootRules:
                     bd.warn(f"bd_rpg: on_drop listener raised: {exc!r}")
             return  # first matching rule wins
 
-    @staticmethod
-    def _rarity_flash(rarity: str) -> None:
+    def _rarity_feedback(self, rarity: str) -> None:
         spec = RARITIES.get(rarity) or RARITIES["common"]
         r, g, b = spec["color"]
         try:
-            if float(spec.get("flash") or 0.0) > 0.0:
+            if self.screen_feedback \
+                    and float(spec.get("flash") or 0.0) > 0.0:
                 bd.screen_flash(r, g, b, float(spec["flash"]))
             if spec.get("sound"):
                 bd.play_ui_sound(str(spec["sound"]))

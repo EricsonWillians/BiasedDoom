@@ -33,7 +33,7 @@ enum class ETonemapMode : uint8_t {
 };
 
 enum class PPFilterMode { Nearest, Linear };
-enum class PPWrapMode { Clamp, Repeat };
+enum class PPWrapMode { Clamp, Repeat, Mirror };
 enum class PPTextureType {
   CurrentPipelineTexture,
   NextPipelineTexture,
@@ -325,15 +325,34 @@ public:
 struct ExtractUniforms {
   FVector2 Scale;
   FVector2 Offset;
+  float Threshold;
+  float Knee;
 
   static std::vector<UniformFieldDesc> Desc() {
     return {{"Scale", UniformType::Vec2, offsetof(ExtractUniforms, Scale)},
-            {"Offset", UniformType::Vec2, offsetof(ExtractUniforms, Offset)}};
+            {"Offset", UniformType::Vec2, offsetof(ExtractUniforms, Offset)},
+            {"Threshold", UniformType::Float, offsetof(ExtractUniforms, Threshold)},
+            {"Knee", UniformType::Float, offsetof(ExtractUniforms, Knee)}};
   }
 };
 
+static_assert(sizeof(ExtractUniforms) <= 128,
+              "Bloom extraction uniforms exceed Vulkan's guaranteed push constant size");
+
+struct BloomCompositeUniforms {
+  float Intensity;
+
+  static std::vector<UniformFieldDesc> Desc() {
+    return {{"Intensity", UniformType::Float, offsetof(BloomCompositeUniforms, Intensity)}};
+  }
+};
+
+static_assert(sizeof(BloomCompositeUniforms) <= 128,
+              "Bloom composite uniforms exceed Vulkan's guaranteed push constant size");
+
 struct BlurUniforms {
   float SampleWeights[8];
+  float RadiusScale;
 
   static std::vector<UniformFieldDesc> Desc() {
     return {
@@ -353,6 +372,8 @@ struct BlurUniforms {
          offsetof(BlurUniforms, SampleWeights[6])},
         {"SampleWeights7", UniformType::Float,
          offsetof(BlurUniforms, SampleWeights[7])},
+        {"RadiusScale", UniformType::Float,
+         offsetof(BlurUniforms, RadiusScale)},
     };
   }
 };
@@ -388,6 +409,8 @@ private:
   int lastHeight = 0;
 
   PPShader BloomCombine = {"shaders/pp/bloomcombine.fp", "", {}};
+  PPShader BloomFinal = {"shaders/pp/bloomcombine.fp", "#define BLOOM_FINAL\n",
+                         BloomCompositeUniforms::Desc()};
   PPShader BloomExtract = {"shaders/pp/bloomextract.fp", "",
                            ExtractUniforms::Desc()};
   PPShader BlurVertical = {"shaders/pp/blur.fp", "#define BLUR_VERTICAL\n",
@@ -731,21 +754,20 @@ struct PresentUniforms {
   int AtmosphereMode;
   float AtmosphereIntensity;
   float AtmosphereContrast;
-  int VignetteEnable;
+  // Vulkan feeds this struct through push constants, so it must stay within the
+  // 256 byte push constant limit that desktop GPUs expose. Most effects gate on
+  // a neutral parameter value instead of a dedicated enable int (strength 0,
+  // scale 1.0, levels 0, degrees 0, neutral white balance); only effects with
+  // no neutral-capable parameter keep an explicit enable.
   float VignetteStrength;
-  int ChromaticEnable;
   float ChromaticStrength;
-  int FilmgrainEnable;
   float FilmgrainStrength;
   float FilmgrainScale;
-  int SharpenEnable;
   float SharpenStrength;
-  int RetroPixelEnable;
   float RetroPixelScale;
   int ColorgradeMode;
   float ColorgradeStrength;
   int ColorgradeLut;
-  int VhsEnable;
   float VhsStrength;
   float VhsScanline;
   float VhsJitter;
@@ -763,6 +785,28 @@ struct PresentUniforms {
   float CrtScanlineSharpness;
   float CrtMaskIntensity;
   int NtscMode;
+  int GradeEnable;
+  float VibranceStrength;
+  float WhiteBalanceTemperature;
+  float WhiteBalanceTint;
+  float HueShiftDegrees;
+  float PosterizeLevels;
+  float EdgeGlowStrength;
+  float EdgeGlowThreshold;
+  float GodRaysStrength;
+  float GodRaysLength;
+  float GodRaysThreshold;
+  float LensFlareStrength;
+  float ClarityStrength;
+  float GradeLiftR;
+  float GradeLiftG;
+  float GradeLiftB;
+  float GradeGammaR;
+  float GradeGammaG;
+  float GradeGammaB;
+  float GradeGainR;
+  float GradeGainG;
+  float GradeGainB;
 
   static std::vector<UniformFieldDesc> Desc() {
     return {
@@ -787,26 +831,16 @@ struct PresentUniforms {
          offsetof(PresentUniforms, AtmosphereIntensity)},
         {"AtmosphereContrast", UniformType::Float,
          offsetof(PresentUniforms, AtmosphereContrast)},
-        {"VignetteEnable", UniformType::Int,
-         offsetof(PresentUniforms, VignetteEnable)},
         {"VignetteStrength", UniformType::Float,
          offsetof(PresentUniforms, VignetteStrength)},
-        {"ChromaticEnable", UniformType::Int,
-         offsetof(PresentUniforms, ChromaticEnable)},
         {"ChromaticStrength", UniformType::Float,
          offsetof(PresentUniforms, ChromaticStrength)},
-        {"FilmgrainEnable", UniformType::Int,
-         offsetof(PresentUniforms, FilmgrainEnable)},
         {"FilmgrainStrength", UniformType::Float,
          offsetof(PresentUniforms, FilmgrainStrength)},
         {"FilmgrainScale", UniformType::Float,
          offsetof(PresentUniforms, FilmgrainScale)},
-        {"SharpenEnable", UniformType::Int,
-         offsetof(PresentUniforms, SharpenEnable)},
         {"SharpenStrength", UniformType::Float,
          offsetof(PresentUniforms, SharpenStrength)},
-        {"RetroPixelEnable", UniformType::Int,
-         offsetof(PresentUniforms, RetroPixelEnable)},
         {"RetroPixelScale", UniformType::Float,
          offsetof(PresentUniforms, RetroPixelScale)},
         {"ColorgradeMode", UniformType::Int,
@@ -815,7 +849,6 @@ struct PresentUniforms {
          offsetof(PresentUniforms, ColorgradeStrength)},
         {"ColorgradeLut", UniformType::Int,
          offsetof(PresentUniforms, ColorgradeLut)},
-        {"VhsEnable", UniformType::Int, offsetof(PresentUniforms, VhsEnable)},
         {"VhsStrength", UniformType::Float,
          offsetof(PresentUniforms, VhsStrength)},
         {"VhsScanline", UniformType::Float,
@@ -842,9 +875,60 @@ struct PresentUniforms {
          offsetof(PresentUniforms, CrtScanlineSharpness)},
         {"CrtMaskIntensity", UniformType::Float,
          offsetof(PresentUniforms, CrtMaskIntensity)},
-        {"NtscMode", UniformType::Int, offsetof(PresentUniforms, NtscMode)}};
+        {"NtscMode", UniformType::Int, offsetof(PresentUniforms, NtscMode)},
+        {"GradeEnable", UniformType::Int,
+         offsetof(PresentUniforms, GradeEnable)},
+        {"VibranceStrength", UniformType::Float,
+         offsetof(PresentUniforms, VibranceStrength)},
+        {"WhiteBalanceTemperature", UniformType::Float,
+         offsetof(PresentUniforms, WhiteBalanceTemperature)},
+        {"WhiteBalanceTint", UniformType::Float,
+         offsetof(PresentUniforms, WhiteBalanceTint)},
+        {"HueShiftDegrees", UniformType::Float,
+         offsetof(PresentUniforms, HueShiftDegrees)},
+        {"PosterizeLevels", UniformType::Float,
+         offsetof(PresentUniforms, PosterizeLevels)},
+        {"EdgeGlowStrength", UniformType::Float,
+         offsetof(PresentUniforms, EdgeGlowStrength)},
+        {"EdgeGlowThreshold", UniformType::Float,
+         offsetof(PresentUniforms, EdgeGlowThreshold)},
+        {"GodRaysStrength", UniformType::Float,
+         offsetof(PresentUniforms, GodRaysStrength)},
+        {"GodRaysLength", UniformType::Float,
+         offsetof(PresentUniforms, GodRaysLength)},
+        {"GodRaysThreshold", UniformType::Float,
+         offsetof(PresentUniforms, GodRaysThreshold)},
+        {"LensFlareStrength", UniformType::Float,
+         offsetof(PresentUniforms, LensFlareStrength)},
+        {"ClarityStrength", UniformType::Float,
+         offsetof(PresentUniforms, ClarityStrength)},
+        {"GradeLiftR", UniformType::Float,
+         offsetof(PresentUniforms, GradeLiftR)},
+        {"GradeLiftG", UniformType::Float,
+         offsetof(PresentUniforms, GradeLiftG)},
+        {"GradeLiftB", UniformType::Float,
+         offsetof(PresentUniforms, GradeLiftB)},
+        {"GradeGammaR", UniformType::Float,
+         offsetof(PresentUniforms, GradeGammaR)},
+        {"GradeGammaG", UniformType::Float,
+         offsetof(PresentUniforms, GradeGammaG)},
+        {"GradeGammaB", UniformType::Float,
+         offsetof(PresentUniforms, GradeGammaB)},
+        {"GradeGainR", UniformType::Float,
+         offsetof(PresentUniforms, GradeGainR)},
+        {"GradeGainG", UniformType::Float,
+         offsetof(PresentUniforms, GradeGainG)},
+        {"GradeGainB", UniformType::Float,
+         offsetof(PresentUniforms, GradeGainB)}};
   }
 };
+
+// The Vulkan backend uploads PresentUniforms as fragment stage push constants
+// (vk_renderpass.cpp AddPushConstantRange). Desktop GPUs guarantee 256 bytes;
+// exceeding that limit makes pipeline layout creation invalid and kills the
+// device at queue submit time.
+static_assert(sizeof(PresentUniforms) <= 256,
+              "PresentUniforms must fit in a 256 byte Vulkan push constant range");
 
 class PPPresent {
  public:

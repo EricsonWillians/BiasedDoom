@@ -63,6 +63,8 @@ public:
 	void StartPrecaching() override;
 	void BeginFrame() override;
 	void InitLightmap(int LMTextureSize, int LMTextureCount, TArray<uint16_t>& LMTextureData) override;
+	bool SupportsSectorBleed() const override { return true; }
+	void InitSectorBleed(int width, int height, const TArray<uint8_t>& data) override;
 	void BlurScene(float amount) override;
 	void PostProcessScene(bool swscene, int fixedcm, float flash, const std::function<void()> &afterBloomDrawEndScene2D) override;
 	void AmbientOccludeScene(float m5) override;

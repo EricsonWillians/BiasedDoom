@@ -520,6 +520,17 @@ public:
 	TArray<FSectorPortal> sectorPortals;
 	TArray<FLinePortal> linePortals;
 
+	// Sector light bleed map
+	int SectorBleedWidth = 0;
+	int SectorBleedHeight = 0;
+	float SectorBleedMinX = 0.0f;
+	float SectorBleedMinY = 0.0f;
+	float SectorBleedInvWidth = 0.0f;
+	float SectorBleedInvHeight = 0.0f;
+	uint64_t SectorBleedHash = 0;
+	float SectorBleedDistance = 0.0f;
+	TArray<uint8_t> SectorBleedData;
+
 	// Lightmaps
 	TArray<LightmapSurface> LMSurfaces;
 	TArray<float> LMTexCoords;

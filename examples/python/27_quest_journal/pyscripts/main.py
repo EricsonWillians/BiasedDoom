@@ -1,14 +1,14 @@
-"""Whispers in the Walls — bootstrap, event wiring, and the autotest driver.
+"""Whispers in the Walls: bootstrap, event wiring, and the autotest driver.
 
 An occult-investigation mini-campaign on Doom II MAP01, built on the
 shipped ``bd_quests`` and ``bd_horror`` packages. Architecture:
 
-- ``content.py`` — pure data and factories (quests, cast, prose). No
+- ``content.py``: pure data and factories (quests, cast, prose). No
   engine calls at import time.
-- ``systems.py`` — directors and game rules built from content (quest
+- ``systems.py``: directors and game rules built from content (quest
   trackers, the rite's blackout/flicker, the stalker, the fail branch).
-- ``ui.py`` — the Grimoire: a ``bd_horror.theme``-skinned ImGui journal.
-- ``main.py`` (this file) — imports the siblings, registers every engine
+- ``ui.py``: the Grimoire, a ``bd_horror.theme``-skinned ImGui journal.
+- ``main.py`` (this file): imports the siblings, registers every engine
   event, and drives the deterministic autotest.
 
 The PYTHON manifest lists all four modules; the runtime execs each one,
@@ -23,11 +23,16 @@ aimed at our custom themed window).
 
 Autotest: ``BD_EXAMPLE_AUTOTEST=1`` drives the whole campaign headlessly
 and deterministically: the fail branch (synthetic sector-exit probe),
-a real three-page pickup walk, the ritual blackout (fired and restored),
-player-attributed wave kills, the quest chain unsealing, the quest xp
-reward sink crediting the favor ledger with exact amounts, a checkpoint
-save/load round-trip, and the journal toggle. The run ends via
-``-scripttest``'s own PASS/FAIL accounting.
+the opening beat (goal centered, guidance whispers toasted), the
+page-marker lifecycle (lit over all three pages before the walk, cleared
+after it), a real three-page pickup walk, the ritual blackout (fired and
+restored), the rite's plain stay-inside rule toast, the beacon lifecycle
+(lit while the rite is current, guttered when it completes),
+player-attributed wave kills, the quest chain unsealing, the Choir's
+center-screen announcement, the quest xp reward sink crediting the favor
+ledger with exact amounts, a checkpoint save/load round-trip, and the
+journal toggle. The run ends via ``-scripttest``'s own PASS/FAIL
+accounting.
 
 ``BD_EXAMPLE_SCREENSHOT=1`` schedules a screenshot a few seconds in, for
 documentation captures.
@@ -103,6 +108,7 @@ def on_map(event):
     if AUTOTEST:
         pawn.damage_factor = 0.0  # nothing may kill the test driver
         bd.schedule(autotest_fail_branch_probe, delay=5)
+        bd.schedule(autotest_intro_asserts, delay=6)
         bd.schedule(autotest_walk_pages, delay=8)
         bd.schedule(autotest_stop_walk, delay=88)
         bd.schedule(autotest_pages_asserts, delay=96)
@@ -161,6 +167,21 @@ def autotest_fail_branch_probe():
     world.probe_log = probe_log  # post-load persistence assert
 
 
+# --- autotest: the opening beat and the page markers --------------------------------
+
+
+def autotest_intro_asserts():
+    # The walk starts at tic 8, so all three pages are still on the floor
+    # when this runs: every one of them must already carry its markers.
+    bd.assert_true(any(content.INTRO_CENTER in line
+                       for line in world.center_log),
+                   "intro centered the goal on a fresh map")
+    markers = systems.marker_state["pages"]
+    bd.assert_true(len(markers) == len(content.PAGE_TIDS)
+                   and all(tid in markers for tid in content.PAGE_TIDS),
+                   "a ring and label mark every uncollected page")
+
+
 # --- autotest: quest 1, the pages ----------------------------------------------------
 
 
@@ -206,6 +227,14 @@ def autotest_pages_asserts():
                    == content.row("pages")["reward_xp"],
                    "pages completion fired the xp sink with the exact "
                    "amount")
+    bd.assert_true(not systems.marker_state["pages"],
+                   "page markers cleared once every page was recovered")
+    bd.assert_true(any("press J" in entry["text"]
+                       for entry in toasts.history),
+                   "intro whisper named the journal key")
+    bd.assert_true(any("markers light the way" in entry["text"]
+                       for entry in toasts.history),
+                   "intro whisper named the guiding markers")
 
 
 # --- autotest: quest 2, the rite -----------------------------------------------------
@@ -238,6 +267,9 @@ def autotest_rite_begin_asserts():
                        and "light dies" in entry["text"]
                        for entry in toasts.history),
                    "rite entry omen toast recorded")
+    bd.assert_true(any("Stay inside the circle" in entry["text"]
+                       for entry in toasts.history),
+                   "rite start stated the stay-inside rule plainly")
 
 
 def autotest_kill_two():
@@ -261,6 +293,8 @@ def autotest_mid_asserts():
     bd.assert_true(sum(1 for entry in toasts.history
                        if "throttles" in entry["text"]) >= 2,
                    "wave progress whispers recorded")
+    bd.assert_true(systems.marker_state["beacon"],
+                   "the rite beacon burns while the rite is current")
 
 
 def autotest_blackout_restored():
@@ -291,7 +325,7 @@ def autotest_load():
 
 def autotest_kill_third():
     # The checkpoint was taken with the third whisperer still alive, so it
-    # is back — re-resolve by TID (handles never survive a savegame).
+    # is back; re-resolve by TID (handles never survive a savegame).
     ref = bd.actor_ref(content.WAVE_TIDS[2])
     bd.assert_true(ref is not None and ref.valid,
                    "third whisperer re-resolved by TID after checkpoint load")
@@ -315,6 +349,9 @@ def autotest_chain_asserts():
     bd.assert_true(any(entry["kind"] == "omen" and "Choir" in entry["text"]
                        for entry in toasts.history),
                    "rite completion omen toast recorded")
+    bd.assert_true(any(content.CHOIR_ANNOUNCE in line
+                       for line in world.center_log),
+                   "the Choir's arrival was announced center-screen")
 
 
 def autotest_kill_choir():
@@ -339,6 +376,8 @@ def autotest_choir_asserts():
                    + content.row("choir")["reward_xp"],
                    "choir completion added its exact xp to the favor "
                    "ledger")
+    bd.assert_true(not systems.marker_state["beacon"],
+                   "the rite beacon guttered once the rite was done")
 
 
 # --- autotest: the toggle and the final sweep -------------------------------------------

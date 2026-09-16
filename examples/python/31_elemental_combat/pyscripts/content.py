@@ -16,9 +16,17 @@ the pale **Rime-Bound** chills you to the bone. Behind you stands the
 **Warding Idol** (a Soulsphere prop): its blessing turns your skin to
 granite — and its price is the light, drunk from the room around it.
 The Rime-Bound carries a relic: when it dies, something old surfaces.
+
+The goal: **break the horde**. A persistent control strip (a display-list
+``bd.draw_text``) shows the live focus, the real key bindings, and the
+horde count; struck monsters float throttled affinity labels; the elites
+wear their weakness over their heads. When all nine arena monsters lie
+dead, a one-time souls bonus lands through the kill-XP wiring.
 """
 
 from __future__ import annotations
+
+from fractions import Fraction
 
 import bd_rpg
 
@@ -82,6 +90,23 @@ STATUS_IMP_TID = 9401           # TID-tagged imp for the persistence recipe
 DUMMY_TIDS = (9450, 9451, 9452, 9453, 9454, 9455)  # autotest targets
 STATUS_DUMMY_TID = 9460         # autotest status-semantics target
 CHECKPOINT_NAME = "pyre_rime_example"
+
+# --- the goal: break the horde -----------------------------------------------------
+
+#: Every arena monster TID that counts toward the win: the pyre-weak
+#: imps, the rot-proof pinkies, and the three elites (the status imp and
+#: the autotest dummies are fixtures, not horde).
+HORDE_TIDS = HORDE_IMP_TIDS + PINKY_TIDS + ELITE_TIDS
+HORDE_TID_SET = frozenset(HORDE_TIDS)
+
+#: One-time souls bonus when the last horde monster falls, awarded
+#: through bd_rpg.award_kill_xp so the litany listener sings it too.
+HORDE_BONUS_XP = 100
+
+CENTER_HORDE_BROKEN = "THE HORDE IS BROKEN"
+TOAST_HORDE_BROKEN = "The horde is broken; the rite is complete."
+LITANY_HORDE_BROKEN = "The horde is broken"
+STRIP_VICTORY = "HORDE BROKEN - the rite is complete"
 
 # --- the Warding Idol --------------------------------------------------------------------
 
@@ -152,8 +177,63 @@ def display_name(class_name: str) -> str:
 #: Death rattle for the elite roster: DSSGTDTH, the pinky's wet
 #: death-rattle — verified present in doom2.wad.
 RATTLE_SOUND = "demon/death"
-#: A brief bruise-colored fade rides each elite death.
-RATTLE_FADE = (16, 8, 24, 0.30, 0.7)  # r, g, b, alpha, seconds
+
+# --- the control strip (persistent display-list text) ------------------------------
+
+STRIP_ID = 73102           # stable display-list id; redraw replaces by id
+STRIP_LAYER = 8            # above the world markers and default HUD items
+STRIP_Y = 0.955            # bottom of the screen
+STRIP_HEIGHT = 0.018       # normalized screen-height fraction per line
+STRIP_REFRESH_TICS = 35    # map-local refresh cadence (picks up rebinds)
+STRIP_VICTORY_COLOR = (240, 200, 80)
+
+# --- per-hit affinity feedback labels ------------------------------------------------
+
+FEEDBACK_ID_BASE = 73300   # per-monster label ids (base + tid)
+FEEDBACK_SECONDS = 0.7     # transient label lifetime
+FEEDBACK_THROTTLE_TICS = 10  # one label per monster per this many tics
+FEEDBACK_OFFSET_Z = 16.0
+FEEDBACK_HEIGHT = 0.02
+
+#: Label colors by affinity band: weakness burns ember-bright,
+#: resistance reads sickly, immunity is greyed out.
+FEEDBACK_STRONG_COLOR = (255, 140, 40)   # multiplier > 1
+FEEDBACK_WEAK_COLOR = (140, 170, 80)     # 0 < multiplier < 1
+FEEDBACK_IMMUNE_COLOR = (150, 150, 150)  # multiplier 0
+
+
+def feedback_text(element: str, mult: float):
+    """The affinity label for a retyped hit, or None for a neutral (x1)
+    hit: "x2 PYRE" on weakness, "x1/2 ROT" on resistance, "IMMUNE" on
+    immunity."""
+    mult = float(mult)
+    if mult <= 0.0:
+        return "IMMUNE"
+    if mult == 1.0:
+        return None
+    if mult > 1.0:
+        return f"x{mult:g} {str(element).upper()}"
+    frac = Fraction(mult).limit_denominator(8)
+    return f"x{frac.numerator}/{frac.denominator} {str(element).upper()}"
+
+
+# --- elite weakness labels ---------------------------------------------------------
+
+#: affix -> the element that elite fears: fire-born thralls crack under
+#: rime, the rime-bound melts under pyre, rot burns away under pyre.
+AFFIX_WEAKNESS = {"pyre": "rime", "rime": "pyre", "rot": "pyre"}
+
+WEAKNESS_ID_BASE = 73200   # per-elite label ids (base + roster index)
+WEAKNESS_OFFSET_Z = 8.0
+WEAKNESS_HEIGHT = 0.016
+
+
+def weakness_label(name: str, affix: str) -> str:
+    """The overhead label for an elite: "Cinder Thrall - weak: RIME"."""
+    weakness = AFFIX_WEAKNESS.get(str(affix))
+    if weakness is None:
+        return str(name)
+    return f"{name} - weak: {weakness.upper()}"
 
 # --- prose / litany lines -------------------------------------------------------------------
 

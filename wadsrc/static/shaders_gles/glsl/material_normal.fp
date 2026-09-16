@@ -112,7 +112,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 	#endif
 #endif
 	
-	vec3 frag = material.Base.rgb * clamp(ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength)), 0.0, 1.4);
+	vec3 frag = material.Base.rgb * clamp(ApplyBiasedAmbientFloor(ApplyBiasedAmbientGradient(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), normal)), 0.0, 1.4);
 	
 #if (DEF_DYNAMIC_LIGHTS_ADD == 1)
 	vec4 addlight = vec4(0.0,0.0,0.0,0.0);

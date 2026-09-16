@@ -18,6 +18,9 @@ EXTERN_CVAR (Bool, gl_light_shadowmap);
 EXTERN_CVAR (Int, gl_shadowmap_quality);
 
 EXTERN_CVAR(Int, gl_fogmode)
+EXTERN_CVAR(Bool, bd_sectorlight_bleed)
+EXTERN_CVAR(Float, bd_sectorlight_distance)
+EXTERN_CVAR(Float, bd_sectorlight_strength)
 EXTERN_CVAR(Bool,gl_mirror_envmap)
 
 EXTERN_CVAR(Bool,gl_mirrors)

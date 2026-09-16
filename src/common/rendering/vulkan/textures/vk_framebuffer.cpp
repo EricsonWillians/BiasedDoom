@@ -27,9 +27,25 @@
 #include "vulkan/system/vk_renderdevice.h"
 #include "vulkan/renderer/vk_postprocess.h"
 #include "vk_framebuffer.h"
+#include "c_cvars.h"
+#include "printf.h"
 
 CVAR(Bool, vk_hdr, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR(Bool, vk_exclusivefullscreen, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
+
+EXTERN_CVAR(Bool, vid_vsync_adaptive)
+
+static const char* PresentModeName(VkPresentModeKHR presentMode)
+{
+	switch (presentMode)
+	{
+	case VK_PRESENT_MODE_IMMEDIATE_KHR: return "immediate";
+	case VK_PRESENT_MODE_MAILBOX_KHR: return "mailbox";
+	case VK_PRESENT_MODE_FIFO_KHR: return "fifo";
+	case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "fifo_relaxed";
+	default: return "unknown";
+	}
+}
 
 VkFramebufferManager::VkFramebufferManager(VulkanRenderDevice* fb) : fb(fb)
 {
@@ -48,17 +64,19 @@ VkFramebufferManager::~VkFramebufferManager()
 void VkFramebufferManager::AcquireImage()
 {
 	bool exclusiveFullscreen = fb->IsFullscreen() && vk_exclusivefullscreen;
-	if (SwapChain->Lost() || fb->GetClientWidth() != CurrentWidth || fb->GetClientHeight() != CurrentHeight || fb->GetVSync() != CurrentVSync || CurrentHdr != vk_hdr || CurrentExclusiveFullscreen != exclusiveFullscreen)
+	if (SwapChain->Lost() || fb->GetClientWidth() != CurrentWidth || fb->GetClientHeight() != CurrentHeight || fb->GetVSync() != CurrentVSync || vid_vsync_adaptive != CurrentVSyncAdaptive || CurrentHdr != vk_hdr || CurrentExclusiveFullscreen != exclusiveFullscreen)
 	{
 		Framebuffers.clear();
 
 		CurrentWidth = fb->GetClientWidth();
 		CurrentHeight = fb->GetClientHeight();
 		CurrentVSync = fb->GetVSync();
+		CurrentVSyncAdaptive = vid_vsync_adaptive;
 		CurrentHdr = vk_hdr;
 		CurrentExclusiveFullscreen = exclusiveFullscreen;
 
-		SwapChain->Create(CurrentWidth, CurrentHeight, CurrentVSync ? 2 : 3, CurrentVSync, CurrentHdr, CurrentExclusiveFullscreen);
+		SwapChain->Create(CurrentWidth, CurrentHeight, CurrentVSync ? 2 : 3, CurrentVSync, CurrentVSyncAdaptive, CurrentHdr, CurrentExclusiveFullscreen);
+		DPrintf(DMSG_NOTIFY, "Vulkan present mode: %s (vsync %s, adaptive %s)\n", PresentModeName(SwapChain->PresentMode()), CurrentVSync ? "on" : "off", CurrentVSyncAdaptive ? "on" : "off");
 
 		RenderFinishedSemaphores.clear();
 		for (int i = 0; i < SwapChain->ImageCount(); i++)

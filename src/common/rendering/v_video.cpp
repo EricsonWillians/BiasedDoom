@@ -61,6 +61,15 @@
 #include "texturemanager.h"
 #include "i_interface.h"
 #include "v_draw.h"
+#include "v_2ddrawer.h"
+#include "model.h"
+#include "swrenderer/r_swscene.h"
+#include "hwrenderer/postprocessing/hw_postprocess.h"
+#include "g_levellocals.h"
+#include "hw_vertexbuilder.h"
+
+void HW_UploadSectorLightBleed(FLevelLocals *Level);
+#include "flatvertices.h"
 
 
 EXTERN_CVAR(Int, menu_resolution_custom_width)
@@ -103,10 +112,6 @@ CUSTOM_CVAR(Int, vid_maxfps, 500, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CUSTOM_CVAR(Int, vid_preferbackend, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 {
-	// [SP] This may seem pointless - but I don't want to implement live switching just
-	// yet - I'm pretty sure it's going to require a lot of reinits and destructions to
-	// do it right without memory leaks
-
 	switch(self)
 	{
 #ifdef HAVE_GLES2
@@ -126,7 +131,22 @@ CUSTOM_CVAR(Int, vid_preferbackend, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_N
 		Printf("Selecting OpenGL backend...\n");
 	}
 
-	Printf("Changing the video backend requires a restart for " GAMENAME ".\n");
+	if (currentVideoBackend < 0 || self == currentVideoBackend)
+	{
+		// The backend has not been created yet (applies at startup) or the
+		// requested one is already active.
+		return;
+	}
+
+	if (I_SupportsLiveBackendSwitch())
+	{
+		backendchangeneeded = true;
+		Printf("The video backend will switch on the next frame.\n");
+	}
+	else
+	{
+		Printf("Changing the video backend requires a restart for " GAMENAME ".\n");
+	}
 }
 
 int V_GetBackend()
@@ -135,6 +155,16 @@ int V_GetBackend()
 	if (v == 3) vid_preferbackend = v = 2;
 	else if (v < 0 || v > 3) v = 0;
 	return v;
+}
+
+static const char *V_BackendName(int backend)
+{
+	switch (backend)
+	{
+	case 1: return "Vulkan";
+	case 2: return "OpenGLES";
+	default: return "OpenGL";
+	}
 }
 
 
@@ -183,6 +213,9 @@ int DisplayWidth, DisplayHeight;
 // There's also only one, not four.
 DFrameBuffer *screen;
 
+// The backend that is actually active; -1 until the first framebuffer exists.
+int currentVideoBackend = -1;
+
 CVAR (Int, vid_defwidth, 640, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (Int, vid_defheight, 480, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (Bool, ticker, false, 0)
@@ -195,9 +228,21 @@ CUSTOM_CVAR (Bool, vid_vsync, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 	}
 }
 
+CUSTOM_CVAR (Bool, vid_vsync_adaptive, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+{
+	// Re-apply the current vsync state so backends can switch between
+	// adaptive (tear on late frames) and strict presentation.
+	if (screen != NULL)
+	{
+		screen->SetVSync (vid_vsync);
+	}
+}
+
 // [RH] Set true when vid_setmode command has been executed
 bool setmodeneeded = false;
 bool setsizeneeded = false;
+// Set by vid_preferbackend when a live backend switch has been requested
+bool backendchangeneeded = false;
 
 //==========================================================================
 //
@@ -420,6 +465,80 @@ void V_Init2()
 	FBaseCVar::ResetColors ();
 	C_NewModeAdjust();
 	setsizeneeded = true;
+}
+
+//==========================================================================
+//
+// V_RestartBackend
+//
+// Tears down the active video backend and creates the one selected by
+// vid_preferbackend. Must be called at a frame boundary with no frame in
+// flight and no screen wipe active (see D_Display).
+//
+//==========================================================================
+
+void V_RestartBackend()
+{
+	if (I_IsHeadless() || screen == nullptr || Video == nullptr)
+	{
+		return;
+	}
+
+	int oldBackend = currentVideoBackend;
+	int requestedBackend = V_GetBackend();
+	Printf("Switching video backend from %s to %s...\n", V_BackendName(oldBackend), V_BackendName(requestedBackend));
+
+	// Queued 2D commands may reference materials of the old backend.
+	twod->Clear();
+	InvalidateShape2DBuffers();
+
+	// Release GPU resources while the old backend's context/device is valid.
+	// This includes the global postprocess chain and the per-texture material
+	// cache: PPShader and FMaterial backends hold raw pointers to their
+	// creating render device and must not outlive it.
+	FlushModels();
+	TexMan.FlushAll();
+	TexMan.FlushMaterials();
+	ResetSWSceneFBTextures();
+	PPResource::ResetAll();
+
+	delete screen;
+	screen = nullptr;
+
+	I_RestartGraphics();
+
+	Video->SetResolution();	// like V_Init2, this only fails via exceptions.
+	I_ShowGraphicsWindow();
+	if (currentVideoBackend != requestedBackend)
+	{
+		Printf(TEXTCOLOR_YELLOW "Requested %s is unavailable; using %s instead.\n", V_BackendName(requestedBackend), V_BackendName(currentVideoBackend));
+	}
+	else
+	{
+		Printf("Video backend switched to %s.\n", V_BackendName(currentVideoBackend));
+	}
+	Printf ("Resolution: %d x %d\n", SCREENWIDTH, SCREENHEIGHT);
+
+	screen->SetVSync(vid_vsync);
+	V_OutputResized(screen->GetWidth(), screen->GetHeight());
+	C_NewModeAdjust();
+	setsizeneeded = true;
+
+	if (primaryLevel != nullptr && primaryLevel->MapName.IsNotEmpty() && screen->mVertexData != nullptr)
+	{
+		RecreateVBO(screen->mVertexData, primaryLevel);
+		screen->InitLightmap(primaryLevel->LMTextureSize, primaryLevel->LMTextureCount, primaryLevel->LMTextureData);
+		HW_UploadSectorLightBleed(primaryLevel);
+		DPrintf(DMSG_NOTIFY, "Rebuilt level geometry for backend switch (%u vertices, %u indices).\n", screen->mVertexData->mIndex, screen->mVertexData->ibo_data.Size());
+	}
+
+	// The recreated window may not receive a focus event; consider it active
+	// so rendering is not paused. A later focus-loss event will correct this.
+	extern bool AppActive;
+	AppActive = true;
+
+	// Recompile the shaders the same way startup does.
+	while (!screen->CompileNextShader()) {}
 }
 
 CUSTOM_CVAR (Int, vid_aspect, 0, CVAR_GLOBALCONFIG|CVAR_ARCHIVE)

@@ -11,9 +11,10 @@ void main()
 	vec3 exposed = max(color.rgb * exposureAdjustment, vec3(0.0));
 	float luminance = dot(exposed, vec3(0.2126, 0.7152, 0.0722));
 
-	// A soft photographic knee preserves highlight energy without blooming midtones.
-	float threshold = 0.92;
-	float knee = 0.55;
+	// A configurable soft photographic knee preserves highlight energy without
+	// blooming midtones.
+	float threshold = max(Threshold, 0.0);
+	float knee = max(Knee, 0.01);
 	float shoulder = max(luminance - threshold + knee, 0.0);
 	float softKnee = shoulder * shoulder / max(4.0 * knee, 0.0001);
 	float contribution = max(luminance - threshold, softKnee);

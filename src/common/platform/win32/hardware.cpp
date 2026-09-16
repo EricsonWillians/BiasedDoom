@@ -97,21 +97,40 @@ void I_InitGraphics ()
 		try
 		{
 			Video = new Win32VulkanVideo();
+			currentVideoBackend = 1;
 		}
 		catch (CVulkanError &error)
 		{
 			Printf(TEXTCOLOR_RED "Initialization of Vulkan failed: %s\n", error.what());
 			Video = new Win32GLVideo();
+			currentVideoBackend = 0;
 		}
 	}
 	else
 #endif
 	{
 		Video = new Win32GLVideo();
+		currentVideoBackend = 0;
 	}
 
 	// we somehow STILL don't have a display!!
 	if (Video == NULL)
 		I_FatalError ("Failed to initialize display");
 
+}
+
+bool I_SupportsLiveBackendSwitch ()
+{
+	// Live backend switching is currently only implemented for the SDL backend.
+	return false;
+}
+
+void I_RestartGraphics ()
+{
+	// Never called: I_SupportsLiveBackendSwitch() returns false here.
+}
+
+void I_ShowGraphicsWindow ()
+{
+	// Never called: I_SupportsLiveBackendSwitch() returns false here.
 }

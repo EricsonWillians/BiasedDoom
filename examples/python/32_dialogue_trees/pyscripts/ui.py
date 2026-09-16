@@ -1,9 +1,9 @@
-"""The Interrogation — UI: the bd_horror-skinned dialogue window.
+"""The Interrogation - UI: the bd_horror-skinned dialogue window.
 
 A full horror reskin of the conversation overlay, **composed in the
 example** rather than subclassing ``bd_dialogue.ui.DialogueUI`` (the
-shipped widget's look is hard-coded; the session API — ``choices()``,
-``choose()``, ``last_check``, ``active_node`` — carries everything this
+shipped widget's look is hard-coded; the session API - ``choices()``,
+``choose()``, ``last_check``, ``active_node`` - carries everything this
 window needs):
 
 - the whole window under ``bd_horror.theme.apply()`` / ``clear()``;
@@ -11,14 +11,19 @@ window needs):
 - his name in faction color (sickly when the Choir trusts you, fresh
   blood when it hates you, ember while undecided);
 - body text wrapped in bone;
-- skill-check results as *judgment lines* — "The Inquisitor is swayed."
-  in sickly green, "He sees the lie." in bright wound red — for the
+- skill-check results as *judgment lines* - "The Inquisitor is swayed."
+  in sickly green, "He sees the lie." in bright wound red - for the
   flash's ~3 s lifetime;
 - choices as numbered selectable rows (mouse click or ImGui keyboard
-  navigation, exactly like the framework UI — the ``1.``/``2.`` prefixes
-  are visual hints only) with their gate/DC annotations in wound red,
+  navigation, exactly like the framework UI - the ``1.``/``2.`` prefixes
+  are visual hints only) with their gate/DC/bonus annotations in wound
+  red ("(DC 12 Persuasion, you +4)", composed by the session wrapper),
   locked rows dimmed to marrow;
 - a Dread bar in the footer, pulsing once the hunt begins.
+
+Node body text is drawn as the session wrapper composes it, including
+the hidden-choice hint lines it appends near the dread/attitude
+thresholds.
 
 Headless safety is structural: every ImGui call lives inside the
 ``imgui_frame`` handler, which never fires under ``-headless``. The

@@ -1,4 +1,4 @@
-"""Whispers in the Walls — ui: the Grimoire, a bd_horror-skinned journal.
+"""Whispers in the Walls, ui: the Grimoire, a bd_horror-skinned journal.
 
 Definition-only at import time. :class:`Grimoire` is an immediate-mode
 window rendered with the engine-shipped ``bd_horror.theme`` skin:
@@ -7,7 +7,7 @@ blood/sickly/wound, objective progress bars, and faded entries for
 completed and still-sealed quests.
 
 Like every ``bd.imgui`` consumer, :meth:`Grimoire.draw` is only legal
-inside an ``imgui_frame`` handler — which never fires under ``-headless``,
+inside an ``imgui_frame`` handler, which never fires under ``-headless``,
 so every draw path here no-ops automatically in headless runs.
 """
 

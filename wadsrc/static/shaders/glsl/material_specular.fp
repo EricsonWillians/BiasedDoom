@@ -27,7 +27,7 @@ vec2 lightAttenuation(int i, vec3 normal, vec3 viewdir, float lightcolorA, float
 
 	vec3 halfdir = normalize(viewdir + lightdir);
 	float specAngle = clamp(dot(halfdir, normal), 0.0f, 1.0f);
-	float phExp = glossiness * 4.0f;
+	float phExp = glossiness * 4.0f * max(uSpecularPowerScale, 0.25);
 	return vec2(attenuation, attenuation * specularLevel * pow(specAngle, phExp));
 }
 
@@ -89,7 +89,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 	
 	if ( uLightBlendMode == 1 )
 	{	// COLOR_CORRECT_CLAMPING 
-		dynlight.rgb = ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength));
+		dynlight.rgb = ApplyBiasedAmbientFloor(ApplyBiasedAmbientGradient(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), normal));
 		specular.rgb = desaturate(specular).rgb;
 
 		dynlight.rgb = ((dynlight.rgb / max(max(max(dynlight.r, dynlight.g), dynlight.b), 1.4) * 1.4));
@@ -97,16 +97,16 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 	}
 	else if ( uLightBlendMode == 2 )
 	{	// UNCLAMPED 
-		dynlight.rgb = ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength));
+		dynlight.rgb = ApplyBiasedAmbientFloor(ApplyBiasedAmbientGradient(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), normal));
 		specular.rgb = desaturate(specular).rgb;
 	}
 	else
 	{
-		dynlight.rgb = clamp(ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength)), 0.0, 1.4);
+		dynlight.rgb = clamp(ApplyBiasedAmbientFloor(ApplyBiasedAmbientGradient(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), normal)), 0.0, 1.4);
 		specular.rgb = clamp(desaturate(specular).rgb, 0.0, 1.4);
 	}
 
-	vec3 frag = material.Base.rgb * dynlight.rgb + material.Specular * specular.rgb;
+	vec3 frag = material.Base.rgb * dynlight.rgb + material.Specular * specular.rgb * uSpecularTintColor.rgb;
 
 	if (uLightIndex >= 0)
 	{

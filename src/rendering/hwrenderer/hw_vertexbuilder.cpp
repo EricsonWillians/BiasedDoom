@@ -27,6 +27,7 @@
 #include "flatvertices.h"
 #include "earcut.hpp"
 #include "v_video.h"
+#include "p_3dfloors.h"
 
 //=============================================================================
 //
@@ -494,4 +495,24 @@ void CreateVBO(FFlatVertexBuffer* fvb, TArray<sector_t>& sectors)
 	fvb->mCurIndex = fvb->mIndex = fvb->vbo_shadowdata.Size();
 	fvb->Copy(0, fvb->mIndex);
 	fvb->mIndexBuffer->SetData(fvb->ibo_data.Size() * sizeof(uint32_t), &fvb->ibo_data[0], BufferUsageType::Static);
+}
+
+//==========================================================================
+//
+// Recreates the level geometry after the owning video backend was replaced.
+// Mirrors the map loader: dynamic 3D floor data is removed before building
+// the plain VBO, then reconstructed from the gameplay state.
+//
+//==========================================================================
+
+void RecreateVBO(FFlatVertexBuffer* fvb, FLevelLocals* Level)
+{
+	if (fvb == nullptr || Level == nullptr || Level->sectors.Size() == 0) return;
+
+	Level->ClearDynamic3DFloorData();
+	CreateVBO(fvb, Level->sectors);
+	for (auto &sec : Level->sectors)
+	{
+		P_Recalculate3DFloors(&sec);
+	}
 }

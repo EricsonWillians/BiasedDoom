@@ -40,6 +40,7 @@
 #include "hwrenderer/scene/hw_drawinfo.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
 #include "hwrenderer/scene/hw_portal.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 #include "hw_lightbuffer.h"
 #include "hw_renderstate.h"
 #include "hw_skydome.h"
@@ -552,6 +553,7 @@ void HWWall::SetupLights(HWDrawInfo*di, FDynLightData &lightdata)
 		}
 	}
 
+	lightdata.LimitPerSurface(bd_dynlight_max_per_surface);
 	dynlightindex = screen->mLights->UploadLights(lightdata);
 }
 

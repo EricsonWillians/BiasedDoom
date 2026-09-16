@@ -543,7 +543,7 @@ namespace OpenGLESRenderer
 
 			const PPTextureInput &input = Textures[index];
 			int filter = (input.Filter == PPFilterMode::Nearest) ? GL_NEAREST : GL_LINEAR;
-			int wrap = (input.Wrap == PPWrapMode::Clamp) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
+			int wrap = input.Wrap == PPWrapMode::Clamp ? GL_CLAMP_TO_EDGE : input.Wrap == PPWrapMode::Repeat ? GL_REPEAT : GL_MIRRORED_REPEAT;
 
 			switch (input.Type)
 			{

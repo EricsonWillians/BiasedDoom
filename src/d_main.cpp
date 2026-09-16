@@ -957,7 +957,7 @@ void D_Display ()
 	if (I_IsHeadless())
 		return;				// headless: skip all rendering and presentation
 	
-	if (!AppActive && !setmodeneeded && (screen->IsFullscreen() || !vid_activeinbackground))
+	if (!AppActive && !setmodeneeded && !backendchangeneeded && (screen->IsFullscreen() || !vid_activeinbackground))
 	{
 		return;
 	}
@@ -984,6 +984,13 @@ void D_Display ()
 			fov = DAngle::fromDeg(cam->GetFOV(I_GetTimeFrac()));
 
 		R_SetFOV(vp, fov);
+	}
+
+	// backend switch has been requested; wait until no wipe is in flight
+	if (backendchangeneeded && screen != nullptr && wipegamestate == gamestate)
+	{
+		backendchangeneeded = false;
+		V_RestartBackend();
 	}
 
 	// fullscreen toggle has been requested

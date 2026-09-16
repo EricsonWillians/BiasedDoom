@@ -906,6 +906,7 @@ set (PCH_SOURCES
 	rendering/hwrenderer/hw_models.cpp
 	rendering/hwrenderer/hw_precache.cpp
 	rendering/hwrenderer/scene/hw_lighting.cpp
+	rendering/hwrenderer/scene/hw_sectorbleed.cpp
 	rendering/hwrenderer/scene/hw_drawlistadd.cpp
 	rendering/hwrenderer/scene/hw_setcolor.cpp
 	maploader/edata.cpp

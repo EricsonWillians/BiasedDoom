@@ -154,34 +154,23 @@ void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma) {
   mPresentShader->Uniforms->CrtMaskIntensity = gl_crt_mask_intensity;
   mPresentShader->Uniforms->NtscMode = (postfxEnabled ? gl_ntsc_mode : 0);
 
-  mPresentShader->Uniforms->VignetteEnable =
-      (postfxEnabled && bd_vignette_enable) ? 1 : 0;
   mPresentShader->Uniforms->VignetteStrength =
       (postfxEnabled && bd_vignette_enable) ? bd_vignette_strength : 0.0f;
-  mPresentShader->Uniforms->ChromaticEnable =
-      (postfxEnabled && bd_chromatic_enable) ? 1 : 0;
   mPresentShader->Uniforms->ChromaticStrength =
       (postfxEnabled && bd_chromatic_enable) ? bd_chromatic_strength : 0.0f;
-  mPresentShader->Uniforms->FilmgrainEnable =
-      (postfxEnabled && bd_filmgrain_enable) ? 1 : 0;
   mPresentShader->Uniforms->FilmgrainStrength =
       (postfxEnabled && bd_filmgrain_enable) ? bd_filmgrain_strength : 0.0f;
   mPresentShader->Uniforms->FilmgrainScale = bd_filmgrain_scale;
-  mPresentShader->Uniforms->SharpenEnable =
-      (postfxEnabled && bd_sharpen_enable) ? 1 : 0;
   mPresentShader->Uniforms->SharpenStrength =
       (postfxEnabled && bd_sharpen_enable) ? bd_sharpen_strength : 0.0f;
-  mPresentShader->Uniforms->RetroPixelEnable =
-      (postfxEnabled && bd_retro_pixel_enable) ? 1 : 0;
-  mPresentShader->Uniforms->RetroPixelScale = bd_retro_pixel_scale;
+  mPresentShader->Uniforms->RetroPixelScale =
+      (postfxEnabled && bd_retro_pixel_enable) ? bd_retro_pixel_scale : 1.0f;
   mPresentShader->Uniforms->ColorgradeMode =
       (postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_mode : 0;
   mPresentShader->Uniforms->ColorgradeStrength =
       (postfxEnabled) ? bd_colorgrade_strength : 0.0f;
   mPresentShader->Uniforms->ColorgradeLut =
       (postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_lut : 0;
-  mPresentShader->Uniforms->VhsEnable =
-      (postfxEnabled && bd_vhs_enable) ? 1 : 0;
   mPresentShader->Uniforms->VhsStrength =
       (postfxEnabled && bd_vhs_enable) ? bd_vhs_strength : 0.0f;
   mPresentShader->Uniforms->VhsScanline =
@@ -200,6 +189,52 @@ void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma) {
       (postfxEnabled && bd_vhs_enable) ? bd_vhs_evil : 0.0f;
   mPresentShader->Uniforms->VhsPanicEnable =
       (postfxEnabled && bd_vhs_enable && bd_vhs_panic_enable) ? 1 : 0;
+  mPresentShader->Uniforms->GradeEnable =
+      (postfxEnabled && bd_grade_enable) ? 1 : 0;
+  mPresentShader->Uniforms->VibranceStrength =
+      (postfxEnabled && bd_vibrance_enable) ? bd_vibrance_strength : 0.0f;
+  mPresentShader->Uniforms->WhiteBalanceTemperature =
+      (postfxEnabled && bd_whitebalance_enable) ? bd_whitebalance_temperature
+                                                : 0.0f;
+  mPresentShader->Uniforms->WhiteBalanceTint =
+      (postfxEnabled && bd_whitebalance_enable) ? bd_whitebalance_tint : 0.0f;
+  mPresentShader->Uniforms->HueShiftDegrees =
+      (postfxEnabled && bd_hueshift_enable) ? bd_hueshift_degrees : 0.0f;
+  mPresentShader->Uniforms->PosterizeLevels =
+      (postfxEnabled && bd_posterize_enable) ? bd_posterize_levels : 0.0f;
+  mPresentShader->Uniforms->EdgeGlowStrength =
+      (postfxEnabled && bd_edgeglow_enable) ? bd_edgeglow_strength : 0.0f;
+  mPresentShader->Uniforms->EdgeGlowThreshold =
+      (postfxEnabled && bd_edgeglow_enable) ? bd_edgeglow_threshold : 0.0f;
+  mPresentShader->Uniforms->GodRaysStrength =
+      (postfxEnabled && bd_godrays_enable) ? bd_godrays_strength : 0.0f;
+  mPresentShader->Uniforms->GodRaysLength = bd_godrays_length;
+  mPresentShader->Uniforms->GodRaysThreshold = bd_godrays_threshold;
+  mPresentShader->Uniforms->LensFlareStrength =
+      (postfxEnabled && bd_lensflare_enable) ? bd_lensflare_strength : 0.0f;
+  mPresentShader->Uniforms->ClarityStrength =
+      (postfxEnabled && bd_clarity_enable) ? bd_clarity_strength : 0.0f;
+  if (postfxEnabled && bd_grade_enable) {
+    mPresentShader->Uniforms->GradeLiftR = bd_grade_lift_r;
+    mPresentShader->Uniforms->GradeLiftG = bd_grade_lift_g;
+    mPresentShader->Uniforms->GradeLiftB = bd_grade_lift_b;
+    mPresentShader->Uniforms->GradeGammaR = bd_grade_gamma_r;
+    mPresentShader->Uniforms->GradeGammaG = bd_grade_gamma_g;
+    mPresentShader->Uniforms->GradeGammaB = bd_grade_gamma_b;
+    mPresentShader->Uniforms->GradeGainR = bd_grade_gain_r;
+    mPresentShader->Uniforms->GradeGainG = bd_grade_gain_g;
+    mPresentShader->Uniforms->GradeGainB = bd_grade_gain_b;
+  } else {
+    mPresentShader->Uniforms->GradeLiftR = 0.0f;
+    mPresentShader->Uniforms->GradeLiftG = 0.0f;
+    mPresentShader->Uniforms->GradeLiftB = 0.0f;
+    mPresentShader->Uniforms->GradeGammaR = 1.0f;
+    mPresentShader->Uniforms->GradeGammaG = 1.0f;
+    mPresentShader->Uniforms->GradeGammaB = 1.0f;
+    mPresentShader->Uniforms->GradeGainR = 1.0f;
+    mPresentShader->Uniforms->GradeGainG = 1.0f;
+    mPresentShader->Uniforms->GradeGainB = 1.0f;
+  }
   if (vid_hdr_active && framebuffer->IsFullscreen()) {
     // Full screen exclusive mode treats a rgba16f frame buffer as linear.
     // It probably will eventually in desktop mode too, but the DWM doesn't seem
@@ -232,6 +267,11 @@ void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma) {
       break;
     case UniformType::Vec2:
       glUniform2fv(
+          loc, 1,
+          ((GLfloat *)(((char *)(&mPresentShader->Uniforms)) + desc.Offset)));
+      break;
+    case UniformType::Vec3:
+      glUniform3fv(
           loc, 1,
           ((GLfloat *)(((char *)(&mPresentShader->Uniforms)) + desc.Offset)));
       break;

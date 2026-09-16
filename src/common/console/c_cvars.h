@@ -296,6 +296,9 @@ void C_ReadCVars (TArrayView<uint8_t>& demo_p);
 
 void C_InstallHandlers(ConsoleCallbacks* cb);
 
+// True while archived/default cvar callbacks are being replayed at startup.
+bool C_InInitialCallbackReplay();
+
 // Backup demo cvars. Called before a demo starts playing to save all
 // cvars the demo might change.
 void C_BackupCVars (void);

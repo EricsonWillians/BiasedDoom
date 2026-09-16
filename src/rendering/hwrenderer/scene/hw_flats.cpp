@@ -42,6 +42,7 @@
 #include "hw_lighting.h"
 #include "hw_material.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 #include "flatvertices.h"
 #include "hw_lightbuffer.h"
 #include "hw_drawstructs.h"
@@ -189,6 +190,7 @@ void HWFlat::SetupLights(HWDrawInfo *di, FDynLightData &lightdata, int portalgro
 		}
 	}
 
+	lightdata.LimitPerSurface(bd_dynlight_max_per_surface);
 	dynlightindex = screen->mLights->UploadLights(lightdata);
 }
 
@@ -320,7 +322,11 @@ void HWFlat::DrawFlat(HWDrawInfo *di, FRenderState &state, bool translucent)
 
 	int rel = getExtraLight();
 
-	state.SetNormal(plane.plane.Normal().X, plane.plane.Normal().Z, plane.plane.Normal().Y);
+	bool allowSectorBleed = !bd_sectorlight_bleed || (!stack && !hacktype && !(renderflags & SSRF_RENDER3DPLANES));
+	if (allowSectorBleed)
+		state.SetNormal(plane.plane.Normal().X, plane.plane.Normal().Z, plane.plane.Normal().Y);
+	else
+		state.SetNormal(0.0f, 0.0f, 0.0f);
 	double zshift = (plane.plane.Normal().Z > 0.0 ? 0.1f : -0.1f); // The HWPlaneMirrorPortal::DrawPortalStencil() z-fights with flats
 
 	SetColor(state, di->Level, di->lightmode, lightlevel, rel, di->isFullbrightScene(), Colormap, alpha);

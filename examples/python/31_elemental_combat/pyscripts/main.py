@@ -14,15 +14,24 @@ Soulsphere prop) grants a stoneskin ward whose effect is a scripted
 ``actor_before_damage`` cancel — and drinks the light from its alcove
 (a sector blackout) as its price. A slow fluorescent corpse-light
 flickers over the horde pen. The ImGui HUD shows the three sigils, the
-bearer's afflictions, the souls bar, and the kill/loot litany.
+bearer's afflictions, the souls bar, and the kill/loot litany. A
+persistent control strip (display-list text, immune to the HUD panel's
+close button) always shows the live focus, the real key bindings, and
+the horde count; weapon hits float throttled affinity labels over their
+victims; the three elites wear their weakness over their heads. Break
+all nine arena monsters to win the rite: a center-screen call, a quest
+toast, and a one-time souls bonus.
 
 Module map (all four are listed in the PYTHON manifest):
 
 - ``content.py`` — pure data and factories: elements, elites, loot
-  tables, relic names, prose. No engine calls at import.
+  tables, relic names, horde/feedback/strip constants, prose. No engine
+  calls at import.
 - ``systems.py`` — behavior: element registry, affinity tables, loot
   rules, the focus/burst rites, damage filters, elite afflictions and
-  death rattles, the Warding Idol, sector-index light programs.
+  death rattles, the Warding Idol, sector-index light programs, and the
+  combat feedback layer (control strip, per-hit affinity labels, elite
+  weakness labels, the "break the horde" win condition).
 - ``ui.py`` — the bd_horror-themed ImGui combat HUD. Inert headless.
 - ``main.py`` (this file) — bootstrap, world setup, and the autotest
   driver.
@@ -35,11 +44,16 @@ refresh/stack/independent semantics with tick counts, the idol's
 stoneskin ward cancelling damage *and* drinking the light (blackout
 active on the shrine sector, omen toast in the history ring),
 elite-applied burning and rime-chill (plus the negative case), loot
-drops with exact killer attribution, elite death rattles, then a
+drops with exact killer attribution, elite death rattles, the elite
+weakness labels, the control strip's shape, and the per-hit feedback
+throttle, then a
 checkpoint round-trip asserting the loot RNG stream rewinds exactly, a
 TID-tracked status timer survives, the player's affinity is re-applied,
 the elite marker is re-applied, and the Rime-Bound's legendary relic
-drops with its omen toast. Because the fluorescent horde-pen light draws
+drops with its omen toast. The win path closes the run: the surviving
+horde dies by TID and the test asserts the completion latch, the quest
+toast, the one-time souls bonus, and the strip's victory state. Because
+the fluorescent horde-pen light draws
 from the script RNG on every step and its post-load task phase cannot
 reproduce the saved stream position (probe-verified), the autotest
 quiesces it just before the save. The run ends via ``-scripttest``'s
@@ -169,9 +183,15 @@ def on_map(event):
             ref = bd.actor_ref(elite["tid"])
             if ref is not None:
                 _bind_elite(ref, elite)
+        # World-anchored labels vanish on map unload, so the strip and
+        # the weakness labels re-arm on the rebind (horde progress is
+        # module state: deaths counted before the save stay counted).
+        bd.schedule(systems.arm_arena_markers, delay=1)
         if AUTOTEST:
             bd.schedule(autotest_post_load, delay=10)
             bd.schedule(autotest_post_load_rites, delay=20)
+            bd.schedule(autotest_break_horde, delay=30)
+            bd.schedule(autotest_victory, delay=45)
         return
 
     pawn = player_pawn()
@@ -219,6 +239,12 @@ def on_map(event):
         int(horde.index) if horde is not None else None
     systems.arm_horde_light()
 
+    # The feedback layer: control strip, weakness labels, horde tracking.
+    # Armed one tic in so the display-list draws register in-level, not
+    # during the load itself.
+    systems.reset_arena_state()
+    bd.schedule(systems.arm_arena_markers, delay=1)
+
     if AUTOTEST:
         # Resolver dummies behind the player, harmless for determinism.
         for i, tid in enumerate(content.DUMMY_TIDS):
@@ -232,6 +258,7 @@ def on_map(event):
         bd.schedule(autotest_affinities, delay=20)
         bd.schedule(autotest_status_begin, delay=30)
         bd.schedule(autotest_horde_light, delay=35)
+        bd.schedule(autotest_markers, delay=40)
         bd.schedule(autotest_status_refresh, delay=50)
         bd.schedule(autotest_status_results, delay=70)
         bd.schedule(autotest_stoneskin, delay=80)
@@ -385,6 +412,60 @@ def autotest_horde_light():
         index = systems.horde_sector_index
         bd.assert_true(bound[0].originals.get(index) == 160,
                        "horde pen original light captured (160)")
+
+
+def autotest_markers():
+    """The feedback layer: elite weakness labels, the control strip's
+    shape, and the per-hit affinity feedback throttle."""
+    # Weakness labels: one per live elite, text from the affix marker.
+    expected = {elite["tid"]: content.weakness_label(elite["name"],
+                                                     elite["affix"])
+                for elite in content.ELITES}
+    bd.assert_true(systems.weakness_labels == expected,
+                   f"weakness labels: one per elite with its affix "
+                   f"weakness ({systems.weakness_labels})")
+
+    # Control strip: live key names, the focus, and horde progress.
+    text = systems.strip_state.get("text") or ""
+    focus_key = systems.bound_key("cycle_element", "F")
+    burst_key = systems.bound_key("elemental_burst", "G")
+    bd.assert_true(f"[{focus_key}] focus: PYRE" in text
+                   and f"[{burst_key}] burst" in text
+                   and f"Horde: 0/{len(content.HORDE_TIDS)} broken" in text,
+                   f"control strip: keys, focus, and horde progress "
+                   f"({text!r})")
+
+    # Per-hit feedback through the real filter with synthetic
+    # actor_before_damage events: weakness labels, the per-monster
+    # throttle, immunity, and resistance.
+    imp = bd.actor_ref(content.HORDE_IMP_TIDS[0])
+    pinky = bd.actor_ref(content.PINKY_TIDS[0])
+    dummy = bd.actor_ref(content.DUMMY_TIDS[0])
+    bd.assert_true(imp is not None and pinky is not None
+                   and dummy is not None,
+                   "feedback: horde targets available")
+    if imp is None or pinky is None or dummy is None:
+        return
+
+    def _hit(ref, damage=10):
+        event = {"actor_ref": ref, "damage": damage,
+                 "damage_type": "bullet", "attacker_player_index": 0}
+        systems.elemental_focus_filter(event)
+        return event
+
+    systems.focus[0] = "pyre"
+    event = _hit(imp)   # pyre-weak: labels (and retypes the event)
+    bd.assert_true(event["damage_type"] == "pyre" and event["damage"] == 20,
+                   "feedback: the filter retyped and doubled the hit")
+    _hit(imp)   # same tic: throttled away
+    systems.focus[0] = "rot"
+    _hit(pinky)  # rot-immune: IMMUNE
+    bd_rpg.set_affinity(dummy, "rot", 0.5)  # per-actor resistance
+    _hit(dummy)  # resistant: x1/2
+    systems.focus[0] = content.ELEMENTS[0]
+    bd.assert_true(systems.feedback_log == ["x2 PYRE", "IMMUNE", "x1/2 ROT"],
+                   f"feedback: weakness, throttle, immunity, and "
+                   f"resistance labels ({systems.feedback_log})")
 
 
 def autotest_status_refresh():
@@ -630,6 +711,45 @@ def autotest_post_load_rites():
     bd.assert_true(bd_rpg.kill_xp(0) == 40,
                    "kill XP: both credited elite kills counted "
                    "(20 + 20 across the checkpoint)")
+
+
+def autotest_break_horde():
+    """The win path: finish the horde by TID. The two thralls died
+    pre-save and the Rime-Bound fell post-load, so the four imps and two
+    pinkies remain; source-less kills count toward the horde but credit
+    no table XP (exact attribution, as in autotest_loot_assert), leaving
+    the victory bonus as the only XP delta to assert."""
+    for tid in content.HORDE_IMP_TIDS + content.PINKY_TIDS:
+        ref = bd.actor_ref(tid)
+        if ref is not None and ref.valid and ref.alive:
+            ref.damage(1000)  # no source
+
+
+def autotest_victory():
+    """The horde broken: completion latch, quest toast, one-time souls
+    bonus, and the strip's victory state."""
+    from bd_horror import toasts
+    total = len(content.HORDE_TIDS)
+    bd.assert_true(len(systems.horde_dead) == total,
+                   f"horde: all {total} arena monsters counted dead by "
+                   f"TID ({sorted(systems.horde_dead)})")
+    bd.assert_true(systems.horde_broken[0],
+                   "horde: the 'break the horde' completion fired")
+    bd.assert_true(bd_rpg.kill_xp(0) == 40 + content.HORDE_BONUS_XP,
+                   "horde: the one-time victory bonus landed exactly "
+                   "once (40 table XP + the bonus)")
+    bd.assert_true(any(t["kind"] == "quest"
+                       and t["text"] == content.TOAST_HORDE_BROKEN
+                       for t in toasts.history),
+                   "horde: victory raised the quest toast")
+    text = systems.strip_state.get("text") or ""
+    bd.assert_true(content.STRIP_VICTORY in text,
+                   f"control strip: victory state showing ({text!r})")
+    # The latch holds: re-killing a counted TID changes nothing.
+    systems.on_horde_death({"actor": {"tid": content.ELITE_TIDS[0],
+                                      "class_name": content.ELITE_CLASS}})
+    bd.assert_true(bd_rpg.kill_xp(0) == 40 + content.HORDE_BONUS_XP,
+                   "horde: the bonus cannot fire twice")
     bd.log("PYRE & RIME AUTOTEST assertions complete")
 
 
