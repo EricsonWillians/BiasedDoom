@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.13] - 2026-09-17
+
 ### Added
 
 - **Live render-backend switching**: changing `vid_preferbackend`
