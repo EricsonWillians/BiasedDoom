@@ -50,6 +50,11 @@
 #ifdef BIASEDDOOM_PYTHON
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#if PY_VERSION_HEX < 0x030D0000
+// CPython 3.13 removed frameobject.h and moved PyFrame_Check into Python.h;
+// older supported versions (3.10-3.12) only declare it here.
+#include <frameobject.h>
+#endif
 #ifdef _PyCFunction_CAST
 #define BD_PY_KEYWORD_FUNCTION(function) _PyCFunction_CAST(function)
 #else
