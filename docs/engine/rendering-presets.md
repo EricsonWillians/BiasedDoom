@@ -1,8 +1,9 @@
 # Rendering Presets, Bloom, and Sector Light Bleed
 
 This guide covers the BiasedDoom presentation controls added around the
-4.15.x graphics stack: preset browsers, bloom tuning, sector-light blending,
-and live renderer backend switching.
+4.15.x graphics stack: preset browsers, the graphics/lighting/fog preset
+layers and how they compose, bloom tuning, sector-light blending, and live
+renderer backend switching.
 
 ## Menus
 
@@ -14,15 +15,238 @@ Each preset family keeps its traditional cycling selector, plus a searchable
 browser:
 
 - **Browse Graphics Presets** — 64 complete image/renderer looks.
-- **Browse Lighting Presets** — 38 dynamic-light/material styles.
-- **Browse Fog Presets** — 16 atmosphere/fog treatments.
+- **Browse Lighting Presets** — 39 dynamic-light/material styles.
+- **Browse Fog Presets** — 17 atmosphere/fog treatments.
 
-The browser marks the active preset as `Current`. Selecting a preset applies it
-without resetting the other families. Changing an individual feature afterward
-marks only that family as `Custom`; the other preset selectors remain intact.
+The browser marks the active preset as `Current`.
+
+## How the families compose
+
+The three families are layers with a single owner each:
+
+- **Graphics presets** own the image pipeline: postfx filters, bloom, CRT/VHS,
+  colorgrade, tonemap, atmosphere, exposure, and quality toggles (SSAO, FXAA,
+  shadow maps, dynamic-light culling).
+- **Lighting presets** own every dynamic-light/material CVar
+  (`bd_dynlight_*`, `bd_light_*`, `bd_gi_*`, `bd_rimlight_*`, `bd_aerial_*`,
+  `bd_ambient_gradient_*`, `bd_specular_*`).
+- **Fog presets** own every fog/gradient CVar (`bd_fog_*`, `bd_sector_fog_scale`).
+
+Selecting a graphics preset **auto-pairs** its matching lighting and fog
+presets by moving the `bd_lighting_preset` / `bd_fog_preset` selectors
+themselves, so the menus always show which look is actually active.
+
+**Explicit choice always wins.** A lighting or fog preset you selected
+yourself is never overridden by graphics presets — switching graphics presets
+then only changes the image pipeline around your chosen lighting/fog.
+Selections made through auto-pairing, on the other hand, are re-paired when
+the next graphics preset is chosen. Changing an individual feature CVar marks
+only its own family as `Custom`; the other selectors remain intact. Set
+`bd_preset_locked` to `true` to keep hand-tuned feature tweaks from dropping
+a selector to `Custom`.
 
 The same lighting and fog controls remain available from the classic Lighting
 menu and the `Postprocess -> Atmosphere / Fog` submenu.
+
+## Graphics preset reference
+
+Every graphics preset deliberately picks a **tonemap** and **exposure** so the
+differences are clear and noticeable: ACES for modern/HDR looks,
+Uncharted2/Lottes for clean or filmic, Reinhard for soft/natural,
+None/Palette for retro/performance, and the Gothic / Gothic Noir / Silent
+Hill / Graveyard / Moonlit / Bleach Bypass set for horror and stylized looks.
+Exposure (`gl_exposure_scale`, default 1.3) is listed when a preset overrides
+it; lower values darken horror looks, higher values brighten clean looks.
+
+Each entry lists its auto-paired **lighting → fog** presets. Presets marked
+*(extends N)* are layered: they inherit another graphics preset's pipeline and
+override a few settings, so their look tracks the base preset.
+
+### Modern & clean
+
+| # | Preset | Tonemap | Lighting → Fog | Look |
+|---|--------|---------|----------------|------|
+| 2 | Modern Crisp | ACES (exp 1.20) | Modern Pretty → Disabled | The default "modern game" look: bloom, gentle vignette, sharpen. |
+| 19 | Clean Visibility *(extends 2)* | Uncharted2 (exp 1.25) | Bright Playable → Disabled | Readability-first: weak bloom, clarity filter, higher exposure floor. |
+| 38 | Competitive Clarity *(extends 2)* | Uncharted2 (exp 1.20) | Bright Playable → Disabled | Esports-style: no bloom, FXAA, sharpen + clarity. |
+| 43 | Clarity Max | Uncharted2 (exp 1.20) | Crisp Tactical → Disabled | Maximum sharpen + clarity, no bloom, no atmosphere. |
+| 57 | Clean Lens *(extends 38)* | ACES (exp 1.20) | Modern Pretty → Disabled | Competitive clarity with a filmic ACES finish. |
+| 21 | Cool Clarity *(extends 12)* | ACES (exp 1.10) | Crisp Tactical → Natural Haze | Cool, crisp daylight with a light haze. |
+| 31 | Cinematic Ultra | ACES (exp 1.25) | Warm Cinematic → Cinematic Layers | Full cinematic stack: SSAO, shadow maps, god rays, lens flare, grade. |
+| 39 | HDR Showcase | ACES (exp 1.35) | PBR Showcase → Natural Haze | Max bloom energy + SSAO/shadow maps; built to show off PBR/glTF materials. |
+| 40 | Maxed Out | ACES (exp 1.25) | Modern Pretty → Cinematic Layers | Everything on: SSAO high, FXAA, shadow maps, god rays, lens flare, clarity. |
+
+### Performance
+
+| # | Preset | Tonemap | Lighting → Fog | Look |
+|---|--------|---------|----------------|------|
+| 1 | Vanilla+ | None | Classic Balanced → Disabled | Classic Doom image with postfx available at low quality. |
+| 6 | Low-End Performance | None | Classic Balanced → Disabled | Postfx off entirely; the baseline for weak GPUs. |
+| 36 | Ultra Lightweight | None | Classic Balanced → Disabled | Aggressive dynamic-light culling (8/surface, 1500 range, 256 shadow lights). |
+| 37 | Balanced Performance | Reinhard | Classic Balanced → Map Enhanced | FXAA + light vibrance, culled lights, map-authored fog only. |
+| 58 | Low Glow *(extends 6)* | Reinhard | Soft Natural → Map Enhanced | Cheap gentle bloom over the low-end base. |
+
+### Retro & CRT
+
+| # | Preset | Tonemap | Lighting → Fog | Look |
+|---|--------|---------|----------------|------|
+| 3 | CRT Arcade | Bleach Bypass | Arcade Bright → Disabled | Scanline CRT, light grain and chromatic fringe, neon grade. |
+| 23 | Readable CRT *(extends 3)* | Bleach Bypass | Arcade Bright → Disabled | The CRT look tuned down for actual gameplay. |
+| 52 | Soft Retro *(extends 3)* | None | Classic Balanced → Disabled | Aperture-grille CRT with soft, wide bloom. |
+| 33 | Retro Poster | Palette | Arcade Bright → Disabled | Pixelate ×2 + posterize + warm gain: a printed-poster look. |
+| 51 | Sharp Retro *(extends 1)* | Palette | Arcade Bright → Disabled | Pixelate ×2 with maximum sharpen and FXAA. |
+| 34 | Cel Comic | Uncharted2 | Studio Soft → Disabled | Posterize 8 + strong edge glow: comic-book ink. |
+| 54 | Cel Shadows *(extends 34)* | Uncharted2 | Rim Drama → Disabled | Cel look with dramatic rim lighting and harder posterize. |
+| 64 | Arcade Neon *(extends 32)* | ACES | Neon Glow → Disabled | Neon vibrance quantized by posterize 5. |
+
+### Horror & found footage
+
+| # | Preset | Tonemap | Lighting → Fog | Look |
+|---|--------|---------|----------------|------|
+| 7 | Silent Hill Fog | Silent Hill (exp 0.95) | Horror Contrast → Dense Horror | The signature town fog: Fogbound atmosphere at high intensity. |
+| 4 | VHS Horror | Silent Hill (exp 1.00) | Horror Contrast → Cinematic Layers | Camcorder tape over a horror base: VHS artifacts + Silent Hill grade. |
+| 24 | Action Horror *(extends 4)* | ACES (exp 1.05) | Horror Contrast → Cinematic Layers | Same tape, but brighter and punchier so combat stays readable. |
+| 25 | VHS Found Footage *(extends 4)* | Silent Hill (exp 1.00) | Flickering Candlelight → Cinematic Layers | Heavier grain, subtle tracking, candle-lit scenes. |
+| 26 | VHS Tape Rot *(extends 4)* | Silent Hill (exp 1.00) | Horror Contrast → Cinematic Layers | Degraded tape: maximum jitter, tracking errors, ghosting. |
+| 27 | VHS Night Vision *(extends 4)* | Gothic (exp 1.30) | Ectoplasm → Blackout | Green-lit, brightened night-vision tape. |
+| 28 | Possessed VHS *(extends 4)* | Gothic Noir (exp 1.00) | Void Dread → Blackout | The tape fights back: high "evil" distortion and darkness. |
+| 16 | Analog Horror | Silent Hill (exp 0.90) | Analog Fluorescent → Analog Sepia | Aperture-grille CRT, pixelation, buzzing fluorescent light, sepia murk. |
+| 22 | Dense Playable Fog *(extends 7)* | Reinhard (exp 0.95) | Soft Natural → Dense Horror | Silent-Hill density with values tuned to stay playable. |
+| 8 | Ashen Graveyard | Graveyard (exp 0.95) | Void Dread → Cinematic Layers | Desaturated ash and cold dread. |
+| 10 | Moonlit Noir | Moonlit (exp 0.90) | Moonlit Expanse → Blue Hour | Blue-night detective noir. |
+| 53 | Noir Punch *(extends 10)* | Gothic Noir (exp 0.90) | Neon Noir → Blue Hour | Noir with hard contrast grade and neon accents. |
+| 29 | Blood Moon Evil *(extends 11)* | Graveyard (exp 1.20) | Ruby Corridor → Crimson Eclipse | Red-lit ritual horror under a crimson sky. |
+| 30 | Void Ritual *(extends 10)* | Gothic Noir (exp 0.85) | Void Dread → Blackout | Near-black occult darkness. |
+| 49 | Dark Ambient *(extends 18)* | Graveyard (exp 0.80) | Deep Cavern → Cinematic Layers | The darkest ambient look that still reads. |
+| 18 | Low Light Realism | Reinhard (exp 0.85) | Low Light Realism → Map Enhanced | Slow-adapting low exposure; respects map lighting. |
+
+### Stylized & atmospheric
+
+| # | Preset | Tonemap | Lighting → Fog | Look |
+|---|--------|---------|----------------|------|
+| 5 | Industrial Hell | Lottes Filmic (exp 1.15) | Hellfire Glow → Directional Dusk | Sodium-vapor atmosphere and rust grade over hot industrial light. |
+| 9 | Toxic Reactor | Lottes Filmic (exp 1.15) | Ectoplasm → Toxic Haze | Radioactive green with heavy bloom. |
+| 11 | Inferno Bloom | Lottes Filmic (exp 1.20) | Hellfire Glow → Dust Storm | Burning, high-energy bloom. |
+| 12 | Frozen Wasteland | Bleach Bypass (exp 1.10) | Arctic Facility → Polar Whiteout | Cold, bleached, sharp. |
+| 13 | Sodium Streets | Lottes Filmic (exp 1.05) | Amber Ember → Directional Dusk | Amber street-lamp glow against a bleak blue sky. |
+| 14 | Cyberpunk Rain | ACES (exp 1.10) | Neon Noir → Blue Hour | Strong neon bloom, lens flares, otherworld atmosphere, rain-film shimmer. |
+| 62 | Violet Dusk *(extends 14)* | Moonlit (exp 1.10) | Aurora Veil → Blue Hour | Cyberpunk shifted violet. |
+| 20 | Warm Cinematic *(extends 13)* | Lottes Filmic (exp 1.05) | Warm Cinematic → Directional Dusk | Golden, filmic warmth. |
+| 60 | Golden Film *(extends 42)* | Lottes Filmic | Golden Hour → Directional Dusk | Warm film stock with gentle lens flare. |
+| 42 | Analog Cinema | Lottes Filmic | Warm Cinematic → Natural Haze | 35mm grain, lens flare, SSAO + shadow maps. |
+| 35 | Sepia Archive | Reinhard | Dusty Archive → Natural Haze | Warm white balance, heavy grain, deep vignette: an old photograph. |
+| 48 | Muted Pastels *(extends 35)* | Reinhard | Soft Natural → Morning Mist | The archive look softened into pastel tones. |
+| 41 | Divine Radiance | Lottes Filmic (exp 1.30) | Cathedral Bloom → Cathedral Haze | Strong god rays through luminous cathedral haze. |
+| 56 | Overexposed *(extends 41)* | Reinhard (exp 1.80) | Surgical White → Disabled | Deliberately blown-out, high-key brightness. |
+| 44 | Dreamlike | Moonlit (exp 1.10) | Soft Dawn → Morning Mist | Wide soft bloom and god rays; a waking dream. |
+| 55 | Watercolor Dream *(extends 44)* | Moonlit (exp 1.10) | Soft Dawn → Morning Mist | Dream-decay grade, no sharpen: painted edges. |
+| 63 | Soft Focus *(extends 44)* | Reinhard (exp 1.10) | Soft Natural → Morning Mist | Gentle bloom knee, no sharpen: a soft lens. |
+| 17 | Dream Decay | Moonlit (exp 1.00) | Aurora Veil → Morning Mist | A decaying dream: VHS shimmer, god rays, cyberpunk atmosphere. |
+| 59 | Spectral *(extends 30)* | Moonlit (exp 0.95) | Ectoplasm → Cathedral Haze | Ghostly: hue-shifted edge glow over the void-ritual base. |
+| 32 | Neon Vibrance | ACES | Neon Glow → Disabled | Maximum vibrance and chromatic energy. |
+| 46 | Neon Bloom *(extends 32)* | ACES | Neon Glow → Disabled | The neon look with bloom pushed to the playable limit. |
+| 45 | Soft Bloom *(extends 2)* | Reinhard (exp 1.20) | Soft Natural → Natural Haze | Low-threshold, wide, soft bloom. |
+| 47 | Subtle Film *(extends 2)* | Lottes Filmic (exp 1.20) | Soft Natural → Map Enhanced | A light grain and gentle bloom over modern crisp. |
+| 50 | Bright Ambient *(extends 19)* | Uncharted2 (exp 1.25) | Overcast Day → Natural Haze | High ambient floor: everything readable, nothing crushed. |
+| 61 | Cold Facility *(extends 12)* | Bleach Bypass (exp 1.10) | Arctic Facility → Natural Haze | Cold white balance and clarity: institutional sci-fi. |
+| 15 | Bleach Bunker | Bleach Bypass (exp 1.35) | Cold Industrial → Natural Haze | High-key, desaturated concrete interiors. |
+
+## Lighting preset reference
+
+Lighting presets shape dynamic lights and materials: falloff model (Linear /
+Inverse-square / Power), intensity, saturation, color temperature, ambient
+floor, specular and emissive response, GI-style ambient fill, rim light,
+ambient gradients, flicker, and aerial perspective. The character column
+summarizes the intent.
+
+| # | Preset | Character |
+|---|--------|-----------|
+| 1 | Classic Balanced | Linear falloff, neutral everything: the legacy Doom light behavior. |
+| 2 | Modern Pretty | Inverse-square, slight warmth, gentle GI fill and wrap: a safe modern upgrade. |
+| 3 | Warm Cinematic | Power falloff, warm temperature, stronger specular and emissive response. |
+| 4 | Horror Contrast | Dim, desaturated, slightly cold, steep power falloff: pools of light in darkness. |
+| 5 | Neon Glow | Highly saturated, strong emissive boost, cool tint: signs and energy weapons pop. |
+| 6 | PBR Showcase | Maximum specular scale and emissive boost for metallic-roughness materials. |
+| 7 | Bright Playable | Raised ambient floor and GI fill: visibility first, never crushed blacks. |
+| 8 | Soft Natural | Warm-neutral with very soft falloff: daylight interiors. |
+| 9 | Crisp Tactical | Tight, low-saturation lights with hard shadows. |
+| 10 | Low Light Realism | Very dim, cold, minimal fill: flashlight territory. |
+| 11 | Hellfire Glow | Hot temperature, burning specular and emissive response. |
+| 12 | Void Dread | Extremely dark and cold; almost no ambient. |
+| 13 | Studio Soft | Soft wrap and low contrast, like a photo studio. |
+| 14 | Overcast Day | Flat, cool, high ambient floor, low contrast. |
+| 15 | Golden Hour | Warm low sun: strong specular, light rim, warm gradient. |
+| 16 | Cold Industrial | Very cold, hard specular, high contrast: fluorescents on concrete. |
+| 17 | Pitch Black | Zero ambient floor with faint rim: darkness as a mechanic. |
+| 18 | Arcade Bright | Bright, saturated, soft: coin-op energy. |
+| 19 | Rim Drama | Strong rim light and contrast for silhouette drama. |
+| 20 | Gradient Ambience | Cool ambient gradient washes the scene. |
+| 21 | Flickering Candlelight | Warm, heavily flickering point lights. |
+| 22 | Aerial Vista | Long-range aerial perspective with a cool gradient. |
+| 23 | Candlelit Crypt | Warm crypt light: flicker, rim, short-range aerial depth. |
+| 24 | Moonlit Expanse | Cold blue moonlight with wide aerial perspective. |
+| 25 | Emergency Strobe | Aggressive flicker with red specular tint. |
+| 26 | Aurora Veil | Saturated teal-green gradients and glow. |
+| 27 | Dusty Archive | Warm, dusty amber with soft aerial depth. |
+| 28 | Ruby Corridor | Saturated red light with red-tinted specular and rim. |
+| 29 | Surgical White | Cold, bright, desaturated: operating-room clarity. |
+| 30 | Ectoplasm | Heavily saturated green glow with matching gradients. |
+| 31 | Storm Front | Cold, flickering storm light with rain-distance aerial fade. |
+| 32 | Amber Ember | Very warm ember light with gentle flicker. |
+| 33 | Deep Cavern | Near-zero ambient, cold, high contrast: cave darkness. |
+| 34 | Cathedral Bloom | Warm luminous volume: strong GI, golden gradient, long aerial. |
+| 35 | Neon Noir | Cold, ultra-saturated violet noir with hard rim. |
+| 36 | Desert Heat | The hottest temperature, high floor, long heat-haze aerial. |
+| 37 | Arctic Facility | The coldest temperature, desaturated, sharp specular. |
+| 38 | Soft Dawn | Warm-soft rose dawn with gentle aerial fade. |
+| 39 | Analog Fluorescent | Cold, desaturated, buzzing flicker: found-footage institutions. |
+
+## Fog preset reference
+
+Fog presets own the depth-cueing layer: global Silent-Hill-style fog
+(`bd_fog_mode 1`) or sector-boost mode (`2`) that only enhances map-authored
+fog, plus density, color policy, sky blending, thick-fog distance walls,
+height falloff, turbulence, and directional gradients.
+
+| # | Preset | Character |
+|---|--------|-----------|
+| 1 | Disabled | All fog enhancements off. |
+| 2 | Map Enhanced | Respects map-authored fog; only improves its integration. |
+| 3 | Natural Haze | Light, gameplay-friendly distance haze. |
+| 4 | Cinematic Layers | Moderate layered global fog for depth. |
+| 5 | Dense Horror | Thick greenish-grey horror fog with a hard gradient. |
+| 6 | Directional Dusk | Warm dusk haze with directional falloff. |
+| 7 | Morning Mist | Soft, cool white-blue mist. |
+| 8 | Toxic Haze | Green-yellow, thick mid-distance fog. |
+| 9 | Blackout | Near-field visibility behind an oppressive black wall. |
+| 10 | Green Valley | Soft vegetation haze. |
+| 11 | Blue Hour | Deep blue dusk falloff. |
+| 12 | Crimson Eclipse | Directional red-brown gloom. |
+| 13 | Underwater | Dense blue-green depth haze. |
+| 14 | Dust Storm | Warm, rolling, highly turbulent dust. |
+| 15 | Polar Whiteout | Bright, cold, low-contrast distance loss. |
+| 16 | Cathedral Haze | Luminous vertical shafts with gentle depth. |
+| 17 | Analog Sepia | Murky brown-black found-footage haze. |
+
+## Combining presets by hand
+
+Auto-pairings are starting points, not rules. Because explicit choices win,
+you can compose your own look:
+
+1. Pick a graphics preset for the image pipeline (tonemap, filters, exposure).
+2. Pick a lighting preset for the dynamic-light character.
+3. Pick a fog preset for depth cueing.
+
+The graphics preset will never override steps 2-3 afterward. Example recipes:
+
+- **Modern AAA**: graphics 31 (Cinematic Ultra), then lighting 6 (PBR
+  Showcase) and fog 3 (Natural Haze) for a brighter showcase.
+- **Survival horror**: graphics 7 (Silent Hill Fog), then lighting 17 (Pitch
+  Black) — the fog stays dense while darkness becomes the enemy.
+- **Boomer-shooter night patrol**: graphics 14 (Cyberpunk Rain), then fog 1
+  (Disabled) for crisp rooftops while keeping neon bloom.
+- **Hand-tuned looks**: enable `bd_preset_locked` before adjusting individual
+  sliders so your tweaks don't mark the family `Custom`.
 
 ## Bloom
 

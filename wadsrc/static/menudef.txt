@@ -111,6 +111,7 @@ OptionValue "BDLightingPresetModes"
 	36, "Desert Heat"
 	37, "Arctic Facility"
 	38, "Soft Dawn"
+	39, "Analog Fluorescent"
 }
 
 OptionValue "BDFogModes"
@@ -139,6 +140,7 @@ OptionValue "BDFogPresets"
 	14, "Dust Storm"
 	15, "Polar Whiteout"
 	16, "Cathedral Haze"
+	17, "Analog Sepia"
 }
 
 OptionValue "BDFogQualityModes"
