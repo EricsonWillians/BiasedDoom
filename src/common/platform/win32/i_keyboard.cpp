@@ -40,6 +40,7 @@
 
 #include "i_input.h"
 #include "d_eventbase.h"
+#include "c_bind.h"
 #include "i_mainwindow.h"
 
 
@@ -259,9 +260,10 @@ void FKeyboard::PostKeyEvent(int key, INTBOOL down, bool foreground)
 	// Generate the event, if appropriate.
 	if (down)
 	{
-		if (!foreground || GUICapture)
+		if (!foreground || (GUICapture && !C_IsScreenshotKey(key)))
 		{ // Do not generate key down events if we are in the background
-		  // or in "GUI Capture" mode.
+		  // or in "GUI Capture" mode. Keys bound to the screenshot command
+		  // are exempt so screenshots also work while a menu is open.
 			return;
 		}
 		ev.type = EV_KeyDown;

@@ -804,6 +804,14 @@ bool M_Responder (event_t *ev)
 				return true;
 			}
 		}
+		// Keys bound to the screenshot command must reach G_Responder even
+		// while a menu is open, otherwise pressing the screenshot key here
+		// is silently swallowed. (MENU_WaitKey keeps priority so the key
+		// can still be assigned in the controls menu.)
+		if (!keyup && ev->type == EV_KeyDown && menuactive != MENU_WaitKey && C_IsScreenshotKey(ev->data1))
+		{
+			return false;
+		}
 		return CurrentMenu->CallResponder(ev) || !keyup;
 	}
 	else if (MenuEnabled)

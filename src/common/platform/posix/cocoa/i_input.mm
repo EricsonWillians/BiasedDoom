@@ -38,6 +38,7 @@
 #include "c_console.h"
 #include "c_cvars.h"
 #include "c_dispatch.h"
+#include "c_bind.h"
 #include "d_eventbase.h"
 #include "c_buttons.h"
 #include "d_gui.h"
@@ -514,7 +515,24 @@ void ProcessKeyboardEvent(NSEvent* theEvent)
 
 	if (GUICapture)
 	{
-		ProcessKeyboardEventInMenu(theEvent);
+		// Keys bound to the screenshot command bypass GUI capture so the
+		// binding still fires while a menu is open.
+		const uint8_t dik = KEYCODE_TO_DIK[ keyCode ];
+		if (dik != 0 && C_IsScreenshotKey(dik))
+		{
+			if (!isARepeat)
+			{
+				event_t event = {};
+				event.type  = NSEventTypeKeyDown == [theEvent type] ? EV_KeyDown : EV_KeyUp;
+				event.data1 = dik;
+				event.data2 = KEYCODE_TO_ASCII[ keyCode ];
+				D_PostEvent(&event);
+			}
+		}
+		else
+		{
+			ProcessKeyboardEventInMenu(theEvent);
+		}
 	}
 	else if (!isARepeat)
 	{

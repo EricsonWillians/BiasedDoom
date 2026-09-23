@@ -461,10 +461,17 @@ TArray<uint8_t> VulkanRenderDevice::GetScreenshotBuffer(int &pitch, ESSType &col
 	box.top = 0;
 	box.width = w;
 	box.height = h;
+
+	// The screenshot present pass renders into the next pipeline image and
+	// advances its index. Save/restore the index so this frame's real present
+	// still reads the composed frame instead of presenting the screenshot's
+	// output image a second time (double gamma/atmosphere for one frame).
+	int savedPipelineImage = mPostprocess->GetCurrentPipelineImage();
 	mPostprocess->DrawPresentTexture(box, true, true);
 
 	TArray<uint8_t> ScreenshotBuffer(w * h * 3, true);
 	CopyScreenToBuffer(w, h, ScreenshotBuffer.Data());
+	mPostprocess->SetCurrentPipelineImage(savedPipelineImage);
 
 	pitch = w * 3;
 	color_type = SS_RGB;

@@ -1892,6 +1892,8 @@ void G_DoPlayerPop(int playernum)
 	players[playernum].DestroyPSprites();
 }
 
+EXTERN_CVAR(Bool, screenshot_quiet)
+
 void G_ScreenShot (const char *filename)
 {
 	if (gameaction == ga_nothing)
@@ -1899,6 +1901,12 @@ void G_ScreenShot (const char *filename)
 		shotfile = filename;
 		M_RequestScreenShot(shotfile.GetChars());
 		shotfile = "";
+	}
+	else if (!screenshot_quiet)
+	{
+		// Previously the request was dropped without any feedback, which
+		// looked exactly like a broken screenshot key.
+		Printf ("Screenshot not possible while the game is busy.\n");
 	}
 }
 
@@ -3266,7 +3274,9 @@ DEFINE_ACTION_FUNCTION(FLevelLocals, StartSlideshow)
 
 DEFINE_ACTION_FUNCTION(FLevelLocals, MakeScreenShot)
 {
-	if (enablescriptscreenshot)
+	// The headless driver has no frame to capture; skip instead of leaving
+	// a permanently pending request.
+	if (enablescriptscreenshot && !I_IsHeadless())
 	{
 		G_ScreenShot("");
 	}

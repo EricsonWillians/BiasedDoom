@@ -39,6 +39,7 @@ public:
 	void DrawPresentTexture(const IntRect &box, bool applyGamma, bool screenshot);
 
 	int GetCurrentPipelineImage() const { return mCurrentPipelineImage; }
+	void SetCurrentPipelineImage(int image) { mCurrentPipelineImage = image; }
 
 private:
 	void NextEye(int eyeCount);

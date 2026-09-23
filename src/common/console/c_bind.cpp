@@ -156,6 +156,15 @@ FKeyBindings Bindings;
 FKeyBindings DoubleBindings;
 FKeyBindings AutomapBindings;
 
+bool C_IsScreenshotKey(int key)
+{
+	if (key < 0 || key >= NUM_KEYS)
+		return false;
+	const char *bind = Bindings.GetBind(key);
+	return bind != nullptr && strncmp(bind, "screenshot", 10) == 0 &&
+		(bind[10] == '\0' || bind[10] == ' ');
+}
+
 static unsigned int DClickTime[NUM_KEYS];
 static FixedBitArray<NUM_KEYS> DClicked;
 

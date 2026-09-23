@@ -38,6 +38,7 @@
 #include <SDL2/SDL_events.h>
 
 #include "c_buttons.h"
+#include "c_bind.h"
 #include "c_console.h"
 #include "c_cvars.h"
 #include "d_gui.h"
@@ -459,6 +460,34 @@ void MessagePump (const SDL_Event &sev)
 		}
 		else
 		{
+			// Keys bound to the screenshot command bypass GUI capture and are
+			// delivered as normal game key events, so the binding still fires
+			// while a menu is open (menus translate and eat GUI key events).
+			if (!sev.key.repeat)
+			{
+				uint8_t dik = 0;
+				if (const uint8_t *mapped = KeySymToDIK.CheckKey (sev.key.keysym.sym))
+					dik = *mapped;
+				else if (const uint8_t *mapped = KeyScanToDIK.CheckKey (sev.key.keysym.scancode))
+					dik = *mapped;
+				if (dik != 0 && C_IsScreenshotKey (dik))
+				{
+					event_t shotev = {};
+					shotev.type = sev.type == SDL_KEYDOWN ? EV_KeyDown : EV_KeyUp;
+					shotev.data1 = dik;
+					if (sev.key.keysym.sym < 256)
+					{
+						shotev.data2 = sev.key.keysym.sym;
+					}
+					SDL_Keymod kmod = SDL_GetModState();
+					shotev.data3 = ((kmod & KMOD_SHIFT) ? GKM_SHIFT : 0) |
+						((kmod & KMOD_CTRL) ? GKM_CTRL : 0) |
+						((kmod & KMOD_ALT) ? GKM_ALT : 0);
+					D_PostEvent (&shotev);
+					break;
+				}
+			}
+
 			event.type = EV_GUI_Event;
 			event.subtype = sev.type == SDL_KEYDOWN ? EV_GUI_KeyDown : EV_GUI_KeyUp;
 			SDL_Keymod kmod = SDL_GetModState();

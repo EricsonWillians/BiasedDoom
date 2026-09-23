@@ -614,6 +614,14 @@ void M_ScreenShot (const char *filename)
 	{
 		autoname = filename;
 		DefaultExtension (autoname, writepcx ? ".pcx" : ".png");
+		// An explicit destination may point into a directory that does not
+		// exist yet; create it instead of failing with "Could not open".
+		ptrdiff_t slash = autoname.LastIndexOfAny(":/\\");
+		if (slash > 0)
+		{
+			FString dir = autoname.Left(slash + 1);
+			CreatePath(dir.GetChars());
+		}
 	}
 
 	// save the screenshot

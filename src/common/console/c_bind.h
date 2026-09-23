@@ -91,6 +91,11 @@ extern FKeyBindings AutomapBindings;
 
 bool C_DoKey (event_t *ev, FKeyBindings *binds, FKeyBindings *doublebinds);
 
+// Returns true if the key is bound to the screenshot command (with or
+// without arguments). Used to let screenshots work even while a menu or
+// other GUI capture is active.
+bool C_IsScreenshotKey(int key);
+
 // Stuff used by the customize controls menu
 void C_SetDefaultBindings (const TArray<int> *filter = nullptr);
 void C_UnbindAll (const TArray<int> *filter = nullptr);
