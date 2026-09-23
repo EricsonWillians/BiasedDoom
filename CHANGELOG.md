@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.14] - 2026-09-23
+
+### Changed
+
+- **Graphics/lighting/fog preset integration**: the three preset families are
+  now strictly layered. Graphics presets own only the image pipeline (postfx,
+  bloom, CRT/VHS, colorgrade, tonemap, atmosphere, exposure, quality toggles)
+  and auto-pair a matching named lighting and fog preset by moving the
+  selectors themselves, so menus always show the look that is actually active.
+  A lighting or fog preset selected explicitly is never overridden by graphics
+  presets again — previously every graphics preset silently stomped the
+  lighting/fog CVars while the selectors kept displaying the old names.
+- **Graphics preset audit**: all 64 presets now pick a deliberate tonemap
+  (ACES, Uncharted2, Lottes Filmic, Reinhard, Palette, or the Gothic / Gothic
+  Noir / Silent Hill / Graveyard / Moonlit / Bleach Bypass family) and tune
+  exposure adaptation per preset, making the differences between presets clear
+  and usable for modern gaming as well as horror/stylized looks.
+
+### Added
+
+- New fog preset **Analog Sepia** and lighting preset **Analog Fluorescent**
+  (append-only IDs), preserving the classic Analog Horror look under the new
+  layered model.
+- Full preset reference in `docs/engine/rendering-presets.md`: every graphics,
+  lighting, and fog preset explained, with tonemap/pairing tables and
+  hand-combination recipes.
+
+### Fixed
+
+- Screenshots are no longer silently swallowed when a menu is open: keys bound
+  to `screenshot` bypass GUI capture on SDL/Win32/Cocoa and pass through the
+  menu responder to the binding system.
+- Screenshot requests dropped during level transitions now print feedback
+  instead of failing silently.
+- Vulkan: eliminated the one-frame double present pass (double
+  gamma/atmosphere/CRT) that followed every screenshot.
+- `screenshot <path>` creates missing destination directories instead of
+  failing with "Could not open"; `LevelLocals.MakeScreenShot` is guarded in
+  headless mode.
+
 ## [4.15.13] - 2026-09-17
 
 ### Added
