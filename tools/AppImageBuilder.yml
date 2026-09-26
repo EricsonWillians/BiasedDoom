@@ -101,6 +101,15 @@ AppDir:
     - usr/lib/kernel
     - usr/lib/udev
     - usr/lib/x86_64-linux-gnu/security
+    - usr/bin/bootctl
+    - usr/bin/busctl
+    - usr/bin/dbus-*
+    - usr/bin/hostnamectl
+    - usr/bin/kernel-install
+    - usr/bin/localectl
+    - usr/bin/resolvectl
+    - usr/bin/systemd-*
+    - usr/bin/timedatectl
     - usr/share/bug
     - usr/share/man
     - usr/share/doc/*/README.*
