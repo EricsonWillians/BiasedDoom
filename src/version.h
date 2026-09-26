@@ -41,16 +41,16 @@ const char *GetVersionString();
 
 /** Lots of different version numbers **/
 
-#define VERSIONSTR "4.15.14"
+#define VERSIONSTR "4.15.15"
 
 // The version as seen in the Windows resource
-#define RC_FILEVERSION 4,15,14,0
-#define RC_PRODUCTVERSION 4,15,14,0
+#define RC_FILEVERSION 4,15,15,0
+#define RC_PRODUCTVERSION 4,15,15,0
 #define RC_PRODUCTVERSION2 VERSIONSTR
 // These are for content versioning.
 #define VER_MAJOR 4
 #define VER_MINOR 15
-#define VER_REVISION 14
+#define VER_REVISION 15
 
 // This should always refer to the GZDoom version a derived port is based on and not reflect the derived port's version number!
 #define ENG_MAJOR 4

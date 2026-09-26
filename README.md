@@ -217,7 +217,7 @@ plus the exhaustive hybrid integration fixture.
 
 For players who do not want to compile the engine, use the GitHub Releases page:
 
-- Linux: download `BiasedDoom-<version>-Linux-x86_64.AppImage`, make it executable, and run it.
+- Linux: download `BiasedDoom-<version>-Linux-x86_64.AppImage`, make it executable, and run it. AppImages use FUSE 2 at runtime (`libfuse2` on Ubuntu 22.04, `libfuse2t64` on Ubuntu 24.04); on a minimal system without it, run `APPIMAGE_EXTRACT_AND_RUN=1 ./BiasedDoom-<version>-Linux-x86_64.AppImage`.
 - Windows: download `BiasedDoom-<version>-Windows-x64.zip`, extract it, and run `biaseddoom.exe`.
 - Windows MinGW: download `BiasedDoom-<version>-Windows-x64-MinGW.zip` if you want the Linux-built cross-compiled package. This variant keeps ACS/ZScript but cannot embed Python; use the native Windows package for Python mods.
 - macOS 10.15 or newer: download `BiasedDoom-<version>-macOS.tar.gz`, extract it, and launch the application.
@@ -567,7 +567,7 @@ Useful references:
 
 Continuous Integration builds Windows, macOS, and Linux configurations from `.github/workflows/continuous_integration.yml`.
 
-Release packaging is handled by `.github/workflows/release.yml` and produces a Linux AppImage, a native Windows x64 zip containing `biaseddoom.exe`, a Linux-built Windows x64 MinGW zip, a macOS package, and SHA256 checksum files. Use the release tooling in `tools/release.sh` when preparing tagged releases.
+Release packaging is handled by `.github/workflows/release.yml` and produces a dependency-validated Linux AppImage, a native Windows x64 zip containing `biaseddoom.exe`, a Linux-built Windows x64 MinGW zip, a macOS package, and SHA256 checksum files. Use the release tooling in `tools/release.sh` when preparing tagged releases.
 
 Common release flow:
 

@@ -312,11 +312,20 @@ remote_tag_exists() {
     git -C "${PROJECT_ROOT}" ls-remote --exit-code --tags "${REMOTE_NAME}" "refs/tags/${tag}" >/dev/null 2>&1
 }
 
+assert_jammy_release_host() {
+    [[ -r /etc/os-release ]] || die "Cannot identify the Linux release host. Use Ubuntu 22.04 (Jammy)."
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    [[ "${ID:-}" == "ubuntu" && "${VERSION_CODENAME:-}" == "jammy" ]] \
+        || die "Linux release packaging must run on Ubuntu 22.04 (Jammy) so binary and bundled SONAMEs match. Use the Release workflow or a Jammy VM/container."
+}
+
 configure_and_build_linux() {
     local build_path="$1"
 
     [[ "${SKIP_BUILD}" -eq 1 ]] && return 0
 
+    assert_jammy_release_host
     require_command cmake "Install CMake 3.16 or newer."
     require_command ninja "Install ninja-build."
 
@@ -331,6 +340,8 @@ configure_and_build_linux() {
         -DBIASEDDOOM_ENABLE_GLTF=ON \
         -DBIASEDDOOM_BUILD_GLTF=ON \
         -DNEODOOM_ENABLE_GLTF=ON \
+        -DBIASEDDOOM_ENABLE_PYTHON=ON \
+        -DBIASEDDOOM_REQUIRE_PYTHON=ON \
         -DPK3_QUIET_ZIPDIR=ON
 
     log "Building Linux Release"
@@ -360,6 +371,14 @@ package_linux_appimage() {
     fi
 
     run cmake --install "${build_path}" --config "${BUILD_TYPE}" --prefix "${build_path}/AppDir/usr"
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+        find "${build_path}/AppDir" -type f -path '*/python/lib/python*/encodings/__init__.py' -print -quit | grep -q . \
+            || die "Linux AppDir is missing the embedded Python standard library."
+        find "${build_path}/AppDir" -type f -name 'libpython*.so*' -print -quit | grep -q . \
+            || die "Linux AppDir is missing the embedded CPython runtime library."
+        find "${build_path}/AppDir" -type f -path '*/python/LICENSE.txt' -print -quit | grep -q . \
+            || die "Linux AppDir is missing the CPython license."
+    fi
     run_in_dir "${build_path}" env GIT_DESCRIBE="$(tag_name)" ./appimage-builder --skip-tests --recipe ../tools/AppImageBuilder.yml
 
     if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -369,6 +388,7 @@ package_linux_appimage() {
             printf '  %s\n' "${appimages[@]}" >&2
             die "Expected exactly one generated AppImage in ${build_path}, found ${#appimages[@]}."
         fi
+        "${PROJECT_ROOT}/tools/check-appimage-deps.sh" "${appimages[0]}"
         cp "${appimages[0]}" "${appimage_path}"
         chmod +x "${appimage_path}"
         (cd "${artifact_path}" && sha256sum "$(basename "${appimage_path}")" > "$(basename "${checksum_path}")")
@@ -406,18 +426,22 @@ package_linux_tarball() {
     if [[ "${DRY_RUN}" -eq 0 ]]; then
         copy_linux_runtime_file "${build_path}/biaseddoom" "${stage_dir}"
         shopt -s nullglob
-        for path in "${build_path}"/*.pk3 "${build_path}"/libzmusic.so*; do
+        for path in "${build_path}"/*.pk3 "${build_path}"/libzmusic.so* "${build_path}"/libpython*.so*; do
             copy_linux_runtime_file "${path}" "${stage_dir}"
         done
         shopt -u nullglob
 
-        for path in "${build_path}/soundfonts" "${build_path}/fm_banks"; do
+        for path in "${build_path}/soundfonts" "${build_path}/fm_banks" "${build_path}/python"; do
             if [[ -d "${path}" ]]; then
                 cp -a "${path}" "${stage_dir}/"
             fi
         done
 
         compgen -G "${stage_dir}/*.pk3" >/dev/null || die "Linux tarball staging failed: no PK3 files were found."
+        compgen -G "${stage_dir}/libpython*.so*" >/dev/null || die "Linux tarball is missing the embedded CPython runtime library."
+        find "${stage_dir}/python" -type f -path '*/lib/python*/encodings/__init__.py' -print -quit | grep -q . \
+            || die "Linux tarball is missing the embedded Python standard library."
+        [[ -f "${stage_dir}/python/LICENSE.txt" ]] || die "Linux tarball is missing the CPython license."
         tar -czf "${tar_path}" -C "${stage_root}" "${package_name}"
         (cd "${artifact_path}" && sha256sum "$(basename "${tar_path}")" > "$(basename "${checksum_path}")")
         rm -rf "${stage_root}"

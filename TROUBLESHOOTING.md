@@ -29,6 +29,24 @@ On Linux/macOS:
 ./build/biaseddoom -stdout +logfile biaseddoom.log
 ```
 
+## The Linux AppImage Does Not Start
+
+AppImages normally need the host FUSE 2 library:
+
+- Ubuntu 22.04 and derivatives: `sudo apt install libfuse2`
+- Ubuntu 24.04 and derivatives: `sudo apt install libfuse2t64`
+
+If FUSE cannot be installed, extract and run the image in one step:
+
+```bash
+APPIMAGE_EXTRACT_AND_RUN=1 ./BiasedDoom-<version>-Linux-x86_64.AppImage
+```
+
+Fixed releases bundle the engine's SDL, display-protocol, codec,
+OpenAL, GTK, C++, and CPython extension dependencies. If an older AppImage
+reports `error while loading shared libraries`, upgrade to a fixed release
+instead of copying random system libraries into the package.
+
 ## BiasedDoom Cannot Find Doom
 
 Print every searched directory and every validated IWAD:

@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.15] - 2026-09-26
+
+### Fixed
+
+- Restored real dependency bundling for the Linux AppImage: SDL2, X11/Wayland
+  platform libraries, VP8/VP9, BZip2, the C++ runtime, OpenAL, GTK, and
+  CPython extension dependencies are packaged from Ubuntu 22.04/Jammy instead
+  of being silently resolved from the user's host. Release and CI packaging now fail if a non-system dependency
+  resolves outside the AppDir, and smoke-test startup in clean Ubuntu 22.04
+  and 20.04 containers.
+- Fixed the documented local Linux release fallback to require an Ubuntu
+  22.04/Jammy host, require embedded Python, and include `libpython`, the
+  private standard library, framework packages, and CPython license in the
+  portable tarball.
+- Removed broken AppImage update metadata whose `.zsync` file was never
+  published under the expected release asset name.
+
 ## [4.15.14] - 2026-09-23
 
 ### Changed

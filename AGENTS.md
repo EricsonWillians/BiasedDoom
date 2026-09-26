@@ -227,7 +227,7 @@ The project contains approximately **1,195 source files** (~596 `.cpp`, ~574 `.h
    - **Windows**: Visual Studio 2022 (Release, Debug)
    - **macOS**: macOS-14 with Xcode (Release, Debug), requires MoltenVK and Vulkan-Volk
    - **Linux**: Ubuntu-22.04 with GCC 9/12/latest and Clang 11/15/latest (multiple build types)
-   - AppImage generation on Linux for distribution
+   - AppImage generation on Ubuntu 22.04 for distribution, with `tools/check-appimage-deps.sh` verifying that bundled dependencies do not silently resolve from the build host and `tools/smoke-appimage.sh` checking startup in clean Ubuntu 22.04/20.04 containers
 
 2. **Manual Testing** — The engine is tested by running it with various WAD files and verifying:
    - Map loading and gameplay
@@ -242,7 +242,7 @@ The project contains approximately **1,195 source files** (~596 `.cpp`, ~574 `.h
 
 ## Deployment / Distribution
 
-- **Linux**: AppImage packages are generated in CI; manual installation via `cmake --install`
+- **Linux**: self-contained AppImage packages are generated in CI from Ubuntu 22.04/Jammy and dependency-validated; manual installation via `cmake --install`
 - **Windows**: Portable zip with `.exe` and `.pk3` files
 - **macOS**: `.app` bundle
 - **PK3 Files**: Built from `wadsrc/`, `wadsrc_bm/`, `wadsrc_lights/`, `wadsrc_extra/`, `wadsrc_widepix/` via CMake `add_pk3()` custom commands
@@ -282,6 +282,8 @@ The project contains approximately **1,195 source files** (~596 `.cpp`, ~574 `.h
 | `src/python/lib/bd_npcs/` | Engine-shipped Python framework package (NPC hub layer: `NPCDefinition`/`NPCManager` registered world NPCs with savegame TID rebind, `NPCManager.retire` for taking an NPC off duty (recruit-into-follower) with the retired set persisted, per-NPC `Disposition` standings persisted via `bd.state`, nearest-NPC talk targeting through `bd_dialogue` sessions with disposition ctx injection, `Service`/`HealerService`/`TrainerService` offers, and a `Shop` with restock timers plus a guarded ImGui `ShopUI`), staged the same way so mods can `import bd_npcs` |
 | `examples/python/33_rpg_campaign/` | Capstone Python example ("Ashvale Crossing"): a four-module mini-RPG hub demonstrating every shipped framework pack: `bd_dnd` `CreationWizard`/`CharacterClass` creation, kill XP from real Doom kills with level-toughened blows, a working class active per class on Custom Action 3 (Wren's heal service doubles as the breather that restores charges), `bd_npcs` dispositions/shop/services (`NPCManager.retire` turns the recruitable Korr into his follower, spawned at his own probed slot via the Companion `anchor=`), `bd_dialogue` trees, `bd_quests` with in-world giver markers/objective beacons and a persistent objective HUD strip, and a checkpoint round-trip, all under a headless autotest |
 | `examples/python/34_scripted_menus/` | ImGui capstone example ("Overture Menu Kit"): a keyboard-first menu suite (title/pause menus, settings, credits, popups, docked tool panel) scripted entirely in Python on the extended `bd.imgui` API: runtime fonts from `bd.read_bytes`, `set_ui_scale`/`style_theme`/`set_style_color`, `is_key_pressed`/`shortcut` hotkeys, popup/focus management, and `bd.state` settings persistence, all under a headless autotest |
+| `tools/check-appimage-deps.sh` | AppImage dependency-closure gate: extraction, AppRun/libc sanity, and host-resolution checks for every bundled ELF object |
+| `tools/smoke-appimage.sh` | Clean-container AppImage startup smoke test used with Ubuntu 22.04 and 20.04 images |
 | `supreme-build.sh` | Automated build script with vcpkg bootstrapping |
 | `CLAUDE.md` | Additional AI assistant guidance (includes glTF implementation architecture) |
 

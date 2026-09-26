@@ -11,39 +11,102 @@ AppDir:
     exec: ./usr/bin/biaseddoom
     exec_args: $@
 
+  # appimage-builder 1.1.0 writes this value as a Python set literal
+  # ({'...'}), which AppRun cannot resolve when selecting the bundled libc on
+  # older hosts. Keep the expected plain relative path.
+  after_runtime: |
+    sed -i \
+      's|^APPDIR_LIBC_LINKER_PATH=.*|APPDIR_LIBC_LINKER_PATH=lib64/ld-linux-x86-64.so.2|' \
+      "${TARGET_APPDIR}/AppRun.env"
+
   runtime:
     path_mappings:
       - /usr/share/games/doom:$APPDIR/usr/share/games/doom
 
+  # Release AppImages are built on Ubuntu 22.04 (Jammy). Keep these sources,
+  # the build image, and SONAME-providing packages in lockstep.
+  apt:
+    arch: amd64
+    sources:
+      - sourceline: 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse'
+        key_url: 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF6ECB3762474EDA9D21B7022871920D1991BC93C'
+      - sourceline: 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse'
+        key_url: 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF6ECB3762474EDA9D21B7022871920D1991BC93C'
+      - sourceline: 'deb [arch=amd64] http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse'
+        key_url: 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF6ECB3762474EDA9D21B7022871920D1991BC93C'
+    include:
+      # Engine runtime libraries.
+      - libsdl2-2.0-0
+      - libvpx7
+      - libwebp7
+      - libbz2-1.0
+      - libstdc++6
+      - libgcc-s1
+      - libgomp1
+      # dlopen'ed optional components: audio and the graphical IWAD picker.
+      - libopenal1
+      - libgtk-3-0
+      # Pull in the shared-library dependencies used by CPython extensions.
+      - libpython3.10-stdlib
+      - libgdbm6
+    exclude:
+      - adwaita-icon-theme
+      - humanity-icon-theme
+
   files:
     include:
-    - /lib64/ld-linux-x86-64.so.2
-    - /lib64/libbz2.so.1
+      # appimage-builder intentionally leaves display-protocol libraries on
+      # the host, but the engine links libX11/libXi directly and SDL/GTK use
+      # the rest. Bundle the Jammy ABI copies so minimal containers and
+      # Wayland-only systems can still start the engine.
+      - /lib/x86_64-linux-gnu/libX11.so.6
+      - /lib/x86_64-linux-gnu/libX11-xcb.so.1
+      - /lib/x86_64-linux-gnu/libXau.so.6
+      - /lib/x86_64-linux-gnu/libXcomposite.so.1
+      - /lib/x86_64-linux-gnu/libXcursor.so.1
+      - /lib/x86_64-linux-gnu/libXdamage.so.1
+      - /lib/x86_64-linux-gnu/libXdmcp.so.6
+      - /lib/x86_64-linux-gnu/libXext.so.6
+      - /lib/x86_64-linux-gnu/libXfixes.so.3
+      - /lib/x86_64-linux-gnu/libXi.so.6
+      - /lib/x86_64-linux-gnu/libXinerama.so.1
+      - /lib/x86_64-linux-gnu/libXrandr.so.2
+      - /lib/x86_64-linux-gnu/libXrender.so.1
+      - /lib/x86_64-linux-gnu/libXss.so.1
+      - /lib/x86_64-linux-gnu/libXxf86vm.so.1
+      - /lib/x86_64-linux-gnu/libxcb.so.1
+      - /lib/x86_64-linux-gnu/libxcb-render.so.0
+      - /lib/x86_64-linux-gnu/libxcb-shm.so.0
+      - /lib/x86_64-linux-gnu/libwayland-client.so.0
+      - /lib/x86_64-linux-gnu/libwayland-cursor.so.0
+      - /lib/x86_64-linux-gnu/libwayland-egl.so.1
+      - /lib/x86_64-linux-gnu/libxkbcommon.so.0
+      - /lib/x86_64-linux-gnu/libdrm.so.2
+      - /lib/x86_64-linux-gnu/libgbm.so.1
     exclude:
+    # Dependencies of libpython3.10-stdlib are needed, but its duplicate
+    # stdlib is not: CMake installs the private runtime under usr/bin/python.
+    - usr/lib/python3.10
+    # GTK dependency resolution pulls in host service manager/daemon support
+    # packages. Their libraries may stay, but service executables and machine
+    # administration tools must not be shipped inside the game AppImage.
+    - bin
+    - sbin
+    - usr/sbin
+    - etc/init.d
+    - etc/security
+    - lib/systemd
+    - usr/lib/systemd
+    - usr/lib/dbus-1.0
+    - usr/lib/kernel
+    - usr/lib/udev
+    - usr/lib/x86_64-linux-gnu/security
+    - usr/share/bug
     - usr/share/man
     - usr/share/doc/*/README.*
     - usr/share/doc/*/changelog.*
     - usr/share/doc/*/NEWS.*
     - usr/share/doc/*/TODO.*
 
-  # ... why are these so old ?
-  test:
-    fedora-30:
-      image: appimagecrafters/tests-env:fedora-30
-      command: ./AppRun
-    debian-stable:
-      image: appimagecrafters/tests-env:debian-stable
-      command: ./AppRun
-    archlinux-latest:
-      image: appimagecrafters/tests-env:archlinux-latest
-      command: ./AppRun
-    centos-7:
-      image: appimagecrafters/tests-env:centos-7
-      command: ./AppRun
-    ubuntu-xenial:
-      image: appimagecrafters/tests-env:ubuntu-xenial
-      command: ./AppRun
-
 AppImage:
   arch: x86_64
-  update-information: guess

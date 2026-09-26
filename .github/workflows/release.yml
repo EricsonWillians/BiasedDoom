@@ -325,6 +325,9 @@ jobs:
               echo "::error::Expected exactly one AppImage in ${BUILD_DIR}, found ${#appimages[@]}."
               exit 1
             fi
+            "${REPO_DIR}/tools/check-appimage-deps.sh" "${appimages[0]}"
+            "${REPO_DIR}/tools/smoke-appimage.sh" "${appimages[0]}" ubuntu:22.04
+            "${REPO_DIR}/tools/smoke-appimage.sh" "${appimages[0]}" ubuntu:20.04
 
             ASSET_PATH="${OUTPUT_DIR}/${PACKAGE_NAME}.AppImage"
             cp "${appimages[0]}" "${ASSET_PATH}"
@@ -590,7 +593,7 @@ jobs:
             echo
             echo "## Downloads"
             echo
-            echo "- Linux: download the \`.AppImage\`, mark it executable if needed, and run it."
+            echo "- Linux: download the \`.AppImage\`, mark it executable if needed, and run it. AppImages need FUSE 2 (\`libfuse2\` on Ubuntu 22.04, \`libfuse2t64\` on Ubuntu 24.04); use \`APPIMAGE_EXTRACT_AND_RUN=1\` on minimal systems without FUSE."
             echo "- Windows: download the \`Windows-x64.zip\`, extract it, and run \`biaseddoom.exe\`."
             echo "- Windows MinGW: download the \`Windows-x64-MinGW.zip\` if you want the Linux-built cross-compiled package."
             echo

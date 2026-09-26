@@ -12,6 +12,8 @@ The `Release` GitHub Actions workflow builds from the release tag and publishes:
 - `BiasedDoom-<version>-macOS.tar.gz`
 - one `.sha256` checksum file beside each artifact
 
+The Linux AppImage is built on Ubuntu 22.04 (Jammy) and bundles its SDL, display-protocol, codec, C++ runtime, OpenAL, GTK, and CPython extension dependencies. `tools/check-appimage-deps.sh` validates the dependency closure, and `tools/smoke-appimage.sh` verifies startup in clean Ubuntu 22.04 and 20.04 containers before the asset can be published.
+
 The native Windows zip is built on Windows with Visual Studio 2022. The MinGW zip is built on Linux with `x86_64-w64-mingw32-g++`. Both Windows packages contain `biaseddoom.exe`, PK3 resources, DLLs copied by the build, soundfonts, FM banks, and a short Windows readme.
 
 ## Version Prep
@@ -43,7 +45,7 @@ If `--no-workflow` is used, run the `Release` workflow manually in GitHub Action
 
 ## Local All-In-One Release
 
-If the remote release workflow is broken, use the local release script from a Linux machine. It builds the Linux AppImage, builds the Windows x64 MinGW zip, writes `.sha256` files, validates package contents, can smoke-test with an IWAD, and can publish the GitHub Release directly through `gh`.
+If the remote release workflow is broken, use the local release script from an Ubuntu 22.04 (Jammy) machine, VM, or container. The Jammy host requirement keeps the compiled binary and bundled AppImage SONAMEs in lockstep. The script builds the Linux AppImage, builds the Windows x64 MinGW zip, writes `.sha256` files, validates package contents, can smoke-test with an IWAD, and can publish the GitHub Release directly through `gh`.
 
 Install the local build and publishing tools:
 
@@ -98,7 +100,8 @@ The release workflow:
 5. Builds Release on Linux, Windows, and macOS.
 6. Cross-compiles a second Windows x64 package on Linux with MinGW-w64.
 7. Packages consumer-facing assets and SHA256 checksums.
-8. Publishes a GitHub Release using changelog content when available.
+8. Validates that every non-system AppImage dependency resolves inside the AppDir and smoke-tests startup in clean Ubuntu containers.
+9. Publishes a GitHub Release using changelog content when available.
 
 ## Local Windows Package
 
@@ -134,6 +137,8 @@ Avoid using bare `wine biaseddoom.exe` as the only test because GUI-subsystem Wi
 Before publishing a release as non-draft:
 
 - Confirm the Linux asset is an `.AppImage`, not a tarball containing one.
+- Run `tools/check-appimage-deps.sh <release>.AppImage`; it must report dependency closure OK.
+- Run `tools/smoke-appimage.sh <release>.AppImage ubuntu:22.04` and repeat with `ubuntu:20.04`; both must reach the normal no-IWAD startup message without loader errors.
 - Confirm both Windows assets are `.zip` files and contain `biaseddoom.exe` plus PK3 files.
 - Confirm every published artifact has a `.sha256` file.
 - Download the Windows zip on a clean machine or VM, extract it, and run `biaseddoom.exe -iwad <path-to-iwad>`.

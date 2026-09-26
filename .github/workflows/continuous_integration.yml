@@ -51,7 +51,6 @@ jobs:
           extra_options: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
           deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libwebp-dev python3-dev
           build_type: Release
-          export_appimage: true
 
         - name: Linux Clang 11 # oldest version available
           os: ubuntu-22.04
@@ -71,7 +70,6 @@ jobs:
           extra_options: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libwebp-dev python3-dev
           build_type: Release
-          export_appimage: true
 
     steps:
     - uses: actions/checkout@v4
@@ -203,7 +201,16 @@ jobs:
 
             export GIT_DESCRIBE="${{ steps.ghd.outputs.describe }}"
             ./appimage-builder --skip-tests --recipe ../tools/AppImageBuilder.yml
-            cp ./*.AppImage package
+
+            appimages=(*.AppImage)
+            if (( ${#appimages[@]} != 1 )); then
+              echo "Expected exactly one generated AppImage, found ${#appimages[@]}"
+              exit 1
+            fi
+            ../tools/check-appimage-deps.sh "${appimages[0]}"
+            ../tools/smoke-appimage.sh "${appimages[0]}" ubuntu:22.04
+            ../tools/smoke-appimage.sh "${appimages[0]}" ubuntu:20.04
+            cp "${appimages[0]}" package
           else
             cp biaseddoom ./*.pk3 ./libzmusic.so* ./libpython*.so* package
             cp -r python package
