@@ -53,13 +53,15 @@ CVAR (Bool, gl_light_particles, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 //==========================================================================
 //
 // Performance culling: skip lights too far away from the current viewpoint.
+// The light's radius is included so the sphere fades out by distance rather
+// than hard-popping the moment its center crosses the cull distance.
 // Uses squared distances so no square root is needed per light.
 //
 //==========================================================================
-static bool LightBeyondCullDistance(const DVector3 &pos)
+static bool LightBeyondCullDistance(const DVector3 &pos, float radius)
 {
 	if (bd_dynlight_cull_distance <= 0.0f) return false;
-	double maxdist = (double)bd_dynlight_cull_distance;
+	double maxdist = (double)bd_dynlight_cull_distance + (double)radius;
 	DVector3 delta = pos - r_viewpoint.Pos;
 	return delta.LengthSquared() > maxdist * maxdist;
 }
@@ -78,7 +80,7 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 
 	if (radius <= 0.f) return false;
 	if (dist > radius) return false;
-	if (LightBeyondCullDistance(pos)) return false;
+	if (LightBeyondCullDistance(pos, radius)) return false;
 	if (checkside && p.PointOnSide((float)pos.X, (float)pos.Z, (float)pos.Y))
 	{
 		return false;
@@ -100,7 +102,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	DVector3 pos = light->PosRelative(group);
 	float radius = light->GetRadius();
 
-	if (LightBeyondCullDistance(pos)) return;
+	if (LightBeyondCullDistance(pos, radius)) return;
 
 	float cs;
 	if (light->IsAdditive()) 

@@ -10,8 +10,8 @@ dispositions, nearest-NPC talk targeting, services, and a shop:
   tint, dialogue source, services, stable TIDs); :class:`NPCManager`
   registers definitions (a duplicate id warns and replaces), spawns
   them on map load (friendly, still, speed zeroed, optionally tinted
-  and facing the player), and adopts the savegame-restored actors by
-  TID instead of duplicating them.
+  and facing the player), and adopts the savegame/hub-restored actors
+  by TID instead of duplicating them.
 - **Disposition.** :class:`Disposition` keeps one value per NPC in
   [-100, 100] with named standings (``hostile``/``cold``/``neutral``/
   ``warm``/``trusted``); a definition's ``start_disposition`` seeds only
@@ -24,7 +24,8 @@ dispositions, nearest-NPC talk targeting, services, and a shop:
   starts a ``bd_dialogue.DialogueSession`` whose ctx adds ``disposition``
   (int), ``standing`` (str), ``npc_id``, and ``dispositions`` (the
   store) on top of the standard dialogue keys. One conversation at a
-  time: ``begin_talk`` returns None while another session is active.
+  time: ``begin_talk`` returns None while another session is active
+  with a live NPC (a stale session is ended, never a soft-lock).
 - **Services.** :class:`Service` is the offer contract
   (``available(npc_id, ctx)`` / ``run(npc_id, ctx) -> {"ok", "message"}``
   with a documented ctx dict); :class:`HealerService` heals the pawn
@@ -55,7 +56,8 @@ Minimal usage::
     def begin(event):
         manager.dispositions.arm_persistence()
         manager.arm_persistence()
-        manager.spawn_all(from_savegame=event.get("from_savegame", False))
+        manager.spawn_all(from_savegame=event.get("from_savegame", False),
+                          from_hub=event.get("from_hub", False))
 
     def try_talk():
         pawn = bd.player(0).actor

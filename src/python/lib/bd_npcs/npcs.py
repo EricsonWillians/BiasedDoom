@@ -4,8 +4,8 @@ A mod describes each NPC once with :class:`NPCDefinition` (actor class,
 spawn placement, tint, dialogue source, services) and hands the
 definitions to :class:`NPCManager`. On ``map_load`` the manager spawns
 every NPC friendly and still, optionally tinted and facing the player,
-and after a savegame load it re-binds the restored world actors by TID
-instead of duplicating them.
+and after a savegame or hub restore it re-binds the restored world
+actors by TID instead of duplicating them.
 
 Talk targeting is range based: :meth:`NPCManager.nearest` picks the
 live registered NPC closest to the player's pawn (within each
@@ -15,7 +15,8 @@ human-readable "[E] Speak to ..." line for the HUD, and
 whose ctx carries the disposition keys (``disposition``, ``standing``,
 ``npc_id``, ``dispositions``) on top of the standard dialogue context.
 One conversation at a time: ``begin_talk`` no-ops while another session
-is active.
+is active with a live NPC; a stale or inactive session is ended and
+never blocks future talk.
 
 Definitions are never persisted. The manager persists only the
 npc_id -> TID map (via :meth:`NPCManager.arm_persistence`) so a
@@ -38,6 +39,18 @@ __all__ = ["NPCDefinition", "NPCManager", "PROMPT_FORMAT"]
 #: name and ``{standing}`` its current standing. Examples may restyle
 #: the prompt by rebinding this module-level constant.
 PROMPT_FORMAT = "[E] Speak to {name} ({standing})"
+
+#: First TID tried when auto-allocating for definitions without a
+#: ``tid_base``. Intentionally shares the 31000+ range with
+#: ``bd_dnd.companions.Companion.TID_BASE``: both packs probe TID occupancy
+#: at runtime (``bd.actor_ref(candidate)`` scan), so companions and NPCs
+#: coordinate dynamically and never collide in practice; kept clear of the
+#: 9000-range conventions used by the bundled examples.
+_AUTO_TID_BASE: int = 31000
+
+#: Probing bound for TID allocation: stop scanning after this many
+#: occupied candidates and simply take the last one (warning-only).
+_TID_PROBE_LIMIT: int = 1000
 
 
 def _player_pawn() -> Any:
@@ -119,7 +132,10 @@ class NPCDefinition:
     - ``spawn_offset``: ``(dx, dy)`` from the player pawn at spawn time,
       or an absolute ``(x, y, z)`` when ``spawn_absolute`` is True.
     - ``tid_base``: when nonzero the manager assigns stable TIDs as
-      ``tid_base + registration index`` so savegames can re-bind actors.
+      ``tid_base + registration index`` (bumping to the next free TID
+      with a warning when occupied) so save/hub restores can re-bind
+      actors; when zero a stable nonzero TID is auto-allocated after
+      the spawn.
     - ``face_player``: rotate the actor toward the pawn after spawning.
 
     Empty ``id``/``display_name``/``actor_class`` raise ``ValueError``,
@@ -194,10 +210,10 @@ class NPCManager:
     ``dispositions`` is the :class:`~bd_npcs.disposition.Disposition`
     store (a fresh one is created when omitted). Register definitions at
     import or ``engine_start`` time; call :meth:`spawn_all` from a
-    ``map_load`` handler, passing ``event.get("from_savegame", False)``:
-    on a savegame load the manager first tries ``bd.actor_ref(tid)``
-    with the persisted TID, so the restored world actor is adopted
-    instead of duplicated.
+    ``map_load`` handler, passing ``event.get("from_savegame", False)``
+    and ``event.get("from_hub", False)``: on a savegame or hub restore
+    the manager first tries ``bd.actor_ref(tid)`` with the persisted
+    TID, so the restored world actor is adopted instead of duplicated.
 
     :meth:`arm_persistence` registers the ``save``/``load`` handlers
     exactly once, round-tripping the npc_id -> TID map through
@@ -290,20 +306,24 @@ class NPCManager:
 
     # -- spawning ------------------------------------------------------------------
 
-    def spawn_all(self, from_savegame: bool = False) -> List[Any]:
+    def spawn_all(self, from_savegame: bool = False,
+                  from_hub: bool = False) -> List[Any]:
         """Spawn every registered NPC; returns the live actor handles.
 
-        With ``from_savegame`` a stored TID mapping is tried first:
-        ``bd.actor_ref(tid)`` adopts the actor the savegame restored
-        instead of spawning a duplicate. Otherwise (and on any failure,
-        which only warns) the NPC is spawned via ``bd.spawn`` at the
-        definition's position: absolute, or the player pawn plus the
-        offset (falling back to the offset from the map origin with a
-        warning when no pawn exists). Every spawned actor is flagged
-        FRIENDLY and STANDSTILL, its speed zeroed, optionally tinted and
-        rotated toward the player. The definition's ``start_disposition``
-        seeds the store only when the NPC id is unknown to it, so loaded
-        saves keep their standings.
+        With ``from_savegame`` or ``from_hub`` a stored TID mapping is
+        tried first: ``bd.actor_ref(tid)`` adopts the actor the
+        savegame/hub restore brought back instead of spawning a
+        duplicate. Otherwise (and on any failure, which only warns) the
+        NPC is spawned via ``bd.spawn`` at the definition's position:
+        absolute, or the player pawn plus the offset (falling back to
+        the offset from the map origin with a warning when no pawn
+        exists). Every spawned actor is flagged FRIENDLY and
+        STANDSTILL, its speed zeroed, optionally tinted and rotated
+        toward the player. Definitions without a ``tid_base`` are given
+        a stable nonzero TID after the spawn so save/hub rebinds work.
+        The definition's ``start_disposition`` seeds the store only when
+        the NPC id is unknown to it, so loaded saves keep their
+        standings.
         """
         spawned: List[Any] = []
         pawn = _player_pawn()
@@ -314,7 +334,7 @@ class NPCManager:
             if definition.id in self._retired:
                 continue  # off duty (e.g. recruited away): never respawns
             handle = None
-            if from_savegame:
+            if from_savegame or from_hub:
                 handle = self._rebind(definition)
             if handle is None:
                 handle = self._spawn_one(definition, index, pawn)
@@ -337,7 +357,7 @@ class NPCManager:
         return spawned
 
     def _rebind(self, definition: NPCDefinition) -> Any:
-        """Adopt the savegame-restored actor for a definition, or None."""
+        """Adopt the savegame/hub-restored actor for a definition, or None."""
         tid = self._tids.get(definition.id)
         if not tid:
             return None
@@ -367,14 +387,70 @@ class NPCManager:
         else:
             dx, dy = definition.spawn_offset
             x, y, z = dx, dy, 0.0
-        tid = (definition.tid_base + index) if definition.tid_base else 0
+        tid = self._choose_tid(definition, index)
         try:
-            return bd.spawn(definition.actor_class, float(x), float(y),
-                            float(z), angle=0.0, tid=tid, force=True)
+            handle = bd.spawn(definition.actor_class, float(x), float(y),
+                              float(z), angle=0.0, tid=tid, force=True)
         except Exception as exc:
             bd.warn(f"bd_npcs: spawn of {definition.id!r} "
                     f"({definition.actor_class}) failed: {exc!r}")
             return None
+        if handle is not None and not definition.tid_base:
+            self._assign_free_tid(definition, handle)
+        return handle
+
+    def _choose_tid(self, definition: NPCDefinition, index: int) -> int:
+        """The configured TID for a spawn, bumped to the next free value.
+
+        A definition without a ``tid_base`` spawns with TID 0 and gets a
+        stable nonzero TID afterwards (see :meth:`_assign_free_tid`).
+        When the configured ``tid_base + index`` TID is already occupied
+        this warns and probes forward for the next free TID instead of
+        spawning a duplicate actor that shares the TID. Probing mirrors
+        ``bd_dnd.companions.Companion._allocate_tid``: a guarded
+        ``bd.actor_ref`` loop with a bound, deterministic and
+        warning-only.
+        """
+        if not definition.tid_base:
+            return 0
+        wanted = definition.tid_base + index
+        candidate = wanted
+        try:
+            guard = 0
+            while bd.actor_ref(candidate) is not None \
+                    and guard < _TID_PROBE_LIMIT:
+                candidate += 1
+                guard += 1
+        except Exception:
+            pass  # off-map: trust the candidate
+        if candidate != wanted:
+            bd.warn(f"bd_npcs: TID {wanted} for {definition.id!r} is "
+                    f"already occupied; using the next free TID "
+                    f"{candidate}")
+        return candidate
+
+    def _assign_free_tid(self, definition: NPCDefinition,
+                         handle: Any) -> None:
+        """Give a ``tid_base``-less NPC a stable nonzero TID post-spawn.
+
+        The same guarded probing pattern as :meth:`_choose_tid`, seeded
+        from :data:`_AUTO_TID_BASE`. The TID is written to the actor so
+        :meth:`spawn_all` persists it for save/hub rebinds.
+        """
+        candidate = _AUTO_TID_BASE
+        try:
+            guard = 0
+            while bd.actor_ref(candidate) is not None \
+                    and guard < _TID_PROBE_LIMIT:
+                candidate += 1
+                guard += 1
+        except Exception:
+            pass  # off-map: trust the candidate
+        try:
+            handle.tid = candidate
+        except Exception as exc:
+            bd.warn(f"bd_npcs: could not assign TID {candidate} to "
+                    f"{definition.id!r}: {exc!r}")
 
     def _finish_spawn(self, definition: NPCDefinition, handle: Any,
                       pawn: Any) -> None:
@@ -512,18 +588,34 @@ class NPCManager:
         construction entirely (``extra_ctx`` is then ignored).
 
         One conversation at a time: returns None when another session is
-        active, when nobody talkable is in range, or when ``start()``
-        fails. A dialogue that fails validation raises ``ValueError``
-        (a mod bug, reported as-is); everything else only warns.
+        active with a live NPC, when nobody talkable is in range, or
+        when ``start()`` fails. A session that is inactive or whose NPC
+        went stale is ended and does not block new talk. A dialogue that
+        fails validation raises ``ValueError`` (a mod bug, reported
+        as-is); everything else only warns.
         """
         import bd_dialogue  # late: keeps bd_npcs import-time dependency-free
         try:
-            if bd_dialogue.active_session() is not None:
-                return None
+            session = bd_dialogue.active_session()
         except Exception as exc:
             bd.warn(f"bd_npcs: could not query the active dialogue "
                     f"session: {exc!r}")
             return None
+        if session is not None and session.active:
+            try:
+                npc_alive = (session.npc_ref is not None
+                             and bool(session.npc_ref.valid))
+            except Exception:
+                npc_alive = False
+            if npc_alive:
+                return None
+            # Stale or recovered session: end it so future talk is never
+            # soft-locked by a conversation whose partner is gone.
+            try:
+                session.end("stale_npc")
+            except Exception as exc:
+                bd.warn(f"bd_npcs: could not end the stale dialogue "
+                        f"session: {exc!r}")
         definition, handle = self._nearest(pawn, require_dialogue=True)
         if definition is None:
             return None

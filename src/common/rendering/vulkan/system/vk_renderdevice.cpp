@@ -197,6 +197,16 @@ void VulkanRenderDevice::InitializeState()
 	mSaveBuffers.reset(new VkRenderBuffers(this));
 	mActiveRenderBuffers = mScreenBuffers.get();
 
+	// The present postprocess shader receives PresentUniforms as push
+	// constants; a device offering less than that makes every present pipeline
+	// layout invalid. Fail here, before any postprocess pipeline is created.
+	if (device->PhysicalDevice.Properties.Properties.limits.maxPushConstantsSize < (uint32_t)sizeof(PresentUniforms))
+		I_FatalError("Vulkan cannot support the present postprocess uniforms on this device:\n"
+			"maxPushConstantsSize is %u bytes but the present shader requires %u.\n"
+			"Please use the OpenGL backend or a different GPU.",
+			(unsigned int)device->PhysicalDevice.Properties.Properties.limits.maxPushConstantsSize,
+			(unsigned int)sizeof(PresentUniforms));
+
 	mPostprocess.reset(new VkPostprocess(this));
 	mDescriptorSetManager.reset(new VkDescriptorSetManager(this));
 	mRenderPassManager.reset(new VkRenderPassManager(this));

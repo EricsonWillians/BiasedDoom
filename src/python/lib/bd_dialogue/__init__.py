@@ -77,9 +77,11 @@ Persistence
 -----------
 
 Sessions are **transient**: there is no mid-dialogue save support (a
-savegame load drops any active session; outcomes already committed to
+savegame load drops any active session, as does any map change via the
+module-level ``map_unload`` cleanup, which ends it with the
+``"map_change"`` reason); outcomes already committed to
 ``bd_quests``/``bd_vtm``/inventory persist through those packs' own
-``bd.state`` handling). Nothing from this package is stored in
+``bd.state`` handling. Nothing from this package is stored in
 ``bd.state``.
 
 Coexistence
@@ -255,6 +257,28 @@ def active_session() -> Optional["DialogueSession"]:
     return _active_session
 
 
+# --- module-level map_unload cleanup (registered once, at import) -----------
+
+
+@bd.on("map_unload")
+def _end_session_on_map_unload(event: Dict[str, Any]) -> None:
+    """End any active session when the map goes away.
+
+    A session left running across a map change would hold a stale NPC
+    handle and squat the one-session slot, soft-locking every future
+    conversation on the next map; ending it here with the
+    ``"map_change"`` reason releases both.
+    """
+    session = _active_session
+    if session is not None and session.active:
+        try:
+            session.end("map_change")
+        except Exception as exc:
+            # An on_end callback must not raise through the engine event.
+            bd.warn(f"bd_dialogue: ending the session on map unload "
+                    f"failed: {exc!r}")
+
+
 def _level_time() -> int:
     """Current map time in tics, or 0 when no level is loaded."""
     try:
@@ -288,7 +312,8 @@ class DialogueSession:
 
     :attr:`on_end` is a callback list fired once with ``(session)`` when
     the conversation ends; :attr:`end_reason` is one of ``"choice"``
-    (a choice ended it), ``"stale_npc"``, or ``"manual"``.
+    (a choice ended it), ``"stale_npc"``, ``"map_change"`` (the map
+    unloaded underneath the conversation), or ``"manual"``.
     """
 
     def __init__(self, dialogue: Dialogue, npc_ref: Any,

@@ -2638,6 +2638,9 @@ void MapLoader::LoadBlockMap (MapData * map)
 		if (!Level->blockmap.VerifyBlockMap(count, Level->lines.Size()))
 		{
 			DPrintf (DMSG_SPAMMY, "Generating BLOCKMAP\n");
+			// Drop the invalid lump that was just allocated before replacing it.
+			delete[] Level->blockmap.blockmaplump;
+			Level->blockmap.blockmaplump = nullptr;
 			CreateBlockMap();
 		}
 

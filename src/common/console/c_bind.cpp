@@ -156,13 +156,18 @@ FKeyBindings Bindings;
 FKeyBindings DoubleBindings;
 FKeyBindings AutomapBindings;
 
+static bool BindIsScreenshotCommand(const char *bind)
+{
+	return bind != nullptr && strnicmp(bind, "screenshot", 10) == 0 &&
+		(bind[10] == '\0' || bind[10] == ' ');
+}
+
 bool C_IsScreenshotKey(int key)
 {
 	if (key < 0 || key >= NUM_KEYS)
 		return false;
-	const char *bind = Bindings.GetBind(key);
-	return bind != nullptr && strncmp(bind, "screenshot", 10) == 0 &&
-		(bind[10] == '\0' || bind[10] == ' ');
+	return BindIsScreenshotCommand(Bindings.GetBind(key)) ||
+		BindIsScreenshotCommand(DoubleBindings.GetBind(key));
 }
 
 static unsigned int DClickTime[NUM_KEYS];

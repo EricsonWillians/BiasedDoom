@@ -54,6 +54,9 @@ void UncheckedWriteDouble(double val, uint8_t** stream);
 void UncheckedWriteString(const char* string, uint8_t** stream);
 
 void AdvanceStream(TArrayView<uint8_t>& stream, size_t bytes);
+// Bounds-checked variant for untrusted packet/demo data: refuses to advance
+// past the end of the stream instead of relying on an assert.
+bool TryAdvanceStream(TArrayView<uint8_t>& stream, size_t bytes);
 
 uint8_t ReadInt8(TArrayView<uint8_t>& stream);
 int16_t ReadInt16(TArrayView<uint8_t>& stream);

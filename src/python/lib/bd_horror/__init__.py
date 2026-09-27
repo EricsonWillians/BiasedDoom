@@ -41,7 +41,7 @@ Minimal usage::
     def begin(event):
         state.start()             # dread tick + stalker windows
         state.arm_persistence()   # save/load round-trip via bd.state
-        if not event.get("from_savegame"):
+        if not event.get("from_savegame") and not event.get("from_hub"):
             state.lights.candle([5], amplitude=24)
             toasts.toast("the air tastes of copper", kind="omen")
 

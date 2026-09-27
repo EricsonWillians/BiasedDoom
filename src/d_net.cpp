@@ -58,6 +58,7 @@
 #include "p_local.h"
 #include "p_spec.h"
 #include "p_trace.h"
+#include "python/python_runtime.h"
 #include "r_utility.h"
 #include "s_music.h"
 #include "savegamemanager.h"
@@ -585,6 +586,12 @@ void Net_SetWaiting()
 //		with our variable length Command.
 static size_t GetNetBufferSize()
 {
+	// The header byte must be readable before anything else; a zero-length
+	// datagram is malformed, not a valid empty packet, so reject it with the
+	// same NetBufferLength + 1 sentinel used below (never read stale
+	// NetBuffer[0] as if a header existed).
+	if (NetBufferLength < 1)
+		return NetBufferLength + 1;
 	if (NetBuffer[0] & NCMD_EXIT)
 		return 1 + (NetMode == NET_PacketServer && RemoteClient == Net_Arbitrator);
 	// TODO: Need a skipper for this.
@@ -604,13 +611,24 @@ static size_t GetNetBufferSize()
 
 	// Header info
 	unsigned int totalBytes = 10;
+	// Reject packets too small for the fixed header up front.
+	if (NetBufferLength < totalBytes)
+		return NetBufferLength + 1;
 	if (NetBuffer[0] & NCMD_QUITTERS)
+	{
+		if (totalBytes >= NetBufferLength)
+			return NetBufferLength + 1;
 		totalBytes += NetBuffer[totalBytes] + 1;
+	}
 
+	if (totalBytes + 2 >= NetBufferLength)
+		return NetBufferLength + 1;
 	const int playerCount = NetBuffer[totalBytes++];
 	const int numTics = NetBuffer[totalBytes++];
 	if (numTics > 0)
 		totalBytes += 4;
+	if (totalBytes >= NetBufferLength)
+		return NetBufferLength + 1;
 	const int ranTics = NetBuffer[totalBytes++];
 	if (ranTics > 0)
 		totalBytes += 4;
@@ -627,20 +645,31 @@ static size_t GetNetBufferSize()
 	if (NetBufferLength < totalBytes + playerCount * padding)
 		return totalBytes + playerCount * padding;
 
-	TArrayView<uint8_t> skipper = TArrayView(&NetBuffer[totalBytes], MAX_MSGLEN - totalBytes);
+	// Walk the variable length content with a stream bounded by the actual
+	// packet size so a malformed packet cannot read out of bounds.
+	TArrayView<uint8_t> skipper = TArrayView(&NetBuffer[totalBytes], NetBufferLength - totalBytes);
 	for (int p = 0; p < playerCount; ++p)
 	{
-		AdvanceStream(skipper, 1);
+		if (!TryAdvanceStream(skipper, 1))
+			return NetBufferLength + 1;
 		if (NetMode == NET_PacketServer && RemoteClient == Net_Arbitrator)
-			AdvanceStream(skipper, 2);
+		{
+			if (!TryAdvanceStream(skipper, 2))
+				return NetBufferLength + 1;
+		}
 
 		for (int i = 0; i < ranTics; ++i)
-			AdvanceStream(skipper, 3);
+		{
+			if (!TryAdvanceStream(skipper, 3))
+				return NetBufferLength + 1;
+		}
 
 		for (int i = 0; i < numTics; ++i)
 		{
-			AdvanceStream(skipper, 1);
-			SkipUserCmdMessage(skipper);
+			if (!TryAdvanceStream(skipper, 1))
+				return NetBufferLength + 1;
+			if (!SkipUserCmdMessage(skipper))
+				return NetBufferLength + 1;
 		}
 	}
 
@@ -2187,7 +2216,13 @@ void TryRunTics()
 
 	// Get the full number of tics the client can run.
 	if (doWait)
+	{
+		// Release the Python runtime's gameplay-mutation lock while blocked
+		// waiting for the next tic so idle-wait frames stay observable.
+		void* waitState = PythonRuntime::BeginIdleWait();
 		EnterTic = I_WaitForTic(LastEnterTic);
+		PythonRuntime::EndIdleWait(waitState);
+	}
 	else
 		EnterTic = I_GetTime();
 
@@ -3069,45 +3104,99 @@ static void RunScript(TArrayView<uint8_t>& stream, AActor *pawn, int snum, int a
 // not to execute them. Right now this is making setting up net commands a nightmare.
 // Reads through the network stream but doesn't actually execute any command. Used for getting the size of a stream.
 // The skip amount is the number of bytes the command possesses. This should mirror the bytes in Net_DoCommand().
-void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
+
+// Bounded replacement for the strlen-based skip sizes used below: measures a
+// string starting at 'offset' and only reports success if its NUL terminator
+// lies within the stream.
+static bool BoundedSkipString(const TArrayView<uint8_t>& stream, size_t offset, size_t& outlen)
+{
+	if (offset >= stream.Size())
+		return false;
+	size_t len = strnlen((const char *)stream.Data() + offset, stream.Size() - offset);
+	if (len == stream.Size() - offset)
+		return false;
+	outlen = len + 1;
+	return true;
+}
+
+bool Net_SkipCommandEx(int cmd, TArrayView<uint8_t>& stream)
 {
 	size_t skip = 0;
+	bool ok = true;
 	switch (cmd)
 	{
 		case DEM_SAY:
-			skip = strlen((char *)(stream.Data() + 1)) + 2;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 1, slen);
+			skip = 1 + slen;
 			break;
+		}
 
 		case DEM_ADDBOT:
-			skip = strlen((char *)(stream.Data() + 1)) + 6;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 1, slen);
+			skip = 1 + slen + 4;
 			break;
+		}
 
 		case DEM_GIVECHEAT:
 		case DEM_TAKECHEAT:
-			skip = strlen((char *)(stream.Data())) + 5;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 0, slen);
+			skip = slen + 4;
 			break;
+		}
 
 		case DEM_SETINV:
-			skip = strlen((char *)(stream.Data())) + 6;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 0, slen);
+			skip = slen + 5;
 			break;
+		}
 
 		case DEM_NETEVENT:
-			skip = strlen((char *)(stream.Data())) + 15;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 0, slen);
+			skip = slen + 14;
 			break;
+		}
 
 		case DEM_ZSC_CMD:
-			skip = strlen((char*)(stream.Data())) + 1;
-			skip += (stream[skip] << 8) | (stream[skip + 1]) + 2;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 0, slen);
+			if (ok)
+			{
+				skip = slen;
+				if (skip + 2 > stream.Size())
+					ok = false;
+				else
+					skip += ((stream[skip] << 8) | stream[skip + 1]) + 2;
+			}
 			break;
+		}
 
 		case DEM_SUMMON2:
 		case DEM_SUMMONFRIEND2:
 		case DEM_SUMMONFOE2:
-			skip = strlen((char *)(stream.Data())) + 26;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 0, slen);
+			skip = slen + 25;
 			break;
+		}
 		case DEM_CHANGEMAP2:
-			skip = strlen((char *)(stream.Data() + 1)) + 2;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 1, slen);
+			skip = 1 + slen;
 			break;
+		}
 		case DEM_MUSICCHANGE:
 		case DEM_PRINT:
 		case DEM_CENTERPRINT:
@@ -3122,8 +3211,12 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
 		case DEM_MORPHEX:
 		case DEM_KILLCLASSCHEAT:
 		case DEM_MDK:
-			skip = strlen((char *)(stream.Data())) + 1;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 0, slen);
+			skip = slen;
 			break;
+		}
 
 		case DEM_WARPCHEAT:
 			skip = 6;
@@ -3149,12 +3242,26 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
 			break;
 
 		case DEM_SAVEGAME:
-			skip = strlen((char *)(stream.Data())) + 1;
-			skip += strlen((char *)(stream.Data()) + skip) + 1;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 0, slen);
+			skip = slen;
+			if (ok)
+			{
+				size_t slen2;
+				ok = BoundedSkipString(stream, skip, slen2);
+				skip += slen2;
+			}
 			break;
+		}
 
 		case DEM_SINFCHANGEDXOR:
 		case DEM_SINFCHANGED:
+			if (stream.Size() < 1)
+			{
+				ok = false;
+				break;
+			}
 			{
 				uint8_t t = stream[0];
 				skip = 1 + (t & 63);
@@ -3170,7 +3277,13 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
 						skip += 4;
 						break;
 					case CVAR_String:
-						skip += strlen((char*)(stream.Data() + skip)) + 1;
+						{
+							size_t slen;
+							if (BoundedSkipString(stream, skip, slen))
+								skip += slen;
+							else
+								ok = false;
+						}
 						break;
 					}
 				}
@@ -3183,17 +3296,27 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
 
 		case DEM_RUNSCRIPT:
 		case DEM_RUNSCRIPT2:
-			skip = 3 + *(stream.Data() + 2) * 4;
+		case DEM_RUNSPECIAL:
+			if (stream.Size() < 3)
+				ok = false;
+			else
+				skip = 3 + *(stream.Data() + 2) * 4;
 			break;
 
 		case DEM_RUNNAMEDSCRIPT:
-			skip = strlen((char *)(stream.Data())) + 2;
-			skip += ((*(stream.Data() + skip - 1)) & 127) * 4;
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 0, slen);
+			if (ok)
+			{
+				skip = slen + 1;
+				if (skip - 1 >= stream.Size())
+					ok = false;
+				else
+					skip += ((*(stream.Data() + skip - 1)) & 127) * 4;
+			}
 			break;
-
-		case DEM_RUNSPECIAL:
-			skip = 3 + *(stream.Data() + 2) * 4;
-			break;
+		}
 
 		case DEM_CONVREPLY:
 			skip = 3;
@@ -3201,24 +3324,56 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
 
 		case DEM_SETSLOT:
 		case DEM_SETSLOTPNUM:
+			skip = 2 + (cmd == DEM_SETSLOTPNUM);
+			if (skip >= stream.Size())
 			{
-				skip = 2 + (cmd == DEM_SETSLOTPNUM);
-				for (int numweapons = stream[skip-1]; numweapons > 0; --numweapons)
-					skip += 1 + (stream[skip] >> 7);
+				ok = false;
+				break;
+			}
+			for (int numweapons = stream[skip-1]; numweapons > 0; --numweapons)
+			{
+				if (skip >= stream.Size())
+				{
+					ok = false;
+					break;
+				}
+				skip += 1 + (stream[skip] >> 7);
 			}
 			break;
 
 		case DEM_ADDSLOT:
 		case DEM_ADDSLOTDEFAULT:
+			if (stream.Size() < 2)
+			{
+				ok = false;
+				break;
+			}
 			skip = 2 + (stream[1] >> 7);
 			break;
 
 		case DEM_SETPITCHLIMIT:
 			skip = 2;
 			break;
+
+		default: // Unknown command
+			ok = false;
+			break;
 	}
 
-	AdvanceStream(stream, skip);
+	if (!ok || skip > stream.Size())
+	{
+		// Malformed command: consume the rest of the stream so the walk
+		// terminates, and report the failure to the caller.
+		stream = TArrayView<uint8_t>(stream.Data() + stream.Size(), 0);
+		return false;
+	}
+	TryAdvanceStream(stream, skip);
+	return true;
+}
+
+void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
+{
+	Net_SkipCommandEx(cmd, stream);
 }
 
 // This was taken out of shared_hud, because UI code shouldn't do low level calculations that may change if the backing implementation changes.

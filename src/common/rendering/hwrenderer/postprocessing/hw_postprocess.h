@@ -754,8 +754,10 @@ struct PresentUniforms {
   int AtmosphereMode;
   float AtmosphereIntensity;
   float AtmosphereContrast;
-  // Vulkan feeds this struct through push constants, so it must stay within the
-  // 256 byte push constant limit that desktop GPUs expose. Most effects gate on
+  // Vulkan feeds this struct through push constants. The Vulkan spec only
+  // guarantees a 128 byte push constant range, but desktop GPUs commonly
+  // expose 256; vk_renderdevice rejects devices below sizeof(PresentUniforms)
+  // at init. Most effects gate on
   // a neutral parameter value instead of a dedicated enable int (strength 0,
   // scale 1.0, levels 0, degrees 0, neutral white balance); only effects with
   // no neutral-capable parameter keep an explicit enable.
@@ -924,11 +926,13 @@ struct PresentUniforms {
 };
 
 // The Vulkan backend uploads PresentUniforms as fragment stage push constants
-// (vk_renderpass.cpp AddPushConstantRange). Desktop GPUs guarantee 256 bytes;
-// exceeding that limit makes pipeline layout creation invalid and kills the
-// device at queue submit time.
+// (vk_renderpass.cpp AddPushConstantRange). Desktop GPUs commonly expose 256
+// bytes, but the Vulkan spec only guarantees 128 — devices below
+// sizeof(PresentUniforms) are rejected at VulkanRenderDevice::InitializeState
+// before any postprocess pipeline is created. This assert bounds the struct to
+// what the common desktop 256 byte range can hold.
 static_assert(sizeof(PresentUniforms) <= 256,
-              "PresentUniforms must fit in a 256 byte Vulkan push constant range");
+              "PresentUniforms must fit within the 256 byte push constant range common on desktop GPUs");
 
 class PPPresent {
  public:

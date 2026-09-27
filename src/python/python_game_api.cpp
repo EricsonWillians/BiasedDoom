@@ -128,6 +128,39 @@ bool markerRegistered = false;
 // the data deliberately does not survive savegames or level transitions.
 std::map<uint64_t, PyObject*> actorDataStore;
 
+// Actor slots found unusable inside an engine GC marker cannot be invalidated
+// there: InvalidateActorSlot purges the actor_data dict with Py_DECREF, and
+// no Python C-API work may run from inside GC::Mark. Such slots are queued
+// here and drained from non-marker contexts (start of OnWorldPreTick,
+// InvalidateWorld, Shutdown). Queued slots stay occupied until drained, so
+// AcquireActorSlot can never recycle one behind the queue's back.
+std::vector<uint32_t> deferredSlotInvalidations;
+
+void QueueDeferredSlotInvalidation(uint32_t index)
+{
+	if (std::find(deferredSlotInvalidations.begin(), deferredSlotInvalidations.end(), index) == deferredSlotInvalidations.end())
+	{
+		deferredSlotInvalidations.push_back(index);
+	}
+}
+
+// Runs outside marker contexts only; safe to Py_DECREF.
+void InvalidateActorSlot(uint32_t index);
+
+void DrainDeferredInvalidationsInternal()
+{
+	if (deferredSlotInvalidations.empty()) return;
+	// Swap first: the purge decrefs below can run Python finalizers that
+	// resolve actor handles and re-queue entries; those are drained on the
+	// next pass instead of invalidating this vector.
+	std::vector<uint32_t> pending;
+	pending.swap(deferredSlotInvalidations);
+	for (uint32_t index : pending)
+	{
+		if (index < actorSlots.size()) InvalidateActorSlot(index);
+	}
+}
+
 uint64_t ActorDataKey(uint32_t slot, uint32_t generation)
 {
 	return (static_cast<uint64_t>(slot) << 32) | generation;
@@ -201,7 +234,15 @@ AActor* ResolveActor(PyActorRef* reference, bool mutation, bool raise)
 	ActorSlot& slot = actorSlots[reference->Slot];
 	if (slot.Generation != reference->Generation || !IsUsableActor(slot.Actor.ForceGet()))
 	{
-		if (slot.Generation == reference->Generation) InvalidateActorSlot(reference->Slot);
+		// The non-raising valid-check path can be reached from contexts that
+		// must not Py_DECREF (actor_data purge) right now, so defer the slot
+		// bookkeeping; the raising path runs from ordinary Python calls and
+		// invalidates immediately.
+		if (slot.Generation == reference->Generation)
+		{
+			if (raise) InvalidateActorSlot(reference->Slot);
+			else QueueDeferredSlotInvalidation(reference->Slot);
+		}
 		if (raise) PyErr_SetString(PyExc_ReferenceError, "actor was destroyed or belongs to an unloaded map");
 		return nullptr;
 	}
@@ -3318,20 +3359,31 @@ void MarkRoots()
 		if (slot.PythonReferences == 0 || slot.Actor.ForceGet() == nullptr) continue;
 		if (!IsUsableActor(slot.Actor.ForceGet()))
 		{
-			InvalidateActorSlot(index);
-			continue;
+			// Never InvalidateActorSlot (Py_DECREF) from inside a marker: queue
+			// the slot and keep marking the actor below so its pointer state
+			// stays safe for the rest of this collection.
+			QueueDeferredSlotInvalidation(index);
 		}
 		GC::Mark(slot.Actor);
 	}
 }
 
+void DrainDeferredInvalidations()
+{
+	DrainDeferredInvalidationsInternal();
+}
+
 void InvalidateWorld()
 {
+	// Flush anything the markers queued before the wholesale invalidation
+	// below (which also leaves the deferred queue empty).
+	DrainDeferredInvalidationsInternal();
 	// Drop every per-actor data dict; the per-slot purge below would reach the
 	// same keys, but only for actors that still have a slot.
 	for (auto& entry : actorDataStore) Py_DECREF(entry.second);
 	actorDataStore.clear();
 	for (uint32_t index = 0; index < actorSlots.size(); ++index) InvalidateActorSlot(index);
+	deferredSlotInvalidations.clear();
 	actorLookup.clear();
 	if (++worldGeneration == 0) ++worldGeneration;
 }
@@ -3405,6 +3457,7 @@ namespace PythonRuntime::GameApi
 {
 bool Initialize(_object*) { return false; }
 void MarkRoots() {}
+void DrainDeferredInvalidations() {}
 void InvalidateWorld() {}
 void Shutdown() {}
 _object* MakeActorRef(AActor*) { return nullptr; }

@@ -22,6 +22,7 @@
 #include "d_buttons.h"
 #include "d_player.h"
 #include "doomstat.h"
+#include "engineerrors.h"
 #include "filesystem.h"
 #include "g_level.h"
 #include "g_levellocals.h"
@@ -71,6 +72,14 @@ CVAR(Int, py_tick_budget_ms, 3, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCA
 CVAR(Bool, py_tick_hard_budget, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 CVAR(Int, py_tick_overrun_limit, 3, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 CVAR(Int, py_max_tasks, 4096, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
+
+// Defined in python_game_api.cpp: flushes actor-slot invalidations that the
+// engine GC markers queued instead of running Py_DECREF inside the marker
+// (python_game_api.h is frozen for this change, hence the local declaration).
+namespace PythonRuntime::GameApi
+{
+	void DrainDeferredInvalidations();
+}
 
 namespace PythonRuntime
 {
@@ -170,8 +179,17 @@ std::string s_pythonErrorLogPath;
 // choice(). Named, so StaticClearRandom seeds it with the run's rngseed on a
 // new game like every other engine RNG; per-map reseeding happens in
 // OnWorldLoaded and the full state round-trips through the "pythonstate"
-// save blob under the reserved "__rng_state__" key.
+// save blob under the reserved RngStateKey ("__biaseddoom_rng_state_v1__";
+// pre-4.15.15 saves may still carry the legacy "__rng_state__" key, which
+// LoadStateJson also accepts).
 FRandom s_pyRandom("PythonRandom");
+// Reserved state-dictionary key holding the script RNG snapshot while a
+// savegame/hub snapshot is being written or read. Collision-resistant on
+// purpose: a user script owning this exact key is a serialization error, not
+// an overwrite. The legacy key is rejected on write just the same (it is
+// only accepted when reading pre-4.15.15 saves).
+const char* const RngStateKey = "__biaseddoom_rng_state_v1__";
+const char* const LegacyRngStateKey = "__rng_state__";
 // Set by LoadStateJson when it handled the stream for the pending map entry,
 // so OnWorldLoaded does not clobber a restored savegame/hub-snapshot state.
 bool s_rngStateLoaded = false;
@@ -1643,6 +1661,70 @@ PyObject* PyBdReadBytes(PyObject*, PyObject* args)
 
 PyObject* ExecuteResourceModule(int container, const std::string& path, const std::string& moduleName, bool registerNamed);
 
+// Reserved or outright dangerous import_script module names. "biaseddoom" is
+// the engine module itself and the bd_* namespace is reserved for the
+// engine-shipped framework packages; the remaining entries are stdlib modules
+// whose replacement with a VFS module would break the interpreter or mod
+// scripts in non-obvious ways. Occupied-name conflicts with any other module
+// are caught separately by the sys.modules check in PyBdImportScript.
+bool IsDeniedVfsModuleName(const std::string& name)
+{
+	if (name == "biaseddoom" || name.compare(0, 3, "bd_") == 0) return true;
+	static const char* const denied[] = {
+		"sys", "sysconfig", "builtins", "io", "os", "os.path", "posix", "nt",
+		"errno", "signal", "select", "socket", "ssl", "subprocess", "importlib",
+		"json", "math", "random", "re", "time", "datetime", "threading",
+		"_thread", "ctypes", "marshal", "gc", "site", "encodings", "codecs",
+		"warnings", "types", "typing", "collections", "collections.abc",
+		"itertools", "functools", "operator", "weakref", "struct", "pickle",
+		"abc", "traceback", "linecache", "heapq", "copyreg", "sre_compile",
+		"stat", "genericpath", "posixpath", "ntpath", "contextlib", "enum",
+		"pathlib", "tempfile", "shutil", "keyword", "reprlib",
+	};
+	for (const char* entry : denied)
+	{
+		if (name == entry) return true;
+	}
+	return false;
+}
+
+// True when module is an earlier import_script module loaded from the same VFS
+// path (its __file__ is vfs://<path>): an explicit re-import/reload of the
+// same resource, which is allowed to reuse the name. Anything else occupying
+// the name (stdlib, engine module, another VFS path) is a refusal.
+bool IsSameVfsModulePath(PyObject* module, const char* path)
+{
+	if (!PyModule_Check(module)) return false;
+	PyObject* file = PyObject_GetAttrString(module, "__file__");
+	if (file == nullptr)
+	{
+		PyErr_Clear();
+		return false;
+	}
+	const char* text = PyUnicode_Check(file) ? PyUnicode_AsUTF8(file) : nullptr;
+	const bool same = text != nullptr && std::string("vfs://") + path == text;
+	Py_DECREF(file);
+	return same;
+}
+
+// import_script without an explicit name gets a fresh sys.modules entry on
+// every call (biaseddoom_vfs_<container>_<counter>): the old fixed
+// "biaseddoom_vfs_helper" name silently replaced the previous module,
+// breaking siblings that still held the earlier object.
+std::string UniqueVfsModuleName(int container)
+{
+	static unsigned long long counter = 0;
+	PyObject* sysModules = PyImport_GetModuleDict();
+	for (;;)
+	{
+		std::string candidate = "biaseddoom_vfs_" + std::to_string(container) + "_" + std::to_string(++counter);
+		if (sysModules == nullptr || PyDict_GetItemString(sysModules, candidate.c_str()) == nullptr)
+		{
+			return candidate;
+		}
+	}
+}
+
 PyObject* PyBdImportScript(PyObject*, PyObject* args, PyObject* kwargs)
 {
 	if (!CheckEngineThread()) return nullptr;
@@ -1656,7 +1738,27 @@ PyObject* PyBdImportScript(PyObject*, PyObject* args, PyObject* kwargs)
 		PyErr_SetString(PyExc_RuntimeError, "import_script must be called while a mod script or callback is executing");
 		return nullptr;
 	}
-	std::string moduleName = requestedName == nullptr ? "biaseddoom_vfs_helper" : requestedName;
+	std::string moduleName;
+	if (requestedName != nullptr)
+	{
+		if (IsDeniedVfsModuleName(requestedName))
+		{
+			PyErr_Format(PyExc_ValueError, "module_name '%s' is reserved and cannot be used for import_script", requestedName);
+			return nullptr;
+		}
+		PyObject* sysModules = PyImport_GetModuleDict();
+		PyObject* existing = sysModules == nullptr ? nullptr : PyDict_GetItemString(sysModules, requestedName);
+		if (existing != nullptr && !IsSameVfsModulePath(existing, path))
+		{
+			PyErr_Format(PyExc_RuntimeError, "module_name '%s' is already used by a module from a different path", requestedName);
+			return nullptr;
+		}
+		moduleName = requestedName;
+	}
+	else
+	{
+		moduleName = UniqueVfsModuleName(currentContainer);
+	}
 	return ExecuteResourceModule(currentContainer, path, moduleName, false);
 }
 
@@ -3044,12 +3146,24 @@ std::string DumpStateJson()
 
 	// Merge the script RNG stream state under a reserved key so savegames
 	// restore deterministic bd.random() sequences; popped back out right
-	// after the dump so user scripts never observe it.
+	// after the dump so user scripts never observe it. A user script owning
+	// either reserved key is a hard serialization error on write: never
+	// overwrite it (the legacy key stays loadable only for old saves).
+	for (const char* reservedKey : { RngStateKey, LegacyRngStateKey })
+	{
+		if (PyDict_GetItemString(stateDictionary, reservedKey) != nullptr)
+		{
+			PyErr_Format(PyExc_RuntimeError, "biaseddoom.state key '%s' is reserved for engine RNG state", reservedKey);
+			Py_DECREF(json);
+			ReportPythonError("state serialization", "biaseddoom.state");
+			return {};
+		}
+	}
 	bool rngMerged = false;
 	PyObject* rngState = CaptureRngState();
 	if (rngState != nullptr)
 	{
-		rngMerged = PyDict_SetItemString(stateDictionary, "__rng_state__", rngState) == 0;
+		rngMerged = PyDict_SetItemString(stateDictionary, RngStateKey, rngState) == 0;
 		Py_DECREF(rngState);
 	}
 	else
@@ -3057,9 +3171,12 @@ std::string DumpStateJson()
 		ReportPythonError("state serialization", "biaseddoom rng state");
 	}
 
+	// allow_nan stays true on purpose: bd.state holding NaN/Infinity must
+	// round-trip (Python's json extension accepts these tokens on loads)
+	// instead of failing the whole save over one non-finite float.
 	PyObject* dumps = PyObject_GetAttrString(json, "dumps");
 	PyObject* kwargs = Py_BuildValue("{s:O,s:O,s:O}",
-		"sort_keys", Py_True, "ensure_ascii", Py_False, "allow_nan", Py_False);
+		"sort_keys", Py_True, "ensure_ascii", Py_False, "allow_nan", Py_True);
 	PyObject* args = PyTuple_Pack(1, stateDictionary);
 	PyObject* encoded = dumps == nullptr ? nullptr : PyObject_Call(dumps, args, kwargs);
 	std::string result;
@@ -3069,7 +3186,7 @@ std::string DumpStateJson()
 		if (text != nullptr) result = text;
 	}
 	else ReportPythonError("state serialization", "biaseddoom.state");
-	if (rngMerged && PyDict_DelItemString(stateDictionary, "__rng_state__") != 0)
+	if (rngMerged && PyDict_DelItemString(stateDictionary, RngStateKey) != 0)
 	{
 		PyErr_Clear();
 	}
@@ -3101,12 +3218,20 @@ bool LoadStateJson(const std::string& encoded)
 		if (success)
 		{
 			// Consume the reserved RNG snapshot before the "load" event fires
-			// and before user scripts can observe it.
-			PyObject* rngState = PyDict_GetItemString(stateDictionary, "__rng_state__");
+			// and before user scripts can observe it. New saves carry
+			// RngStateKey; pre-4.15.15 saves may still use the legacy
+			// "__rng_state__" key, which is consumed (and deleted) the same way.
+			PyObject* rngState = PyDict_GetItemString(stateDictionary, RngStateKey);
+			const char* consumedKey = RngStateKey;
+			if (rngState == nullptr)
+			{
+				rngState = PyDict_GetItemString(stateDictionary, LegacyRngStateKey);
+				consumedKey = LegacyRngStateKey;
+			}
 			if (rngState != nullptr)
 			{
 				RestoreRngState(rngState);
-				PyDict_DelItemString(stateDictionary, "__rng_state__");
+				PyDict_DelItemString(stateDictionary, consumedKey);
 			}
 			else
 			{
@@ -3209,6 +3334,20 @@ bool IsActive()
 	return active;
 }
 
+void* BeginIdleWait()
+{
+	// PyEval_SaveThread releases the GIL; the caller must not touch any engine
+	// Python API until the returned state is passed to EndIdleWait.
+	if (!active) return nullptr;
+	return PyEval_SaveThread();
+}
+
+void EndIdleWait(void* state)
+{
+	if (state == nullptr) return;
+	PyEval_RestoreThread(static_cast<PyThreadState*>(state));
+}
+
 bool Initialize()
 {
 	if (active) return true;
@@ -3287,7 +3426,20 @@ void Shutdown()
 
 bool Reload()
 {
-	std::string state = DumpStateJson();
+	Printf(TEXTCOLOR_YELLOW "Python: reloading scripts. Scheduled tasks and callbacks do not survive a reload and will be cleared; re-register them from your engine_start/map_load handlers.\n");
+	// Snapshot bd.state before tearing the interpreter down. When the state
+	// dictionary holds user data it must serialize: bailing out here leaves
+	// the running runtime (and its state) intact instead of losing it.
+	std::string state;
+	if (stateDictionary != nullptr && PyDict_Size(stateDictionary) > 0)
+	{
+		state = DumpStateJson();
+		if (state.empty())
+		{
+			Printf(TEXTCOLOR_RED "Python reload ABORTED: biaseddoom.state could not be serialized; the current scripts and state were left running. Fix the serialization error and try again.\n");
+			return false;
+		}
+	}
 	const bool hadLevel = primaryLevel != nullptr && primaryLevel->MapName.IsNotEmpty();
 	Shutdown();
 	if (!Initialize()) return false;
@@ -3308,6 +3460,9 @@ void OnWorldLoaded()
 	if (!HasCallbacks("map_load")) return;
 	PyObject* event = BuildEvent("map_load");
 	DictSetBool(event, "from_savegame", savegamerestore);
+	// Hub re-entry restores the world from a snapshot without counting as a
+	// savegame restore; framework packs use from_hub to skip fresh-map setup.
+	DictSetBool(event, "from_hub", primaryLevel != nullptr && primaryLevel->FromSnapshot && !savegamerestore);
 	InvokeEvent("map_load", event);
 }
 
@@ -3383,8 +3538,13 @@ void ScanCustomActions()
 void OnWorldPreTick()
 {
 	if (!active) return;
-	ScanCustomActions();
+	// Slot invalidations queued by the engine GC markers may run Python
+	// decrefs now that we are outside any marker context.
+	GameApi::DrainDeferredInvalidations();
+	// Reset the per-tic budget BEFORE the custom-action scan so input edges
+	// are never dropped just because the previous tic saturated the budget.
 	tickBudgetMicroseconds = 0;
+	ScanCustomActions();
 	++taskClock;
 	ProcessScheduledTasks();
 	if (!HasCallbacks("pre_tick")) return;
@@ -3809,6 +3969,13 @@ void SerializeState(FSerializer& arc)
 		InvokeEvent("save", BuildEvent("save"));
 		gameplayMutationBlocked = wasBlocked;
 		encoded = DumpStateJson().c_str();
+		if (encoded.IsEmpty() && stateDictionary != nullptr && PyDict_Size(stateDictionary) > 0)
+		{
+			// Abort the save rather than archive an empty blob over a
+			// non-empty bd.state: the savegame would load back with all
+			// Python state silently lost.
+			I_Error("Save aborted: biaseddoom.state could not be serialized; writing the savegame would lose non-empty Python state.");
+		}
 	}
 	arc("pythonstate", encoded);
 	if (arc.isReading() && encoded.IsNotEmpty())
@@ -3860,6 +4027,8 @@ void PrintStatus()
 
 bool IsCompiled() { return false; }
 bool IsActive() { return false; }
+void* BeginIdleWait() { return nullptr; }
+void EndIdleWait(void*) {}
 bool Initialize()
 {
 	const bool disabled = Args != nullptr && Args->CheckParm("-nopython");

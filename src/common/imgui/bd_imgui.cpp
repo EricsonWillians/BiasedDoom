@@ -58,8 +58,11 @@ static bool sNavEnabled = true;	// mirrors io.ConfigFlags & ImGuiConfigFlags_Nav
 // Runtime font registry. Source bytes are arena-owned (never freed), so
 // atlas rebuilds can re-add fonts without dangling. Each atlas upload gets
 // its own pixel block; old atlas textures stay alive in TexMan (draw data
-// produced before a rebuild keeps referencing them) and are documented as
-// leaks-by-design for the process lifetime.
+// produced before a rebuild keeps referencing them), which makes every
+// upload effectively process-lifetime memory. Growth is therefore capped at
+// MaxAtlasUploads: once the cap is hit, further rebuilds and font-registry
+// mutations are refused (loud warning, last valid atlas and font set
+// retained).
 struct BdFontEntry
 {
 	FString Name;
@@ -77,6 +80,9 @@ static int sDefaultFontIndex = -1;
 static bool sPendingAtlasRebuild = false;	// mutation arrived mid-frame
 static bool sPreInitAtlasDirty = false;		// mutation before the first Frame()
 static unsigned int sAtlasSerial = 0;
+static unsigned int sAtlasUploadCount = 0;	// successful atlas texture uploads (process lifetime)
+static bool sAtlasCapWarned = false;
+enum { MaxAtlasUploads = 32 };	// generous bound; each upload owns its own pixel block forever
 static float sUiScale = 1.0f;
 
 //===========================================================================
@@ -132,6 +138,7 @@ static FGameTexture* UploadAtlasTexture(const char* name, const unsigned char* p
 	auto img = new FBdImGuiAtlasImage(owned, width, height);
 	auto tex = MakeGameTexture(new FImageTexture(img), name, ETextureType::MiscPatch);
 	TexMan.AddGameTexture(tex);
+	sAtlasUploadCount++;
 	return tex;
 }
 
@@ -177,6 +184,24 @@ static void CreateAtlasTexture()
 //
 //===========================================================================
 
+// Returns true once the atlas upload cap is reached, logging the one-time
+// loud warning on the first refusal. Past the cap the registry must not
+// diverge from the last valid atlas/font set, so the Python-facing mutation
+// APIs refuse as well (SetDefaultFont stays allowed: it only re-selects an
+// already-valid font).
+static bool AtlasCapReached()
+{
+	if (sAtlasUploadCount < MaxAtlasUploads) return false;
+	if (!sAtlasCapWarned)
+	{
+		sAtlasCapWarned = true;
+		Printf(TEXTCOLOR_RED "bd.imgui: font atlas upload cap (%d) reached; further font changes are ignored\n"
+			TEXTCOLOR_RED "and the last valid atlas/font set stays active. Restart the engine to load more fonts.\n",
+			MaxAtlasUploads);
+	}
+	return true;
+}
+
 // Rebuilds the atlas from the registry and uploads a new texture. The
 // caller must guarantee the atlas is unlocked (outside the frame).
 static void RebuildAtlas()
@@ -189,6 +214,12 @@ static void RebuildAtlas()
 		sPendingAtlasRebuild = true;
 		return;
 	}
+
+	// Refuse to grow texture memory without bound: every upload owns its pixel
+	// block for the process lifetime, so cap the number of uploads and keep
+	// serving the last valid atlas/fonts past that point.
+	if (AtlasCapReached())
+		return;
 
 	atlas->Clear();
 	for (BdFontEntry& entry : sFonts)
@@ -274,6 +305,11 @@ bool AddFontTTF(const char* name, const void* data, size_t dataSize, float sizeP
 		Printf(TEXTCOLOR_YELLOW "bd.imgui: font '%s' already exists; duplicate registration is not allowed.\n", name);
 		return false;
 	}
+	if (AtlasCapReached())
+	{
+		Printf(TEXTCOLOR_YELLOW "bd.imgui: add_font_ttf('%s') refused: the font atlas upload cap is reached.\n", name);
+		return false;
+	}
 
 	BdFontEntry entry;
 	entry.Name = name;
@@ -300,6 +336,11 @@ bool AddFontDefault(const char* name, float sizePixels, bool bitmap)
 		Printf(TEXTCOLOR_YELLOW "bd.imgui: font '%s' already exists; duplicate registration is not allowed.\n", name);
 		return false;
 	}
+	if (AtlasCapReached())
+	{
+		Printf(TEXTCOLOR_YELLOW "bd.imgui: add_font_default('%s') refused: the font atlas upload cap is reached.\n", name);
+		return false;
+	}
 
 	BdFontEntry entry;
 	entry.Name = name;
@@ -323,6 +364,11 @@ bool RemoveFont(const char* name)
 		Printf(TEXTCOLOR_YELLOW "bd.imgui: the built-in 'Default' font cannot be removed.\n");
 		return false;
 	}
+	if (AtlasCapReached())
+	{
+		Printf(TEXTCOLOR_YELLOW "bd.imgui: remove_font('%s') refused: the font atlas upload cap is reached.\n", name);
+		return false;
+	}
 	sFonts.Delete(index);
 	if (sDefaultFontIndex == index || sDefaultFontIndex >= (int)sFonts.Size())
 	{
@@ -338,6 +384,11 @@ bool RemoveFont(const char* name)
 
 void ClearFonts()
 {
+	if (AtlasCapReached())
+	{
+		Printf(TEXTCOLOR_YELLOW "bd.imgui: clear_fonts refused: the font atlas upload cap is reached.\n");
+		return;
+	}
 	sDefaultFontIndex = -1;
 	for (int i = (int)sFonts.Size() - 1; i >= 0; i--)
 	{

@@ -4,8 +4,47 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The `map_load` Python event now carries `from_hub` (true when the map was
+  entered by reopening a hub snapshot) alongside `from_savegame`, so mods and
+  frameworks can tell hub restores apart from savegame restores.
+- The engine releases the Python GIL only around its idle frame wait, letting
+  Python-created background threads run while the engine is idle; every
+  `biaseddoom` engine API remains engine-callback-thread-only, with a
+  thread-safe queue as the documented handoff pattern.
+- `bd.import_script` gives unnamed helpers unique generated module names, and
+  an explicit `module_name` can no longer hijack an occupied module,
+  `biaseddoom`, shipped `bd_*` frameworks, or guarded standard-library
+  modules.
+- `bd_npcs.NPCManager.spawn_all(from_savegame, from_hub)` now also adopts
+  hub-restored actors by TID; NPCs without a `tid_base` receive a stable
+  auto-allocated nonzero TID that persists for save/hub rebinds, and an
+  occupied configured TID warns and advances instead of duplicating the
+  actor.
+- `bd_horror` light programs treat a hub restore like a savegame restore,
+  keeping captured original light levels instead of re-sampling them.
+
 ### Fixed
 
+- `bd.state` JSON now round-trips `NaN`/`Infinity` via Python's JSON dialect
+  instead of failing the whole state save; the deterministic RNG state moved
+  to the reserved key `__biaseddoom_rng_state_v1__` (legacy `__rng_state__`
+  saves still load), and `py_reload` aborts before interpreter shutdown when
+  non-empty state fails serialization, warning that tasks and callbacks do
+  not survive reload.
+- `bd_dialogue` now ends active sessions on `map_unload` (reason
+  `"map_change"`), and `NPCManager.begin_talk` recovers from a stale or
+  inactive session instead of soft-locking all conversation.
+- Hardened malformed-content handling across the engine: VOC audio lumps,
+  PK3 archive entries, and network packets validate sizes before reading;
+  the save compressor falls back to stored (uncompressed) output when
+  compression fails; GL node path and cache lookups are hardened; the
+  sector-light bleed rebuild is rate-limited; Vulkan push-constant usage is
+  checked against the device limit; dynamic light culling is radius-aware;
+  Vulkan screenshots capture custom post-process shaders; bloom radius
+  scales as a single value; ImGui atlas rebuilds are bounded; and screenshot
+  key binding matching is case-insensitive.
 - Hardened the glTF loader against malformed mod content: accessor buffer
   ranges, buffer-view indices, child/joint node indices, interleaved
   strides, cyclic node hierarchies, and animation frame allocations are

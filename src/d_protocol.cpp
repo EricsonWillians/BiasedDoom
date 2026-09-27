@@ -217,14 +217,19 @@ void WriteUserCmdMessage(const usercmd_t& cmd, const usercmd_t* basis, TArrayVie
 }
 
 // Reads through the user command without actually setting any of its info. Used to get the size
-// of the command when getting the length of the stream.
-void SkipUserCmdMessage(TArrayView<uint8_t>& stream)
+// of the command when getting the length of the stream. Returns false if the stream is
+// malformed or truncated.
+bool SkipUserCmdMessage(TArrayView<uint8_t>& stream)
 {
 	while (true)
 	{
+		if (stream.Size() == 0)
+			return false;
 		const uint8_t type = ReadInt8(stream);
 		if (type == DEM_USERCMD)
 		{
+			if (stream.Size() < 1)
+				return false;
 			int skip = 1;
 			if (stream[0] & UCMDF_PITCH)
 				skip += 2;
@@ -240,19 +245,25 @@ void SkipUserCmdMessage(TArrayView<uint8_t>& stream)
 				skip += 2;
 			if (stream[0] & UCMDF_BUTTONS)
 			{
-				AdvanceStream(stream, 1);
+				// Each MoreButtons walk step must leave a byte to test.
+				if (!TryAdvanceStream(stream, 1) || stream.Size() < 1)
+					return false;
 				if (stream[0] & MoreButtons)
 				{
-					AdvanceStream(stream, 1);
+					if (!TryAdvanceStream(stream, 1) || stream.Size() < 1)
+						return false;
 					if (stream[0] & MoreButtons)
 					{
-						AdvanceStream(stream, 1);
+						if (!TryAdvanceStream(stream, 1) || stream.Size() < 1)
+							return false;
 						if (stream[0] & MoreButtons)
-							AdvanceStream(stream, 1);
+							if (!TryAdvanceStream(stream, 1))
+								return false;
 					}
 				}
 			}
-			AdvanceStream(stream, skip);
+			if (!TryAdvanceStream(stream, skip))
+				return false;
 			break;
 		}
 		else if (type == DEM_EMPTYUSERCMD)
@@ -261,9 +272,11 @@ void SkipUserCmdMessage(TArrayView<uint8_t>& stream)
 		}
 		else
 		{
-			Net_SkipCommand(type, stream);
+			if (!Net_SkipCommandEx(type, stream))
+				return false;
 		}
 	}
+	return true;
 }
 
 void ReadUserCmdMessage(TArrayView<uint8_t>& stream, int player, int tic)
@@ -277,8 +290,10 @@ void ReadUserCmdMessage(TArrayView<uint8_t>& stream, int player, int tic)
 
 	// Skip until we reach the player command. Event data will get read off once the
 	// tick is actually executed.
-	int type;
-	while ((type = ReadInt8(stream)) != DEM_USERCMD && type != DEM_EMPTYUSERCMD)
+	// An empty stream leaves type at DEM_EMPTYUSERCMD so the command below
+	// falls back to the previous tic instead of testing an uninitialized value.
+	int type = DEM_EMPTYUSERCMD;
+	while (stream.Size() > 0 && (type = ReadInt8(stream)) != DEM_USERCMD && type != DEM_EMPTYUSERCMD)
 		Net_SkipCommand(type, stream);
 
 	// Subtract a byte to account for the fact the stream head is now sitting on the

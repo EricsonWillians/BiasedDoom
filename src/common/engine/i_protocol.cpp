@@ -180,6 +180,16 @@ void AdvanceStream(TArrayView<uint8_t>& stream, size_t bytes)
 	stream = TArrayView(stream.Data() + bytes, stream.Size() - bytes);
 }
 
+// Bounds-checked variant for untrusted packet/demo data: refuses to advance
+// past the end of the stream instead of relying on an assert.
+bool TryAdvanceStream(TArrayView<uint8_t>& stream, size_t bytes)
+{
+	if (bytes > stream.Size())
+		return false;
+	stream = TArrayView(stream.Data() + bytes, stream.Size() - bytes);
+	return true;
+}
+
 // Checked stream functions
 
 char* ReadString(TArrayView<uint8_t>& stream)

@@ -66,6 +66,15 @@ namespace PythonRuntime
 	// command=name. Pure notification: never mutates world state.
 	void OnUiCommand(const char* name);
 
+	// Releases the GIL around a blocking engine wait so the caller (e.g. the
+	// network loop) can idle without stalling other Python threads. While the
+	// returned state is live, NO engine Python API (events, handles, bd.*) may
+	// be touched: only EndIdleWait re-acquires the interpreter. BeginIdleWait
+	// returns nullptr when the runtime is compiled out or inactive; EndIdleWait
+	// on a nullptr state is a no-op.
+	void* BeginIdleWait();
+	void EndIdleWait(void* state);
+
 	// Total Python errors reported this session, including dedup-suppressed
 	// repeats. Backs the -scripttest exit status.
 	unsigned int GetErrorCount();

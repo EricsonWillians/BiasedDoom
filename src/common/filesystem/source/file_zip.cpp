@@ -180,11 +180,28 @@ bool FZipFile::Open(LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 		DirectoryOffset = info.DirectoryOffset;
 	}
 	// Load the entire central directory. Too bad that this contains variable length entries...
+	// Reject obviously bogus directory locations before reading anything.
+	if (DirectoryOffset > (uint64_t)Reader.GetLength() || dirsize > (uint64_t)Reader.GetLength() - DirectoryOffset)
+	{
+		Printf(FSMessageLevel::Error, "%s: Central directory corrupted.", FileName);
+		return false;
+	}
 	void *directory = malloc(dirsize);
+	if (directory == nullptr)
+	{
+		Printf(FSMessageLevel::Error, "%s: Out of memory reading central directory.", FileName);
+		return false;
+	}
 	Reader.Seek(DirectoryOffset, FileReader::SeekSet);
-	Reader.Read(directory, dirsize);
+	if (Reader.Read(directory, dirsize) != (ptrdiff_t)dirsize)
+	{
+		free(directory);
+		Printf(FSMessageLevel::Error, "%s: Central directory corrupted.", FileName);
+		return false;
+	}
 
 	char *dirptr = (char*)directory;
+	char *dirend = (char*)directory + dirsize;
 
 	std::string name0, name1;
 	bool foundspeciallump = false;
@@ -194,22 +211,28 @@ bool FZipFile::Open(LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 	// This will only be done if there is either a MAPINFO, ZMAPINFO or GAMEINFO lump in the subdirectory, denoting a ZDoom mod.
 	if (NumLumps > 1) for (uint32_t i = 0; i < NumLumps; i++)
 	{
-		FZipCentralDirectoryInfo *zip_fh = (FZipCentralDirectoryInfo *)dirptr;
-
-		int len = LittleShort(zip_fh->NameLength);
-		std::string name(dirptr + sizeof(FZipCentralDirectoryInfo), len);
-
-		dirptr += sizeof(FZipCentralDirectoryInfo) +
-			LittleShort(zip_fh->NameLength) +
-			LittleShort(zip_fh->ExtraLength) +
-			LittleShort(zip_fh->CommentLength);
-
-		if (dirptr > ((char*)directory) + dirsize)	// This directory entry goes beyond the end of the file.
+		if (dirend - dirptr < (ptrdiff_t)sizeof(FZipCentralDirectoryInfo))
 		{
 			free(directory);
 			Printf(FSMessageLevel::Error, "%s: Central directory corrupted.", FileName);
 			return false;
 		}
+		FZipCentralDirectoryInfo *zip_fh = (FZipCentralDirectoryInfo *)dirptr;
+
+		uint32_t nameLen = LittleShort(zip_fh->NameLength);
+		uint32_t extraLen = LittleShort(zip_fh->ExtraLength);
+		uint32_t commentLen = LittleShort(zip_fh->CommentLength);
+		// The complete fixed header + name + extra + comment must fit in the
+		// remaining directory bytes before the name is used.
+		if ((uint64_t)sizeof(FZipCentralDirectoryInfo) + nameLen + extraLen + commentLen > (uint64_t)(dirend - dirptr))
+		{
+			free(directory);
+			Printf(FSMessageLevel::Error, "%s: Central directory corrupted.", FileName);
+			return false;
+		}
+		std::string name(dirptr + sizeof(FZipCentralDirectoryInfo), nameLen);
+
+		dirptr += sizeof(FZipCentralDirectoryInfo) + nameLen + extraLen + commentLen;
 	}
 
 	dirptr = (char*)directory;
@@ -217,21 +240,27 @@ bool FZipFile::Open(LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 	auto Entry = Entries;
 	for (uint32_t i = 0; i < NumLumps; i++)
 	{
-		FZipCentralDirectoryInfo *zip_fh = (FZipCentralDirectoryInfo *)dirptr;
-
-		int len = LittleShort(zip_fh->NameLength);
-		std::string name(dirptr + sizeof(FZipCentralDirectoryInfo), len);
-		dirptr += sizeof(FZipCentralDirectoryInfo) + 
-				  LittleShort(zip_fh->NameLength) + 
-				  LittleShort(zip_fh->ExtraLength) + 
-				  LittleShort(zip_fh->CommentLength);
-
-		if (dirptr > ((char*)directory) + dirsize)	// This directory entry goes beyond the end of the file.
+		if (dirend - dirptr < (ptrdiff_t)sizeof(FZipCentralDirectoryInfo))
 		{
 			free(directory);
 			Printf(FSMessageLevel::Error, "%s: Central directory corrupted.", FileName);
 			return false;
 		}
+		FZipCentralDirectoryInfo *zip_fh = (FZipCentralDirectoryInfo *)dirptr;
+
+		uint32_t nameLen = LittleShort(zip_fh->NameLength);
+		uint32_t extraLen = LittleShort(zip_fh->ExtraLength);
+		uint32_t commentLen = LittleShort(zip_fh->CommentLength);
+		// The complete fixed header + name + extra + comment must fit in the
+		// remaining directory bytes before the name is used.
+		if ((uint64_t)sizeof(FZipCentralDirectoryInfo) + nameLen + extraLen + commentLen > (uint64_t)(dirend - dirptr))
+		{
+			free(directory);
+			Printf(FSMessageLevel::Error, "%s: Central directory corrupted.", FileName);
+			return false;
+		}
+		std::string name(dirptr + sizeof(FZipCentralDirectoryInfo), nameLen);
+		dirptr += sizeof(FZipCentralDirectoryInfo) + nameLen + extraLen + commentLen;
 
 		// skip Directories
 		if (name.empty() || (name.back() == '/' && LittleLong(zip_fh->UncompressedSize32) == 0))

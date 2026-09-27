@@ -12,6 +12,7 @@
 #include "g_levellocals.h"
 #include "g_mapinfo.h"
 #include "hw_cvars.h"
+#include "i_time.h"
 #include "hw_drawinfo.h"
 #include "r_sky.h"
 #include "v_video.h"
@@ -131,12 +132,6 @@ static void BuildSectorBleedMap(FLevelLocals *Level, ELightMode lightmode, float
 			sector_t *sector = Level->PointInSector(worldX, worldY);
 			uint8_t *pixel = pixels + (y * width + x) * 4;
 
-			if (sector == nullptr)
-			{
-				pixel[3] = 255;
-				continue;
-			}
-
 			const unsigned sectorIndex = unsigned(sector->sectornum) * 4;
 			double red = sectorColors[sectorIndex + 0];
 			double green = sectorColors[sectorIndex + 1];
@@ -207,8 +202,19 @@ void HW_UpdateSectorLightBleed(FLevelLocals *Level, ELightMode lightmode)
 	if (hash == Level->SectorBleedHash && Level->SectorBleedData.Size() != 0)
 		return;
 
+	// Rate-limit rebuilds: flickering sector light can change the hash every
+	// frame, and rebuilding/uploading the map each time is not free. While a
+	// valid map exists and the last rebuild is recent, keep serving it; the
+	// stale hash keeps this check live so the refresh lands once the window
+	// elapsed. First build (no timestamp) or empty data always builds now.
+	const uint64_t now = I_msTimeFS();
+	if (Level->SectorBleedData.Size() != 0 && Level->SectorBleedLastRebuild != 0 &&
+		now - Level->SectorBleedLastRebuild < 100)
+		return;
+
 	BuildSectorBleedMap(Level, lightmode, distance);
 	Level->SectorBleedHash = hash;
+	Level->SectorBleedLastRebuild = now;
 	screen->InitSectorBleed(Level->SectorBleedWidth, Level->SectorBleedHeight, Level->SectorBleedData);
 }
 

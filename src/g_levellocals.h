@@ -528,6 +528,7 @@ public:
 	float SectorBleedInvWidth = 0.0f;
 	float SectorBleedInvHeight = 0.0f;
 	uint64_t SectorBleedHash = 0;
+	uint64_t SectorBleedLastRebuild = 0;	// I_msTimeFS() stamp of the last rebuild/upload
 	float SectorBleedDistance = 0.0f;
 	TArray<uint8_t> SectorBleedData;
 

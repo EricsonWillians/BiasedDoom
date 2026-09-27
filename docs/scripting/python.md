@@ -318,11 +318,19 @@ raise `RuntimeError` here because no active level exists.
 
 ### `map_load`
 
-Extra field:
+Extra fields:
 
 | Key | Type | Meaning |
 |-----|------|---------|
 | `from_savegame` | `bool` | `True` when the map was entered by restoring a save. |
+| `from_hub` | `bool` | `True` when the map was entered by reopening a hub snapshot (a hub-travel restore). |
+
+`from_savegame` and `from_hub` are mutually exclusive restore markers: a
+savegame load sets only `from_savegame`, reopening a hub snapshot sets only
+`from_hub`, and an ordinary map entry sets neither. Frameworks such as
+`bd_npcs.NPCManager.spawn_all` and `bd_horror` light programs adopt restored
+world state on either marker; treat them identically unless your mod
+intentionally distinguishes the two restore paths.
 
 Runs after existing static and local ZScript `WorldLoaded` handlers and before
 deferred ACS scripts are processed for an ordinary map entry.
@@ -2406,6 +2414,13 @@ Important differences from normal `import`:
   `import my_mod_rewards` — import in dependency order, because a module
   only becomes importable once its `import_script` call has finished
   (circular imports are not supported).
+- Omitting `module_name` gives the module a unique generated VFS name, so
+  unnamed helpers never collide with (or overwrite) each other or with
+  modules imported by other mods.
+- An explicit `module_name` must be free: it cannot hijack an already
+  occupied module, the `biaseddoom` engine module, any shipped `bd_*`
+  framework package, or a guarded standard-library module; the import is
+  refused with an error instead.
 - Store the returned module instead of calling `import_script` every tic.
 - Conventional `on_*` names inside a helper are not auto-registered. The
   helper can explicitly use `@bd.on(...)` if it intentionally owns callbacks.
@@ -2435,9 +2450,9 @@ is guaranteed to exist). Currently shipped:
 | `bd_vtm` | Vampire-the-masquerade-inspired chronicle rules: generation-sized `BloodPool` with nightly upkeep, `Hunger` accrual and deterministic frenzy checks, `Humanity` degeneration rolls, blood-powered `Discipline`s with cooldowns (built-in `celerity`/`obfuscate`/`potence`/`dominate`), `feed()` with witness-driven `Masquerade` violations, `Factions` reputation gating `bd_quests` quests (`requires_faction`), and a `VtMState` container that persists everything through `bd.state`. `bd_vtm.hud.VtMHud` renders the state as a Dear ImGui window, with `bind_hud_toggle(hud, key=...)` for a console alias/key-bind toggle. See the package docstrings and [`examples/python/28_vtm_chronicle/`](../../examples/python/28_vtm_chronicle/) for a complete chronicle. |
 | `bd_dnd` | D&D-inspired d20 rules: `roll("2d6+3")` dice notation and `d20()` advantage/criticals, 5e ability scores/modifiers, skill/ability/save checks with proficiency, `Character` XP levels with hit-die level-ups and per-rest resources, `track_xp_from_kills` monster XP with exact player-credit attribution (`player_index=0` default; `None` for the legacy any-death policy), `Party`/`PartyState` multi-character rosters with shared XP and `bd.state` persistence, world helpers (`LockedDoorCheck` bash/pick a locked door, `TrapZone` sector damage saves, `DamageSaveRule` retroactive heal-back saves against incoming damage, `DialogueSkillGate` conversation checks), and a `CharacterState` container that persists everything through `bd.state` (mutually exclusive with `PartyState`: use one per character). `bd_dnd.sheet.CharacterSheet` renders the character (stats, HP/XP bars, color-coded roll log) as a Dear ImGui window, `PartySheet` adds a selectable roster column, and `bind_sheet_toggle(sheet, key=...)` wires a console alias/key-bind toggle. `bd_dnd.Companion` (lazily re-exported from `bd_dnd.companions`) binds a party member to a world actor: a friendly follower (FRIENDLY set, COUNTKILL cleared) that shadows the player on a scheduled follow loop with fit-checked teleport catch-up (spawn and catch-up try a candidate ring around the player and never clip into geometry; `bind(party, anchor=...)` pins the first spawn to a probed slot; a follower that cannot close distance for 30 tics, for example across a ledge, teleports early instead of grinding against geometry), fights what hurts the player, what the player hurts, and what hurts it, and, while combat is recent, proactively engages the nearest visible hostile near the player by assigning its (writable) `target` and nudging the native chase AI (a target the native AI acquired itself is left alone), and two-way-syncs its actor health with the member's RPG hp via the new `Character.on_hp_changed` hook (`set_hp`/`rest`/`level_up` fire it). Companion death incapacitates the member (`hp` 0) and `revive()` respawns the actor at half max hp with a fresh TID; descriptors registered through `PartyState.add_companion` ride along in saves and re-bind by TID after a checkpoint load. The `bd_dnd.classes` layer adds class-based progression: `CharacterClass` definitions (hit die, primary abilities, save proficiencies, class skills, per-level feature dicts with optional `apply` callables, per-rest resource pools, starting equipment) attach with `bind_class`, which applies the level-1 feature package immediately and later levels through the character's `on_level_up` hook (levels in `CLASS_LEVELS_ASI` queue two points on `character.pending_asi`). `CreationWizard` is a pure, engine-free creation model (standard array, point buy, or rolled scores, plus the class-skill picks) with a validating `finish()` that raises `ValueError`, and `track_skill_use`/`advancement_check`/`skill_bonus` grow a flat use-based mastery bonus; class definitions are never persisted (only the `class_id` name and the use/mastery counters ride along in `CharacterState`). See the package docstrings and [`examples/python/29_dnd_dungeon/`](../../examples/python/29_dnd_dungeon/) for a map-agnostic delve. |
 | `bd_rpg` | Elemental combat RPG layer: a `DamageTypes` registry (physical/fire/ice/poison/acid/shock/holy/dark pre-registered, plus custom types), per-actor and class-level damage affinities (`set_affinity`/`affinity_of`/`set_class_affinity` — 1.0 neutral, 0.0 immune, 2.0 weak; per-actor overrides class, class defaults match lazily by class name), and `resolve_attack(attacker, defender, attack)` running the full pipeline — optional d20-style hit check, crit roll, `NdM+K` dice (a deliberately small local parser keeping the pack independent of `bd_dnd`), affinity multiplier, flat soak (`min(soak, dmg-1)` so at least 1 gets through unless immune) — applied through `Actor.damage`, so the `actor_before_damage` mutable filter has the last word. The `StatusEngine` singleton `status` applies timed `refresh`/`stack`/`independent` effects from ONE consolidated repeating task (built-ins `burning`/`poisoned`/`slowed`/`stunned`/`regenerating`), with state in `bd.actor_data`. `LootTable` weighted drops plus `LootRules` wiring `actor_died` with exact player-credit attribution and common/uncommon/rare/legendary flash+sound feedback (the screen flash is optional: `LootRules(screen_feedback=False)` skips it and keeps the sound), and genre-neutral kill-XP glue (`award_kill_xp`/`track_kill_xp`). `RpgState` persists player affinities/soak and TID-tagged status timers through `bd.state` (definitions are script-side constants, never persisted). See the package docstrings and [`examples/python/31_elemental_combat/`](../../examples/python/31_elemental_combat/) for a complete scenario. |
-| `bd_dialogue` | Branching NPC dialogue trees: data-driven `Dialogue`/`Node`/`Choice` definitions with build-time validation of every `next`/`fail_next` reference, gated choices (`condition(ctx)` hiding, `faction_gate=(name, min_standing)` locking behind `bd_vtm` reputation, `skill_check=(skill, dc)` routing success/failure through `bd_dnd` `Character.skill_check` with an `rng=` escape hatch for scripted test doubles), per-choice `effect(ctx)` hooks and native Strife journal writes via `log=(text, number)`, and real-time `DialogueSession`s (NPC velocity zeroed, one session at a time, stale-NPC auto-end; sessions are transient — nothing is saved mid-dialogue). `bd_dialogue.ui.DialogueUI` renders the active session as a Dear ImGui window — live NPC sprite portrait via `imgui.image(npc_ref)`, faction-colored speaker name, wrapped text, a ~3 s skill-check result flash, and numbered selectable choices (mouse, ImGui keyboard navigation, or per-key digit hotkeys via `bd.imgui.is_key_pressed`). Coexists with the native Strife conversation system. See the package docstrings and [`examples/python/32_dialogue_trees/`](../../examples/python/32_dialogue_trees/) for a complete fixture. |
-| `bd_horror` | Horror UX layer: `bd_horror.theme` pushes a full horror skin over `bd.imgui` (near-black windows, dried-blood accents, bone text, square frames; `apply()`/`clear()` track exact push counts) with widget helpers (`begin_window`, `section`, per-tone pulsing `bar`, `omen_text`, `kv_row`, bordered `frame_image` portrait plates) — all legal only inside `imgui_frame`. `bd_horror.toasts` queues diegetic notifications (`info`/`quest`/`loot`/`omen`/`harm`, per-kind palette color, ASCII symbol prefix, stock-Doom UI sound) rendered top-right with fade-in/hold/fade-out timing, plus a history ring for headless autotests. `bd_horror.atmosphere` is the dread machine: `Dread` (a 0-100 meter rising in darkness and near monsters, spiked by player damage, with 25/50/75/100 threshold callbacks, a dread-scaled heartbeat, a display-list vignette, and whisper stings), `LightManager` sector-light programs (`candle`/`fluorescent`/`blackout`, tag-based and restore-on-stop), and `StalkerDirector` (spawns a monster behind the player at high dread). `HorrorState` persists dread and program descriptors through `bd.state` like `bd_vtm.VtMState`. See the package docstrings for usage. |
-| `bd_npcs` | NPC hub layer: `NPCDefinition`/`NPCManager` register world NPCs (actor class, relative-to-player or absolute spawn, packed `tint`, dialogue source, `tid_base` stable TIDs) and spawn them friendly/still on `map_load`, adopting savegame-restored actors by TID instead of duplicating them. `Disposition` keeps per-NPC values in [-100, 100] with `hostile`/`cold`/`neutral`/`warm`/`trusted` standings, persisted through `bd.state` (a definition's `start_disposition` seeds only NPCs never met). `manager.nearest`/`prompt`/`begin_talk` give nearest-NPC talk targeting: `begin_talk` opens a `bd_dialogue` session whose ctx adds `disposition`, `standing`, `npc_id`, and `dispositions` (one conversation at a time), with a restylable `PROMPT_FORMAT`. `NPCManager.retire(npc_id)` takes an NPC off duty (the recruit who becomes a follower): the actor leaves the world, the manager stops tracking and respawning it across savegames, and its disposition standing survives. `Service`/`HealerService` (currency fee behind a standing floor, heals the pawn and a `bd_dnd` character's RPG hp) and `TrainerService` (`bd_dnd.classes.advancement_check` rolls) implement offers; `Shop` is a currency store with stock counts, restock timers, refund-on-failure buys, and count-only persistence, plus a guarded ImGui `ShopUI`. See the package docstrings for usage. |
+| `bd_dialogue` | Branching NPC dialogue trees: data-driven `Dialogue`/`Node`/`Choice` definitions with build-time validation of every `next`/`fail_next` reference, gated choices (`condition(ctx)` hiding, `faction_gate=(name, min_standing)` locking behind `bd_vtm` reputation, `skill_check=(skill, dc)` routing success/failure through `bd_dnd` `Character.skill_check` with an `rng=` escape hatch for scripted test doubles), per-choice `effect(ctx)` hooks and native Strife journal writes via `log=(text, number)`, and real-time `DialogueSession`s (NPC velocity zeroed, one session at a time, stale-NPC auto-end; sessions are transient — nothing is saved mid-dialogue). Any active session is ended with the `"map_change"` reason on `map_unload`, so a conversation never survives a map transition or squats the one-session slot; `NPCManager.begin_talk` likewise ends and recovers from a stale/inactive session instead of soft-locking talk. `bd_dialogue.ui.DialogueUI` renders the active session as a Dear ImGui window — live NPC sprite portrait via `imgui.image(npc_ref)`, faction-colored speaker name, wrapped text, a ~3 s skill-check result flash, and numbered selectable choices (mouse, ImGui keyboard navigation, or per-key digit hotkeys via `bd.imgui.is_key_pressed`). Coexists with the native Strife conversation system. See the package docstrings and [`examples/python/32_dialogue_trees/`](../../examples/python/32_dialogue_trees/) for a complete fixture. |
+| `bd_horror` | Horror UX layer: `bd_horror.theme` pushes a full horror skin over `bd.imgui` (near-black windows, dried-blood accents, bone text, square frames; `apply()`/`clear()` track exact push counts) with widget helpers (`begin_window`, `section`, per-tone pulsing `bar`, `omen_text`, `kv_row`, bordered `frame_image` portrait plates) — all legal only inside `imgui_frame`. `bd_horror.toasts` queues diegetic notifications (`info`/`quest`/`loot`/`omen`/`harm`, per-kind palette color, ASCII symbol prefix, stock-Doom UI sound) rendered top-right with fade-in/hold/fade-out timing, plus a history ring for headless autotests. `bd_horror.atmosphere` is the dread machine: `Dread` (a 0-100 meter rising in darkness and near monsters, spiked by player damage, with 25/50/75/100 threshold callbacks, a dread-scaled heartbeat, a display-list vignette, and whisper stings), `LightManager` sector-light programs (`candle`/`fluorescent`/`blackout`, tag-based and restore-on-stop), and `StalkerDirector` (spawns a monster behind the player at high dread). Light programs re-bind on every `map_load` and treat a hub restore (`from_hub`) exactly like a savegame restore (`from_savegame`): both keep the captured original light levels and in-memory program state instead of re-sampling the restored map. `HorrorState` persists dread and program descriptors through `bd.state` like `bd_vtm.VtMState`. See the package docstrings for usage. |
+| `bd_npcs` | NPC hub layer: `NPCDefinition`/`NPCManager` register world NPCs (actor class, relative-to-player or absolute spawn, packed `tint`, dialogue source, `tid_base` stable TIDs) and spawn them friendly/still on `map_load` via `manager.spawn_all(from_savegame=event.get("from_savegame", False), from_hub=event.get("from_hub", False))`, adopting savegame- and hub-restored actors by TID instead of duplicating them. With a `tid_base`, `tid_base + registration index` is assigned and an occupied TID warns and advances to the next free value rather than duplicating; without one, a stable nonzero TID is auto-allocated after the spawn (guarded probe from 31000) and persisted, so rebinds work for every NPC. `Disposition` keeps per-NPC values in [-100, 100] with `hostile`/`cold`/`neutral`/`warm`/`trusted` standings, persisted through `bd.state` (a definition's `start_disposition` seeds only NPCs never met). `manager.nearest`/`prompt`/`begin_talk` give nearest-NPC talk targeting: `begin_talk` opens a `bd_dialogue` session whose ctx adds `disposition`, `standing`, `npc_id`, and `dispositions` (one conversation at a time; a stale or inactive session is ended, never a soft-lock), with a restylable `PROMPT_FORMAT`. `NPCManager.retire(npc_id)` takes an NPC off duty (the recruit who becomes a follower): the actor leaves the world, the manager stops tracking and respawning it across savegames, and its disposition standing survives. `Service`/`HealerService` (currency fee behind a standing floor, heals the pawn and a `bd_dnd` character's RPG hp) and `TrainerService` (`bd_dnd.classes.advancement_check` rolls) implement offers; `Shop` is a currency store with stock counts, restock timers, refund-on-failure buys, and count-only persistence, plus a guarded ImGui `ShopUI`. See the package docstrings for usage. |
 
 `bd_horror` is the horror UX layer: it bundles presentation (the ImGui skin and the toast queue) with atmosphere simulation (dread, light programs, stalkers) so a mod can stand up a coherent survival-horror feel with a few calls. Everything world-facing runs on `bd.schedule` tasks of at least 35 tics and pushes actor filters into `bd.actor_refs` keyword arguments, per the [performance guide](../development/python-performance.md); all randomness flows through the deterministic script RNG, so candle flicker and stalker rolls resume exactly after a checkpoint load. Light programs bind to sector tags rather than TIDs, which is what lets them rebind naturally across map transitions and savegames.
 
@@ -2465,16 +2480,23 @@ The entire dictionary is serialized with Python's `json` module. Store only:
 - dictionaries with string keys;
 - lists;
 - strings;
-- integers and finite floats;
+- integers and floats (including `NaN` and infinities, which round-trip
+  through the engine's Python-JSON dialect);
 - booleans;
 - `None`.
 
 Do not store modules, functions, sets, bytes, actor snapshots that you expect
 to stay live, open files, custom class instances, or other non-JSON objects.
 
-Tuples encode as JSON arrays and return as lists. Avoid `NaN` and infinities
-for portability even though a particular Python JSON implementation may emit
-them.
+Tuples encode as JSON arrays and return as lists.
+
+The deterministic script RNG state rides inside `bd.state` under the reserved
+key `__biaseddoom_rng_state_v1__`; never read, write, or delete that key
+yourself. The legacy `__rng_state__` name is reserved on write too — storing
+your own value under either key fails state serialization — but savegames
+written by older engines under the legacy key still load (the value is
+migrated); new saves always use the reserved `__biaseddoom_rng_state_v1__`
+name.
 
 ### Save sequence
 
@@ -2486,8 +2508,10 @@ When saving the primary level:
 4. Existing ACS module/deferred/global serialization and ZScript thinker/event
    serialization continue through their normal paths.
 
-If encoding fails, the traceback is logged. Fix the bad state type; do not
-assume a save contains Python state merely because the rest of the game saved.
+If encoding fails while `bd.state` is non-empty, the save is **aborted**
+(`I_Error`) rather than written without its Python state; the traceback is
+logged. Fix the bad state type and save again. An empty `bd.state` still
+saves normally.
 
 ### Load sequence
 
@@ -2542,7 +2566,13 @@ py_reload
 
 does the following:
 
-1. JSON-encodes the current `bd.state`.
+1. JSON-encodes the current `bd.state`. When the state is non-empty and
+   encoding fails (a non-JSON value was stored), `py_reload` aborts here —
+   before `engine_shutdown` and interpreter teardown — with a console
+   warning naming the offending type; fix the state and run `py_reload`
+   again. Note that scheduled tasks and registered callbacks do **not**
+   survive reload: only `bd.state` is carried over, so any task or `bd.on`
+   registration must be re-created by the re-executed module code.
 2. Dispatches `engine_shutdown` and finalizes CPython.
 3. Rediscovers manifests and starts a fresh interpreter.
 4. Executes modules and dispatches `engine_start` with a fresh dictionary.
@@ -2651,8 +2681,12 @@ and excessive Python/C crossings.
 
 Every `biaseddoom` function must be called on that scripting thread. Do not
 call the API from `threading.Thread`, executor workers, or callbacks owned by a
-third-party background thread: the function raises `RuntimeError`. Background
-work must hand plain data back for a later engine callback to consume, and the
+third-party background thread: the function raises `RuntimeError`. The engine
+releases the GIL only around its own idle frame wait, so Python-created
+background threads can run while the engine is idle — never during an engine
+callback. Background work must hand plain data back for a later engine
+callback to consume; a `queue.Queue` handoff (the worker puts results, a
+`tick` or other engine callback gets them) is the recommended pattern, and the
 mod remains responsible for making that handoff safe. Direct `bd.state`
 access is still ordinary Python dictionary access, but keeping all mod state
 on the callback thread is strongly recommended.

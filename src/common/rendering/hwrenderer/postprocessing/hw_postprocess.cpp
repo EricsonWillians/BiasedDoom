@@ -104,7 +104,9 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth,
 
   const float blurAmount = gl_bloom_amount;
   BlurUniforms blurUniforms;
-  ComputeBlurSamples(7, blurAmount * bd_bloom_radius, blurUniforms.SampleWeights);
+  // The radius already reaches the samples through RadiusScale below; feeding
+  // it into the gaussian width as well would scale the blur twice.
+  ComputeBlurSamples(7, blurAmount, blurUniforms.SampleWeights);
   blurUniforms.RadiusScale = bd_bloom_radius;
 
   // Blur and downscale:

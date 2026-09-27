@@ -1612,11 +1612,15 @@ void MarkRoots()
 {
 	for (auto& pair : Items)
 	{
-		if (pair.second.Actor.ForceGet() != nullptr)
+		// Only root live actors from the primary level: cross-level and dying
+		// (OF_EuthanizeMe) actors must not be kept alive by display items.
+		AActor* actor = pair.second.Actor.ForceGet();
+		if (actor != nullptr && !(actor->ObjectFlags & OF_EuthanizeMe) && actor->Level == primaryLevel)
 		{
 			GC::Mark(pair.second.Actor);
 		}
-		if (pair.second.ActorB.ForceGet() != nullptr)
+		actor = pair.second.ActorB.ForceGet();
+		if (actor != nullptr && !(actor->ObjectFlags & OF_EuthanizeMe) && actor->Level == primaryLevel)
 		{
 			GC::Mark(pair.second.ActorB);
 		}

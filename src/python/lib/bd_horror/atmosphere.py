@@ -39,7 +39,7 @@ Minimal usage::
     def begin(event):
         state.start()             # dread tick + stalker windows
         state.arm_persistence()   # save/load round-trip via bd.state
-        if not event.get("from_savegame"):
+        if not event.get("from_savegame") and not event.get("from_hub"):
             state.lights.candle([5], amplitude=24)
             state.stalker.enabled = True
 
@@ -793,10 +793,14 @@ class LightManager:
 
         @bd.on("map_load")
         def _on_map_load(event: Dict[str, Any]) -> None:
-            # from_savegame restores keep the in-memory state (the native
-            # save already holds the light values); HorrorState's load
-            # handler re-arms again afterwards with the persisted state.
-            fresh = not bool(event.get("from_savegame"))
+            # from_savegame/from_hub restores keep the descriptor
+            # originals and in-memory state (the restored map already
+            # holds the program's light values, and re-sampling a
+            # blacked-out sector as the base would strand it at 0);
+            # HorrorState's load handler re-arms again afterwards with
+            # the persisted state.
+            fresh = not (bool(event.get("from_savegame"))
+                         or bool(event.get("from_hub")))
             for program in list(manager.programs):
                 try:
                     program.arm(fresh=fresh)

@@ -238,8 +238,13 @@ void UnpackUserCmd(usercmd_t& ucmd, const usercmd_t* basis, TArrayView<uint8_t>&
 void PackUserCmd(const usercmd_t& ucmd, const usercmd_t* basis, TArrayView<uint8_t>& stream);
 void WriteUserCmdMessage(const usercmd_t& ucmd, const usercmd_t *basis, TArrayView<uint8_t>& stream);
 
-void SkipUserCmdMessage(TArrayView<uint8_t>& stream);
+bool SkipUserCmdMessage(TArrayView<uint8_t>& stream);
 void ReadUserCmdMessage(TArrayView<uint8_t>& stream, int player, int tic);
+
+// Bounds-checked variant of Net_SkipCommand() for untrusted packet/demo
+// walks: computes the skip amount without reading past the stream and
+// returns false (consuming the rest of the stream) on malformed input.
+bool Net_SkipCommandEx(int cmd, TArrayView<uint8_t>& stream);
 void RunPlayerCommands(int player, int tic);
 
 #endif //__D_PROTOCOL_H__

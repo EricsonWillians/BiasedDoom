@@ -189,9 +189,10 @@ void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma,
                                        bool screenshot) {
   VkPPRenderState renderstate(fb);
 
-  if (!screenshot) // Already applied as we are actually copying the last frame
-                   // here (GetScreenshotBuffer is called after swap)
-    hw_postprocess.customShaders.Run(&renderstate, "screen");
+  // Run custom "screen" shaders here for both the live present and the
+  // screenshot capture (GetScreenshotBuffer composes a fresh frame), matching
+  // the GL backend where captures include the fully presented image.
+  hw_postprocess.customShaders.Run(&renderstate, "screen");
 
   PresentUniforms uniforms{};
   if (!applyGamma) {

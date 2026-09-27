@@ -874,7 +874,7 @@ bool MapLoader::LoadGLNodes(MapData * map)
 	if (!CheckCachedNodes(map))
 	{
 		FileReader gwalumps[4];
-		char path[256];
+		FString gwapath;
 		int li;
 		int lumpfile = fileSystem.GetFileContainer(map->lumpnum);
 		bool mapinwad = map->InWad;
@@ -895,17 +895,18 @@ bool MapLoader::LoadGLNodes(MapData * map)
 				}
 				return DoLoadGLNodes(gwalumps);
 			}
-			else
+			else if (name != nullptr)
 			{
-				strcpy(path, name);
+				gwapath = name;
 
-				char * ext = strrchr(path, '.');
-				if (ext)
+				int dot = gwapath.LastIndexOf('.');
+				if (dot >= 0)
 				{
-					strcpy(ext, ".gwa");
+					gwapath.Truncate(dot);
+					gwapath << ".gwa";
 					// Todo: Compare file dates
 
-					f_gwa = FResourceFile::OpenResourceFile(path);
+					f_gwa = FResourceFile::OpenResourceFile(gwapath.GetChars());
 					if (f_gwa==nullptr) return false;
 
 					strncpy(map->MapLumps[0].Name, fileSystem.GetFileFullName(map->lumpnum), 8);
@@ -1215,8 +1216,19 @@ bool MapLoader::CheckCachedNodes(MapData *map)
 	for(auto &line : Level->lines)
 	{
 		int i = Index(&line);
-		line.v1 = &Level->vertexes[LittleLong(verts[i*2])];
-		line.v2 = &Level->vertexes[LittleLong(verts[i*2+1])];
+		uint32_t v1 = LittleLong(verts[i*2]);
+		uint32_t v2 = LittleLong(verts[i*2+1]);
+		// Reject a cache whose vertex indices are out of range rather than
+		// indexing past the level's vertex array.
+		if (v1 >= Level->vertexes.Size() || v2 >= Level->vertexes.Size())
+		{
+			Level->subsectors.Clear();
+			Level->segs.Clear();
+			Level->nodes.Clear();
+			return false;
+		}
+		line.v1 = &Level->vertexes[v1];
+		line.v2 = &Level->vertexes[v2];
 	}
 	return true;
 }

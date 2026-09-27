@@ -788,14 +788,14 @@ const char *FSerializer::GetOutput(unsigned *len)
 FCompressedBuffer FSerializer::GetCompressedOutput()
 {
 	if (isReading()) return{ 0,0,0,0,0,nullptr };
-	FCompressedBuffer buff;
+	FCompressedBuffer buff = { 0,0,0,0,nullptr,nullptr };
 	WriteObjects();
 	EndObject();
-	buff.filename = nullptr;
 	buff.mSize = (unsigned)w->mOutString.GetSize();
 	buff.mCRC32 = crc32(0, (const Bytef*)w->mOutString.GetString(), buff.mSize);
 
-	uint8_t *compressbuf = new uint8_t[buff.mSize+1];
+	uLongf compresscap = compressBound(buff.mSize);
+	uint8_t *compressbuf = new uint8_t[compresscap];
 
 	z_stream stream;
 	int err;
@@ -803,7 +803,7 @@ FCompressedBuffer FSerializer::GetCompressedOutput()
 	stream.next_in = (Bytef *)w->mOutString.GetString();
 	stream.avail_in = (unsigned)buff.mSize;
 	stream.next_out = (Bytef*)compressbuf;
-	stream.avail_out = (unsigned)buff.mSize;
+	stream.avail_out = (unsigned)compresscap;
 	stream.zalloc = (alloc_func)0;
 	stream.zfree = (free_func)0;
 	stream.opaque = (voidpf)0;
@@ -834,9 +834,13 @@ FCompressedBuffer FSerializer::GetCompressedOutput()
 	}
 
 error:
+	// Stored fallback: copy the raw data into the compression buffer
+	// (compressBound always leaves room for the terminator byte) and
+	// transfer ownership of the buffer.
 	memcpy(compressbuf, w->mOutString.GetString(), buff.mSize + 1);
 	buff.mCompressedSize = buff.mSize;
 	buff.mMethod = METHOD_STORED;
+	buff.mBuffer = (char*)compressbuf;
 	return buff;
 }
 

@@ -521,13 +521,16 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 		bool noextra = true, okay = true;
 		while (i < length)
 		{
-			// Read block header
+			// Read block header. Require 4 readable bytes before
+			// reading the block type and block size.
+			if (length - i < 4)
+				break;
 			blocktype = sfxdata[i];
 			if (blocktype == 0)
 				break;
 			blocksize = sfxdata[i+1] + (sfxdata[i+2]<<8) + (sfxdata[i+3]<<16);
 			i += 4;
-			if (i + blocksize > length)
+			if (blocksize > length - i)
 			{
 				//okay = false;
 				break;
@@ -537,6 +540,11 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 			switch (blocktype)
 			{
 			case 1: // Sound data
+				if (blocksize < 2) // needs the readable codec bytes
+				{
+					okay = false;
+					break;
+				}
 				if (/*noextra &*/ (codec == -1 || codec == sfxdata[i + 1])) // NAM contains a VOC where a valid data block follows an extra block.
 				{
 					frequency = 1000000 / (256 - sfxdata[i]);
@@ -557,6 +565,11 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 				len += blocksize;
 				break;
 			case 3: // Silence
+				if (blocksize < 3 || (codec != 0 && codec != 4))
+				{
+					okay = false;
+					break;
+				}
 				if (frequency == 1000000/(256 - sfxdata[i+2]))
 				{
 					int silength = 1 + sfxdata[i] + (sfxdata[i+1]<<8);
@@ -580,6 +593,11 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 				break;
 			case 8: // Extra info
 				noextra = false;
+				if (blocksize < 4) // needs the bytes it reads
+				{
+					okay = false;
+					break;
+				}
 				if (codec == -1)
 				{
 					codec = sfxdata[i+2];
@@ -588,6 +606,11 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 				} else okay = false;
 				break;
 			case 9: // Sound data in new format
+				if (blocksize < 12)
+				{
+					okay = false;
+					break;
+				}
 				if (codec == -1)
 				{
 					frequency = sfxdata[i] + (sfxdata[i+1]<<8) + (sfxdata[i+2]<<16) + (sfxdata[i+3]<<24);
@@ -620,16 +643,25 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 			while (i < length)
 			{
 				// Read block header again
+				if (length - i < 4)
+					break;
 				blocktype = sfxdata[i];
 				if (blocktype == 0) break;
 				blocksize = sfxdata[i+1] + (sfxdata[i+2]<<8) + (sfxdata[i+3]<<16);
 				i += 4;
+				if (blocksize > length - i)
+					break;
 				switch (blocktype)
 				{
-				case 1: memcpy(data+j, sfxdata+i+2,  blocksize-2 ); j += blocksize-2;	break;
+				case 1:
+					if (blocksize < 2) break;
+					memcpy(data+j, sfxdata+i+2,  blocksize-2 ); j += blocksize-2;	break;
 				case 2: memcpy(data+j, sfxdata+i,    blocksize   ); j += blocksize;		break;
-				case 9: memcpy(data+j, sfxdata+i+12, blocksize-12); j += blocksize-12;	break;
+				case 9:
+					if (blocksize < 12) break;
+					memcpy(data+j, sfxdata+i+12, blocksize-12); j += blocksize-12;	break;
 				case 3:
+					if (blocksize < 3) break;
 					{
 						int silength = 1 + sfxdata[i] + (sfxdata[i+1]<<8);
 						if (bits == 8)
@@ -637,7 +669,7 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 							memset(data+j, 128, silength);
 							j += silength;
 						}
-						else if (bits == -16)
+						else if (bits == 16)
 						{
 							memset(data+j, 0, silength<<1);
 							j += silength<<1;
