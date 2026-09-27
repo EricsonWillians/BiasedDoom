@@ -190,19 +190,42 @@ bool FGLTFModel::ValidateAccessors(GLTFLoadResult &result) const {
     }
 
     const auto &bufferView = asset->bufferViews[bufferViewIndex];
-    if (bufferView.bufferIndex >= buffers.Size()) {
+    if (bufferView.bufferIndex >= static_cast<size_t>(buffers.Size())) {
       result.SetError(GLTFError::ValidationFailure,
                       "Buffer view references invalid buffer");
       return false;
     }
 
-    // Check bounds
-    size_t totalOffset = bufferView.byteOffset + accessor.byteOffset;
-    size_t accessorSize =
-        accessor.count *
-        fastgltf::getElementByteSize(accessor.type, accessor.componentType);
+    // Check bounds with the same overflow-safe arithmetic ReadAccessor
+    // uses (subtraction/division comparisons, interleave-aware stride).
+    const size_t bufferSize = buffers[bufferView.bufferIndex].Size();
+    if (bufferView.byteOffset > bufferSize ||
+        bufferView.byteLength > bufferSize - bufferView.byteOffset) {
+      result.SetError(GLTFError::ValidationFailure,
+                      "Buffer view exceeds buffer bounds");
+      return false;
+    }
+    if (accessor.byteOffset > bufferView.byteLength) {
+      result.SetError(GLTFError::ValidationFailure,
+                      "Accessor offset exceeds buffer view bounds");
+      return false;
+    }
 
-    if (totalOffset + accessorSize > buffers[bufferView.bufferIndex].Size()) {
+    const size_t available = bufferView.byteLength - accessor.byteOffset;
+    const size_t elementSize =
+        fastgltf::getElementByteSize(accessor.type, accessor.componentType);
+    const size_t srcStride = bufferView.byteStride.has_value()
+                                 ? bufferView.byteStride.value()
+                                 : elementSize;
+    if (elementSize == 0 || srcStride < elementSize) {
+      result.SetError(GLTFError::ValidationFailure,
+                      "Accessor element/stride size invalid");
+      return false;
+    }
+
+    if (accessor.count > 0 &&
+        (elementSize > available ||
+         (accessor.count - 1) > (available - elementSize) / srcStride)) {
       result.SetError(GLTFError::ValidationFailure,
                       "Accessor exceeds buffer bounds");
       return false;

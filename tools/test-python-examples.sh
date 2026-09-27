@@ -3,7 +3,8 @@ set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Validate and package every embedded-Python example.
+Validate framework hotfix contracts, package every embedded-Python example,
+and optionally smoke-test the packages in the real engine.
 
 Usage:
   ./tools/test-python-examples.sh [options]
@@ -101,6 +102,9 @@ mapfile -t python_sources < <(find "${examples_root}" -type f -name '*.py' -prin
 [[ ${#python_sources[@]} -gt 0 ]] || { printf 'error: no Python sources found\n' >&2; exit 1; }
 printf 'Syntax-checking %d Python source files...\n' "${#python_sources[@]}"
 PYTHONPYCACHEPREFIX="${test_root}/pycache" python3 -m py_compile "${python_sources[@]}"
+
+printf 'Running framework hotfix regression checks...\n'
+PYTHONPYCACHEPREFIX="${test_root}/pycache" python3 "${script_dir}/test-framework-hotfixes.py"
 
 packages_dir="${test_root}/packages"
 "${script_dir}/build-python-examples.sh" --output-dir "${packages_dir}"

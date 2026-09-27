@@ -336,9 +336,13 @@ class Shop:
 
     Buy/sell methods return ``{"ok": bool, "message": str, "price": int}``
     and play a UI sound on success (guarded). Buying takes the currency
-    first and refunds it when the item cannot be delivered; when
-    ``restock_tics`` is positive a one-shot ``bd.schedule`` task
-    restores the count to ``max_count``.
+    first and refunds it when the item cannot be delivered (delivery is
+    verified by the before/after ``inventory_count`` delta, because
+    ``give_inventory`` reports the actor's total, not the amount given);
+    when ``restock_tics`` is positive a one-shot map-agnostic
+    ``bd.schedule`` task restores the count to ``max_count`` — restock
+    timers survive map changes because they touch only this Shop's own
+    index-based counts.
     """
 
     def __init__(self, currency_class: str = "Coin",
@@ -431,9 +435,10 @@ class Shop:
 
         Refuses (ok False, nothing moved) when the stock is empty or the
         pawn cannot afford the item. Takes the currency first and
-        refunds it when the item cannot be delivered. On success the
-        count decrements and, when the entry's ``restock_tics`` is
-         positive, a one-shot task restores the count to ``max_count``.
+        refunds it when the item cannot be delivered (verified by the
+        before/after ``inventory_count`` delta). On success the count
+        decrements and, when the entry's ``restock_tics`` is positive, a
+        one-shot map-agnostic task restores the count to ``max_count``.
         """
         index = int(index)
         if not 0 <= index < len(self.stock):
@@ -456,9 +461,16 @@ class Shop:
             return {"ok": False,
                     "message": f"Payment failed: {exc}.",
                     "price": price}
+        # Delivery is measured by the before/after inventory_count delta:
+        # give_inventory returns the actor's TOTAL amount of the class
+        # after the give, so its return value cannot distinguish "one
+        # delivered" from "already carrying some, give silently refused"
+        # (e.g. the item is at its max amount).
         given = 0
         try:
-            given = int(pawn.give_inventory(entry["class_name"], 1))
+            before = int(pawn.inventory_count(entry["class_name"]))
+            pawn.give_inventory(entry["class_name"], 1)
+            given = int(pawn.inventory_count(entry["class_name"])) - before
         except ValueError as exc:
             # Unknown item class is a mod bug: refund and report.
             try:
@@ -476,7 +488,7 @@ class Shop:
             return {"ok": False,
                     "message": f"Transaction failed: {exc}.",
                     "price": price}
-        if not given:
+        if given <= 0:
             try:
                 pawn.give_inventory(self.currency_class, price)
             except Exception:
@@ -486,9 +498,13 @@ class Shop:
                     "price": price}
         self._counts[index] -= 1
         if entry["restock_tics"] > 0:
+            # The restock closure touches only this Shop's own index-based
+            # counts (no actor handles), so it is deliberately map-agnostic
+            # (map_local=False): a restock timer must keep ticking across
+            # hub transitions and regular map changes alike.
             try:
                 bd.schedule(lambda i=index: self._restock(i),
-                            delay=entry["restock_tics"], map_local=True)
+                            delay=entry["restock_tics"], map_local=False)
             except Exception as exc:
                 bd.warn(f"bd_npcs: restock scheduling failed: {exc!r}")
         _play_trade_sound()

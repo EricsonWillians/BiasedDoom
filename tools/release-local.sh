@@ -645,7 +645,9 @@ run_smoke_tests() {
 
     if [[ "${BUILD_LINUX}" -eq 1 ]]; then
         run_accepting_norun_exit "Smoke-testing Linux AppImage" \
-            timeout 90s env APPIMAGE_EXTRACT_AND_RUN=1 "${linux_appimage}" -stdout -iwad "${IWAD_PATH}" -norun
+            timeout 90s env APPIMAGE_EXTRACT_AND_RUN=1 BIASEDDOOM_HEADLESS=1 \
+            SDL_VIDEODRIVER=dummy XDG_RUNTIME_DIR="${TMPDIR:-/tmp}" \
+            "${linux_appimage}" -stdout -iwad "${IWAD_PATH}" -headless -norun
     fi
 
     if [[ "${BUILD_WINDOWS_MINGW}" -eq 1 ]]; then

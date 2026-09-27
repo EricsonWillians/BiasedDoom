@@ -159,6 +159,12 @@ jobs:
         export MAKEFLAGS=--keep-going
         cmake --build build --config ${{ matrix.config.build_type }} --parallel 3
 
+    - name: Test engine-shipped Python framework contracts
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        python3 tools/test-framework-hotfixes.py
+
     - name: Test bundled Windows audio
       if: runner.os == 'Windows'
       shell: bash

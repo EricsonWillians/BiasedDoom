@@ -102,10 +102,15 @@ public:
 #include <fastgltf/util.hpp>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <optional>
 
 namespace {
 constexpr float GLTFAnimationSampleRate = 30.0f;
+// Upper bound on sampled frames per clip: guards against absurd or
+// non-finite durations from corrupt keyframe data blowing up the
+// sampled-frame allocation.
+constexpr int GLTFMaxSampledFrames = 30 * 60 * 60; // one hour at 30 fps
 
 static TRS MakeIdentityTRS() {
   TRS transform;
@@ -139,10 +144,16 @@ static VSMatrix BuildMatrixFromTRS(const TRS &transform) {
 }
 
 static int GetSampledFrameCount(float duration) {
-  if (duration <= 0.0f) {
+  if (!std::isfinite(duration) || duration <= 0.0f) {
     return 1;
   }
-  return std::max(1, static_cast<int>(std::ceil(duration * GLTFAnimationSampleRate)) + 1);
+  const double frames =
+      std::ceil(static_cast<double>(duration) * GLTFAnimationSampleRate) +
+      1.0;
+  if (frames >= GLTFMaxSampledFrames) {
+    return GLTFMaxSampledFrames;
+  }
+  return std::max(1, static_cast<int>(frames));
 }
 
 static TRS InterpolateGLTFBone(const TRS &from, const TRS &to, float t) {
@@ -873,9 +884,14 @@ bool FGLTFModel::ReadAccessorTyped(int accessorIndex, TArray<T> &outData) {
     return false;
   }
 
-  if (stride != sizeof(T)) {
-    Printf("Warning: Accessor stride mismatch. Expected %zu, got %d\n",
-           sizeof(T), stride);
+  // The deinterleaved output matches the element size exactly; anything
+  // else means the accessor type does not match T, and a blind memcpy
+  // could read past the source data.
+  if (stride != static_cast<int>(sizeof(T))) {
+    Printf("Warning: glTF accessor %d stride mismatch. Expected %zu, got "
+           "%d; rejecting\n",
+           accessorIndex, sizeof(T), stride);
+    return false;
   }
 
   outData.Resize(count);
@@ -896,24 +912,76 @@ bool FGLTFModel::ReadAccessor(int accessorIndex, TArray<uint8_t> &outData,
     return false;
   }
 
-  const auto &bufferView = asset->bufferViews[accessor.bufferViewIndex.value()];
+  // Reject references into parts of the file we do not have. All range
+  // checks below use subtraction/division comparisons instead of
+  // addition/multiplication so they cannot overflow.
+  const size_t bufferViewIndex = accessor.bufferViewIndex.value();
+  if (bufferViewIndex >= asset->bufferViews.size()) {
+    return false;
+  }
 
-  outCount = accessor.count;
-  outStride =
+  const auto &bufferView = asset->bufferViews[bufferViewIndex];
+  if (bufferView.bufferIndex >= static_cast<size_t>(buffers.Size())) {
+    return false;
+  }
+
+  const TArray<uint8_t> &buffer = buffers[bufferView.bufferIndex];
+  const size_t bufferSize = buffer.Size();
+
+  // The buffer view itself must lie entirely inside its buffer.
+  if (bufferView.byteOffset > bufferSize ||
+      bufferView.byteLength > bufferSize - bufferView.byteOffset) {
+    return false;
+  }
+  if (accessor.byteOffset > bufferView.byteLength) {
+    return false;
+  }
+  const size_t available = bufferView.byteLength - accessor.byteOffset;
+
+  const size_t elementSize =
       fastgltf::getElementByteSize(accessor.type, accessor.componentType);
+  if (elementSize == 0) {
+    return false;
+  }
 
-  size_t totalSize = outCount * outStride;
+  // Source element stride: an explicit byteStride for interleaved views,
+  // otherwise tightly packed. A stride smaller than the element size
+  // would mean overlapping elements, which cannot be read safely.
+  const size_t srcStride = bufferView.byteStride.has_value()
+                               ? bufferView.byteStride.value()
+                               : elementSize;
+  if (srcStride < elementSize) {
+    return false;
+  }
+
+  const size_t count = accessor.count;
+  if (count > 0) {
+    // The last element occupies bytes [(count-1)*srcStride,
+    // (count-1)*srcStride + elementSize); it must fit in the available
+    // range.
+    if (elementSize > available ||
+        (count - 1) > (available - elementSize) / srcStride) {
+      return false;
+    }
+  }
+
+  if (count > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    return false;
+  }
+
+  outCount = static_cast<int>(count);
+  outStride = static_cast<int>(elementSize);
+  const size_t totalSize = count * elementSize;
   outData.Resize(totalSize);
 
-  const uint8_t *srcData = buffers[bufferView.bufferIndex].Data() +
-                           bufferView.byteOffset + accessor.byteOffset;
+  const uint8_t *srcData =
+      buffer.Data() + bufferView.byteOffset + accessor.byteOffset;
 
-  if (bufferView.byteStride.has_value() &&
-      bufferView.byteStride.value() != outStride) {
+  if (srcStride != elementSize) {
     // Interleaved data - need to deinterleave
-    int stride = bufferView.byteStride.value();
-    for (int i = 0; i < outCount; ++i) {
-      memcpy(outData.Data() + i * outStride, srcData + i * stride, outStride);
+    for (size_t i = 0; i < count; ++i) {
+      memcpy(outData.Data() + i * elementSize, srcData + i * srcStride,
+             elementSize);
     }
   } else {
     // Packed data - direct copy
@@ -1167,6 +1235,11 @@ bool FGLTFModel::ProcessNodes() {
     GLTFNode &node = scene.nodes[i];
 
     for (size_t childIndex : gltfNode.children) {
+      if (childIndex >= asset->nodes.size()) {
+        // Out-of-range child reference: ignore it rather than corrupt
+        // scene.nodes with an invalid parentIndex.
+        continue;
+      }
       const int child = static_cast<int>(childIndex);
       node.childIndices.Push(child);
       scene.nodes[child].parentIndex = static_cast<int>(i);
@@ -1192,10 +1265,17 @@ bool FGLTFModel::ProcessSkins() {
 
     skin.name = gltfSkin.name.c_str();
 
-    // Copy joint indices
+    // Copy joint indices, ignoring joints that reference nodes outside
+    // the scene. Invalid slots stay -1 (all consumers range-check) so
+    // the joint array stays aligned with the inverse bind matrices.
     skin.jointIndices.Resize(gltfSkin.joints.size());
     for (size_t j = 0; j < gltfSkin.joints.size(); ++j) {
-      const int jointIndex = static_cast<int>(gltfSkin.joints[j]);
+      const size_t jointNode = gltfSkin.joints[j];
+      if (jointNode >= static_cast<size_t>(scene.nodes.Size())) {
+        skin.jointIndices[j] = -1;
+        continue;
+      }
+      const int jointIndex = static_cast<int>(jointNode);
       skin.jointIndices[j] = jointIndex;
       scene.nodes[jointIndex].isBone = true;
       scene.nodes[jointIndex].boneIndex = static_cast<int>(j);
@@ -1215,8 +1295,9 @@ bool FGLTFModel::ProcessSkins() {
       }
     }
 
-    if (gltfSkin.skeleton.has_value()) {
-      skin.skeletonRootIndex = gltfSkin.skeleton.value();
+    if (gltfSkin.skeleton.has_value() &&
+        gltfSkin.skeleton.value() < static_cast<size_t>(scene.nodes.Size())) {
+      skin.skeletonRootIndex = static_cast<int>(gltfSkin.skeleton.value());
     }
   }
 
@@ -1304,7 +1385,13 @@ bool FGLTFModel::ConvertGLTFAnimation(const fastgltf::Animation &gltfAnim,
     channel.targetPath = ToAnimationPathString(gltfChannel.path);
   }
 
-  outAnim.duration = maxTime;
+  // Clamp the duration: non-finite or absurd keyframe times would
+  // otherwise produce huge frame counts when the clip is sampled.
+  const float maxDuration =
+      static_cast<float>(GLTFMaxSampledFrames) / GLTFAnimationSampleRate;
+  outAnim.duration = std::isfinite(maxTime)
+                         ? std::clamp(maxTime, 0.0f, maxDuration)
+                         : 0.0f;
   return success;
 }
 
@@ -1341,24 +1428,55 @@ void FGLTFModel::ComputeNodeTransforms() {
       node.localMatrix = BuildMatrixFromTRS(node.transform);
   }
 
-  // Compute global matrices via depth-first traversal
-  std::function<void(int, const VSMatrix &)> computeGlobal =
-      [&](int nodeIndex, const VSMatrix &parentMatrix) {
-        if (nodeIndex < 0 || nodeIndex >= scene.nodes.Size())
-          return;
+  // Compute global matrices via an iterative traversal. The per-node
+  // "done" flag both keeps the traversal bounded regardless of graph
+  // depth and breaks cycles: a malformed asset with a node reachable
+  // from its own descendants must not recurse or loop forever.
+  const int nodeCount = scene.nodes.Size();
+  if (nodeCount <= 0) {
+    return;
+  }
 
-        GLTFNode &node = scene.nodes[nodeIndex];
-        VSMatrix combined = parentMatrix;
-        combined.multMatrix(node.localMatrix);
-        node.globalMatrix = combined;
+  TArray<uint8_t> done;
+  done.Resize(nodeCount);
+  memset(done.Data(), 0, done.Size());
 
-        for (int childIndex : node.childIndices) {
-          computeGlobal(childIndex, node.globalMatrix);
-        }
-      };
+  struct PendingNode {
+    int nodeIndex;
+    VSMatrix parentMatrix;
+  };
+  TArray<PendingNode> stack;
 
   for (int rootIndex : scene.rootNodeIndices) {
-    computeGlobal(rootIndex, GLTFSceneConversion());
+    if (rootIndex < 0 || rootIndex >= nodeCount || done[rootIndex]) {
+      continue;
+    }
+
+    stack.Clear();
+    stack.Push({rootIndex, GLTFSceneConversion()});
+
+    while (stack.Size() > 0) {
+      const PendingNode current = stack.Last();
+      stack.Pop();
+
+      const int nodeIndex = current.nodeIndex;
+      if (nodeIndex < 0 || nodeIndex >= nodeCount || done[nodeIndex]) {
+        continue;
+      }
+      done[nodeIndex] = 1;
+
+      GLTFNode &node = scene.nodes[nodeIndex];
+      VSMatrix combined = current.parentMatrix;
+      combined.multMatrix(node.localMatrix);
+      node.globalMatrix = combined;
+
+      for (int childIndex : node.childIndices) {
+        if (childIndex < 0 || childIndex >= nodeCount || done[childIndex]) {
+          continue;
+        }
+        stack.Push({childIndex, combined});
+      }
+    }
   }
 }
 
@@ -1540,7 +1658,7 @@ bool FGLTFModel::BuildSampledAnimationFrames() {
 
   for (int animIndex = 0; animIndex < scene.animations.Size(); ++animIndex) {
     const GLTFAnimation &anim = scene.animations[animIndex];
-    const int frameCount = GetSampledFrameCount(anim.duration);
+    int frameCount = GetSampledFrameCount(anim.duration);
 
     ModelAnim &modelAnim = modelAnimations[animIndex];
     modelAnim.firstFrame = frameBase;
@@ -1553,24 +1671,38 @@ bool FGLTFModel::BuildSampledAnimationFrames() {
     modelAnim.switchOffset = 0;
 
     if (boneCount > 0) {
-      const int oldSize = sampledAnimationFrames.Size();
-      sampledAnimationFrames.Resize(oldSize + frameCount * boneCount);
+      // Overflow-safe accumulation check before resizing: both factors
+      // are bounded, but keep the total within int range.
+      if (frameCount > 0 &&
+          boneCount > (std::numeric_limits<int>::max() -
+                       sampledAnimationFrames.Size()) /
+                          frameCount) {
+        Printf("glTF Warning: sampled frames for animation '%s' exceed "
+               "engine limits; skipping clip samples\n",
+               anim.name.GetChars());
+        // Keep the clip's exported frame range empty so consumers never
+        // index the shared sampled-frame array beyond its allocated size.
+        frameCount = 0;
+      } else {
+        const int oldSize = sampledAnimationFrames.Size();
+        sampledAnimationFrames.Resize(oldSize + frameCount * boneCount);
 
-      for (int frame = 0; frame < frameCount; ++frame) {
-        const float sampleTime =
-            anim.duration > 0.0f
-                ? std::min(anim.duration, frame / GLTFAnimationSampleRate)
-                : 0.0f;
+        for (int frame = 0; frame < frameCount; ++frame) {
+          const float sampleTime =
+              anim.duration > 0.0f
+                  ? std::min(anim.duration, frame / GLTFAnimationSampleRate)
+                  : 0.0f;
 
-        TArray<TRS> sampledPose;
-        if (!SampleAnimation(anim, sampleTime, sampledPose) ||
-            sampledPose.Size() != boneCount) {
-          sampledPose = basePose;
-        }
+          TArray<TRS> sampledPose;
+          if (!SampleAnimation(anim, sampleTime, sampledPose) ||
+              sampledPose.Size() != boneCount) {
+            sampledPose = basePose;
+          }
 
-        for (int bone = 0; bone < boneCount; ++bone) {
-          sampledAnimationFrames[oldSize + frame * boneCount + bone] =
-              sampledPose[bone];
+          for (int bone = 0; bone < boneCount; ++bone) {
+            sampledAnimationFrames[oldSize + frame * boneCount + bone] =
+                sampledPose[bone];
+          }
         }
       }
     }
@@ -1754,7 +1886,9 @@ FGameTexture *FGLTFModel::LoadTextureFromBufferView(size_t bufferViewIndex,
 
   const auto &buffer = buffers[bufferView.bufferIndex];
 
-  if (bufferView.byteOffset + bufferView.byteLength > buffer.Size()) {
+  // Subtraction comparison keeps the check overflow-safe
+  if (bufferView.byteOffset > buffer.Size() ||
+      bufferView.byteLength > buffer.Size() - bufferView.byteOffset) {
     result.SetError(GLTFError::TextureLoadFailure,
                     "Buffer view exceeds buffer bounds");
     return nullptr;

@@ -1585,8 +1585,9 @@ if( NOT WIN32 AND NOT APPLE )
 		COMMAND ${CMAKE_CURRENT_BINARY_DIR}/link-make )
 	IF ("${INSTALL_RPATH}" STREQUAL "")
 		set_target_properties(zdoom PROPERTIES
-			#allow libzmusic.so.1 library in same folder as executable at runtime
-			INSTALL_RPATH "\$ORIGIN:\$ORIGIN/zmusic/build/source"
+			# Allow libzmusic.so.1 beside the executable for portable trees and in
+			# the sibling lib/lib64 directories used by cmake --install.
+			INSTALL_RPATH "\$ORIGIN:\$ORIGIN/../lib:\$ORIGIN/../lib64"
 			BUILD_WITH_INSTALL_RPATH ON
 		)
 	endif()

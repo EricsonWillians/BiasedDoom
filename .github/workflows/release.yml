@@ -228,6 +228,12 @@ jobs:
         run: |
           cmake --build build --config Release --parallel 3
 
+      - name: Test engine-shipped Python framework contracts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 tools/test-framework-hotfixes.py
+
       - name: Test bundled Windows audio
         if: runner.os == 'Windows'
         shell: bash

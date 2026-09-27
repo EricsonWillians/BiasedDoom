@@ -55,9 +55,14 @@ _retained: List[Any] = []
 
 
 def _retain(ref: Any) -> None:
-    """Keep one Python handle alive so the actor's data dict survives."""
+    """Keep one Python handle alive so the actor's data dict survives.
+
+    Dedupe by actor identity (``==`` on handles compares slot +
+    generation, never touching the engine): fresh handle objects for the
+    same actor must not pile up duplicate pins.
+    """
     for existing in _retained:
-        if existing is ref:
+        if existing == ref:
             return
     _retained.append(ref)
     if len(_retained) > 64:

@@ -148,7 +148,14 @@ def _same_actor(a: Any, b: Any) -> bool:
 
 
 def _restore_later(actor: Any, attr: str, value: Any, delay: int) -> None:
-    """Schedule restoring one actor attribute, guarded against staleness."""
+    """Schedule restoring one actor attribute, guarded against staleness.
+
+    The task is deliberately *not* map-local: hub map transitions keep
+    actors alive while map-local tasks are cancelled on unload, which
+    would leave a discipline boost (speed, alpha, damage) permanently
+    applied. The ``actor.valid`` guard makes firing after a real map
+    change safe — a stale handle is simply skipped with a warning.
+    """
 
     def revert() -> None:
         try:
@@ -157,7 +164,7 @@ def _restore_later(actor: Any, attr: str, value: Any, delay: int) -> None:
         except Exception as exc:
             bd.warn(f"bd_vtm: could not restore {attr} on an actor: {exc!r}")
 
-    bd.schedule(revert, delay=max(1, int(delay)))
+    bd.schedule(revert, delay=max(1, int(delay)), map_local=False)
 
 
 # --- blood pool ----------------------------------------------------------------

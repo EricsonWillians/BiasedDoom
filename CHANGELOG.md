@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Hardened the glTF loader against malformed mod content: accessor buffer
+  ranges, buffer-view indices, child/joint node indices, interleaved
+  strides, cyclic node hierarchies, and animation frame allocations are
+  now validated before memory is read or written.
+- Fixed `bd_rpg` actor tracking to dedupe handles by actor identity,
+  preventing status effects from processing multiple times per actor.
+- Fixed `bd_vtm` temporary attribute restores to survive map transitions,
+  preventing discipline effects from becoming permanent.
+- Fixed `bd_npcs` shops to prove delivery with inventory-count deltas,
+  refund failed deliveries, and keep restock timers alive across map
+  changes.
+- Corrected the installed Linux executable RPATH so `cmake --install` finds
+  `libzmusic` in sibling `lib`/`lib64` directories.
+- Made the local release AppImage smoke test work in display-less Ubuntu
+  22.04 containers.
+
 ## [4.15.15] - 2026-09-26
 
 ### Fixed

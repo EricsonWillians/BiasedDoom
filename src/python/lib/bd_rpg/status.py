@@ -436,8 +436,13 @@ class StatusEngine:
                 for name, instances in recs.items()}
 
     def _track(self, ref: Any) -> None:
+        # Actor handles compare by actor identity (slot + generation), not
+        # object identity: ``bd.actor_refs`` hands out fresh handle objects
+        # per call, so an ``is`` check would leak duplicate entries for the
+        # same actor. ``==`` never touches the engine, so stale handles are
+        # safe to compare (``_untrack``'s ``list.remove`` already uses it).
         for existing in self._tracked:
-            if existing is ref:
+            if existing == ref:
                 return
         self._tracked.append(ref)
 
