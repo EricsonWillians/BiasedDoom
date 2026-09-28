@@ -289,6 +289,12 @@ float PPBloom::ComputeBlurGaussian(float n, float theta) // theta = Blur Amount
 
 void PPBloom::ComputeBlurSamples(int sampleCount, float blurAmount,
                                  float *sampleWeights) {
+  // A NaN blur amount (console input slips past both the cvar clamps and the
+  // <= 0 early-outs, all of which are false for NaN) would poison every
+  // weight through the gaussian's expf and spread NaNs across the chain.
+  if (!(blurAmount > 0.0f))
+    blurAmount = 1.0f;
+
   sampleWeights[0] = ComputeBlurGaussian(0, blurAmount);
 
   float totalWeights = sampleWeights[0];

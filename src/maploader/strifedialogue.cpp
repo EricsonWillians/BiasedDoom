@@ -279,6 +279,10 @@ FStrifeDialogueNode *MapLoader::ReadRetailNode (const char *name, FileReader &lu
 
 	auto pos = lump.Tell();
 	lump.Read (&speech, sizeof(speech));
+	// The fixed-width fields in the binary data are not guaranteed to be
+	// NUL-terminated; force termination of the last one before the Responses
+	// array so the FString conversions below cannot read out of bounds.
+	speech.Dialogue[countof(speech.Dialogue) - 1] = 0;
 
 	// Byte swap all the ints in the original data
 	speech.SpeakerType = LittleLong(speech.SpeakerType);
@@ -377,6 +381,10 @@ FStrifeDialogueNode *MapLoader::ReadTeaserNode (const char *name, FileReader &lu
 
 	auto pos = lump.Tell() * 1516 / 1488;
 	lump.Read (&speech, sizeof(speech));
+	// The fixed-width fields in the binary data are not guaranteed to be
+	// NUL-terminated; force termination of the last one before the Responses
+	// array so the FString conversions below cannot read out of bounds.
+	speech.Dialogue[countof(speech.Dialogue) - 1] = 0;
 
 	// Byte swap all the ints in the original data
 	speech.SpeakerType = LittleLong(speech.SpeakerType);
@@ -481,6 +489,11 @@ void MapLoader::ParseReplies (const char *name, int pos, FStrifeDialogueReply **
 			responses[j].Item[k] = LittleLong(responses[j].Item[k]);
 			responses[j].Count[k] = LittleLong(responses[j].Count[k]);
 		}
+		// The fixed-width text fields are not guaranteed to be NUL-terminated
+		// in the binary data; force termination to avoid out-of-bounds reads.
+		responses[j].Reply[countof(responses[j].Reply) - 1] = 0;
+		responses[j].Yes[countof(responses[j].Yes) - 1] = 0;
+		responses[j].No[countof(responses[j].No) - 1] = 0;
 	}
 
 	for (j = 0; j < 5; ++j)

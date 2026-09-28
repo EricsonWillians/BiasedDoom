@@ -3172,6 +3172,13 @@ CUSTOM_CVAR(Float, gl_exposure_scale, 1.3f, CVAR_ARCHIVE) {
 }
 
 CUSTOM_CVAR(Float, gl_exposure_min, 0.35f, CVAR_ARCHIVE) {
+  // exposurecombine.fp divides by max(ExposureBase + light * ExposureScale,
+  // ExposureMin): a zero or negative floor turns that into inf, which then
+  // poisons the bloom extract (0 * inf = NaN). The negated compare also
+  // rejects NaN console input, which plain < / > checks let through.
+  if (!(self >= 0.0001f))
+    self = 0.0001f;
+
   OnPresetFeatureChanged(self);
 }
 
@@ -3180,6 +3187,13 @@ CUSTOM_CVAR(Float, gl_exposure_base, 0.35f, CVAR_ARCHIVE) {
 }
 
 CUSTOM_CVAR(Float, gl_exposure_speed, 0.05f, CVAR_ARCHIVE) {
+  // This is the alpha blend weight of the exposure combine; values outside
+  // [0, 1] extrapolate the camera exposure and NaN would freeze it.
+  if (!(self >= 0.0f))
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
   OnPresetFeatureChanged(self);
 }
 

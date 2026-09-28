@@ -166,6 +166,9 @@ bool FStringTable::readMacros(const char* buffer, size_t size)
 	allMacros.Clear();
 	for (unsigned i = 1; i < data.Size(); i++)
 	{
+		// A short row has no usable macro data; reading it would go out of bounds.
+		if (data[i].Size() < 6) continue;
+
 		auto macroname = data[i][0];
 		FName name = macroname.GetChars();
 
@@ -229,9 +232,16 @@ bool FStringTable::ParseLanguageCSV(int filenum, const char* buffer, size_t size
 			}
 		}
 
+		// A header that starts with "default," passes the format check above
+		// but has no identifier column to key the strings on.
+		if (labelcol < 0) return false;
+
 		for (unsigned i = 1; i < data.Size(); i++)
 		{
 			auto &row = data[i];
+			// Skip rows with fewer cells than the header; indexing the missing
+			// columns below would read out of bounds.
+			if (row.Size() < data[0].Size()) continue;
 			if (filtercol > -1)
 			{
 				auto filterstr = row[filtercol];
@@ -504,6 +514,9 @@ size_t FStringTable::ProcessEscapes (char *iptr)
 		if (c == '\\')
 		{
 			c = *iptr++;
+			// A trailing backslash consumed the terminator; stop here instead
+			// of reading and copying past the end of the string.
+			if (c == '\0') break;
 			if (c == 'n')
 				c = '\n';
 			else if (c == 'c')
@@ -586,9 +599,15 @@ const char *FStringTable::CheckString(const char *name, uint32_t *langtable, int
 	}
 	if (gender == -1) gender = defaultgender;
 	if (gender < 0 || gender > 3) gender = 0;
-	FName nm(name, true);
-	if (nm != NAME_None)
+
+	// Follow '$$' references iteratively with a depth cap: a cyclic reference
+	// in a language lump would otherwise recurse until the stack overflows.
+	for (int depth = 0; depth < 16; depth++)
 	{
+		FName nm(name, true);
+		if (nm == NAME_None) break;
+
+		bool forwarded = false;
 		TableElement* bestItem = nullptr;
 		for (auto map : currentLanguageSet)
 		{
@@ -604,10 +623,16 @@ const char *FStringTable::CheckString(const char *name, uint32_t *langtable, int
 				if (langtable) *langtable = map.first;
 				auto c = item->strings[gender].GetChars();
 				if (c && *c == '$' && c[1] == '$')
-					c = CheckString(c + 2, langtable, gender);
+				{
+					// follow the indirection on the next iteration
+					name = c + 2;
+					forwarded = true;
+					break;
+				}
 				return c;
 			}
 		}
+		if (!forwarded) break;
 	}
 	return nullptr;
 }

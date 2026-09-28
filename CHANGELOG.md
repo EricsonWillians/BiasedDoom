@@ -248,6 +248,30 @@ All notable changes to this project will be documented in this file.
   the map bounds (out-of-map texels replicate the nearest real edge
   sector, fixing wrong colors around outdoor map borders), and it now
   rebuilds when a sector's sky texture assignment changes at run time.
+- Hardened the post-processing pipeline against hostile console values:
+  `gl_dither_bpc` is clamped so it can no longer invoke undefined
+  bit-shifts, `gl_exposure_min` is floored above zero so it cannot cause a
+  division by zero that propagates NaN through bloom, `gl_exposure_speed`
+  is clamped to [0,1], and NaN blur amounts can no longer reach the
+  Gaussian sample computation. On GLES, enabling a custom "screen"
+  postprocess shader no longer makes the final present pass render into a
+  pipeline texture instead of the backbuffer.
+- Fixed negative fog densities from scripts or a negative `gl_distfog`
+  bypassing the MAPINFO parse clamps and reaching the renderer's fog
+  state, shadow-map light rows beyond the configured limit leaking stale
+  lights into the shadow shader (the list now covers all 1024 rows and
+  unused rows are zeroed), and the Strife binary dialogue reader forcing
+  NUL termination on fixed-width text fields that do not guarantee it.
+- Hardened localization: short CSV rows and headers without an identifier
+  column are rejected instead of being read out of bounds, a trailing
+  backslash in a language string can no longer consume the terminator,
+  and cyclic `$$` string references now resolve iteratively with a depth
+  cap instead of recursing until stack exhaustion.
+- Fixed physics NaN sources reachable from specials: zero-height stair
+  steps are rejected, waggle floor speed no longer divides by a hostile
+  time value or overflows its multiply, pillar speeds no longer divide by
+  zero distances, and `A_Face` against an exactly overlapping target no
+  longer computes a 0/0 or out-of-domain arcsine pitch.
 
 ## [4.15.15] - 2026-09-26
 

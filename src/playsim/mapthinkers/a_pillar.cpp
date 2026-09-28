@@ -205,12 +205,16 @@ void DPillar::Construct(sector_t *sector, EPillar type, double speed, double flo
 	if (floordist > ceilingdist)
 	{
 		m_FloorSpeed = speed;
-		m_CeilingSpeed = speed * ceilingdist / floordist;
+		// Negative special arguments can still make this a zero divisor;
+		// a NaN speed would poison the plane in MoveCeiling.
+		m_CeilingSpeed = floordist != 0 ? speed * ceilingdist / floordist : 0;
 	}
 	else
 	{
 		m_CeilingSpeed = speed;
-		m_FloorSpeed = speed * floordist / ceilingdist;
+		// Both distances are 0 for a closed pillar surrounded only by
+		// zero-height sectors; dividing by it would produce a NaN speed.
+		m_FloorSpeed = ceilingdist != 0 ? speed * floordist / ceilingdist : 0;
 	}
 
 	if (!(m_Sector->Flags & SECF_SILENTMOVE))

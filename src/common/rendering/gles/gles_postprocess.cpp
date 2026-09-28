@@ -92,6 +92,10 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma) {
   savedState.SaveTextureBindings(2);
   GLPPRenderState renderstate(mBuffers);
 
+  hw_postprocess.customShaders.Run(&renderstate, "screen");
+
+  // Bind the output only after the custom shaders: their passes leave the
+  // last pipeline FB bound (matches the GL backend's ordering).
   mBuffers->BindOutputFB();
 
   IntRect box;
@@ -101,8 +105,6 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma) {
     ClearBorders();
     box = screen->mOutputLetterbox;
   }
-
-  hw_postprocess.customShaders.Run(&renderstate, "screen");
 
   mBuffers->BindCurrentTexture(0);
 #ifndef NO_RENDER_BUFFER

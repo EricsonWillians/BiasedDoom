@@ -616,6 +616,11 @@ bool FLevelLocals::EV_BuildStairs (int tag, DFloor::EStair type, line_t *line, d
 	if (speed == 0)
 		return false;
 
+	// A zero-height step would make the destination equal the current height,
+	// giving a runaway floor, and divide by zero below for synced stairs.
+	if (stairsize == 0)
+		return false;
+
 	persteptime = int(stairsize / speed);
 
 	// check if a manual trigger, if so do just the sector on the backside
@@ -1330,7 +1335,11 @@ bool FLevelLocals::EV_StartWaggle (int tag, line_t *line, int height, int speed,
 		waggle->m_AccDelta = speed / 64.;
 		waggle->m_Scale = 0;
 		waggle->m_TargetScale = height / 64.;
-		waggle->m_ScaleDelta = waggle->m_TargetScale / (TICRATE + ((3 * TICRATE)*height) / 255);
+		// A hostile height (e.g. -85) makes the time divisor zero, and the int
+		// multiply can overflow for huge values; both would put inf/NaN into the
+		// scale delta and from there into the plane equation.
+		int waggletime = TICRATE + int(int64_t(3 * TICRATE) * height / 255);
+		waggle->m_ScaleDelta = waggletime != 0 ? waggle->m_TargetScale / waggletime : waggle->m_TargetScale;
 		waggle->m_Ticker = timer ? timer*TICRATE : -1;
 		waggle->m_State = WGLSTATE_EXPAND;
 	}

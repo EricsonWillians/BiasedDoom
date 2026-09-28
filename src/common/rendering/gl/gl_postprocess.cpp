@@ -39,7 +39,15 @@
 
 extern bool vid_hdr_active;
 
-CVAR(Int, gl_dither_bpc, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
+CUSTOM_CVAR(Int, gl_dither_bpc, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
+{
+	// The present paths compute (1 << gl_dither_bpc); console values outside
+	// the menu range would make that shift (and the subtract after it) UB.
+	if (self < -1)
+		self = -1;
+	else if (self > 16)
+		self = 16;
+}
 
 namespace OpenGLRenderer
 {

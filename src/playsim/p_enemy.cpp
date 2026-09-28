@@ -3073,7 +3073,11 @@ void A_Face(AActor *self, AActor *other, DAngle max_turn, DAngle max_pitch, DAng
 		double dist_z = target_z - source_z;
 		double ddist = g_sqrt(dist.X*dist.X + dist.Y*dist.Y + dist_z*dist_z);
 
-		DAngle other_pitch = -DAngle::fromRad(g_asin(dist_z / ddist)).Normalized180();
+		// Exact overlap makes this a 0/0 division, and for a target directly
+		// above/below rounding can push the ratio just past 1; both turn the
+		// pitch into NaN.
+		DAngle other_pitch = ddist > 0 ?
+			-DAngle::fromRad(g_asin(min(1., max(-1., dist_z / ddist)))).Normalized180() : self->Angles.Pitch;
 		
 		if (max_pitch != nullAngle)
 		{

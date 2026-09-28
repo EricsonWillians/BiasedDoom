@@ -322,7 +322,12 @@ float GetFogDensity(FLevelLocals* Level, ELightMode lightmode, int lightlevel, P
 	// equivalent to scaling each contribution since the scale is positive.
 	density /= BiasedVisibilityScale(Level);
 
-	return density;
+	// Script-set densities (ACS/FraggleScript/ZScript setters) and a negative
+	// gl_distfog bypass the MAPINFO/UDMF parse clamps; when no biased-fog path
+	// above floored them, a negative density would reach FRenderState::SetFog
+	// (which ignores d < 0, leaving a stale density) and exp() in the fuzz
+	// sprite path. Negative fog has no meaning, so clamp it to "no fog".
+	return max(density, 0.0f);
 }
 
 //==========================================================================

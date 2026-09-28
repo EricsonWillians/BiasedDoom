@@ -113,9 +113,16 @@ bool IShadowMap::PerformUpdate()
 void IShadowMap::UploadLights()
 {
 	// One row of the 1024-row shadow map texture per light, 4 floats each.
-	// The cvar is clamped to 64..1024 so this can never exceed the texture.
-	mLights.Resize((int)bd_shadowmap_max_lights * 4);
+	// The update pass always renders all 1024 rows and the shader indexes this
+	// list by row, so the buffer must cover every row even when fewer lights
+	// are allowed to cast shadows - otherwise the shader reads out of bounds.
+	mLights.Resize(1024 * 4);
 	CollectLights();
+
+	// Rows past the limit would hold stale lights from earlier frames; zero
+	// them so the shader takes its radius <= 0 early-out for those rows.
+	if (bd_shadowmap_max_lights < 1024)
+		memset(&mLights[(int)bd_shadowmap_max_lights * 4], 0, (1024 - (int)bd_shadowmap_max_lights) * 4 * sizeof(float));
 
 	if (mLightList == nullptr)
 		mLightList = screen->CreateDataBuffer(LIGHTLIST_BINDINGPOINT, true, false);
