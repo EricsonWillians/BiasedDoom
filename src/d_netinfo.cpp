@@ -587,7 +587,9 @@ void D_UserInfoChanged (FBaseCVar *cvar)
 static const char *SetServerVar (char *name, ECVarType type, TArrayView<uint8_t>& stream, bool singlebit)
 {
 	FBaseCVar *var = FindCVar (name, NULL);
-	UCVarValue value;
+	// Must be zero-initialized: when the cvar does not resolve, garbage type
+	// bits could otherwise read as CVAR_String and free a garbage pointer below.
+	UCVarValue value = {};
 
 	if (singlebit)
 	{

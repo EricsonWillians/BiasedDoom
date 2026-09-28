@@ -2205,6 +2205,9 @@ public:
         sc.MustGetToken(',');
     }
     sc.MustGetToken(TK_IntConst);
+    // size feeds an allocation and loops in Tick/Draw; a negative value wraps to ~4G.
+    if (sc.Number < 1 || sc.Number > 100)
+      sc.ScriptError("Inventory bar size %d is out of range (1-100).", sc.Number);
     size = sc.Number;
     sc.MustGetToken(',');
     if (!sc.CheckToken(TK_StringConst))

@@ -242,11 +242,12 @@ private:
 	size_t CurrentSize = 0;
 	size_t MaxSize = 256;
 	int CurrentClientTic = 0;
+	bool OverflowWarned = false;
 
 	// Make more room for special Command.
 	void GetMoreBytes(size_t newSize)
 	{
-		MaxSize = max<size_t>(MaxSize * 2, newSize + 30);
+		MaxSize = min<size_t>(max<size_t>(MaxSize * 2, newSize + 30), (size_t)MAX_MSGLEN);
 
 		DPrintf(DMSG_NOTIFY, "Expanding special size to %zu\n", MaxSize);
 
@@ -256,12 +257,26 @@ private:
 		CurrentStream = Streams[CurrentClientTic % BACKUPTICS].Stream + CurrentSize;
 	}
 
-	void AddBytes(size_t bytes)
+	bool AddBytes(size_t bytes)
 	{
 		if (CurrentSize + bytes >= MaxSize)
+		{
+			// A mod generating more net events per tic than a packet can ever
+			// hold must not crash the packet writer; drop the excess instead.
+			if (CurrentSize + bytes >= MAX_MSGLEN)
+			{
+				if (!OverflowWarned)
+				{
+					OverflowWarned = true;
+					Printf(TEXTCOLOR_YELLOW "Too many net events generated in one tic, excess events will be dropped\n");
+				}
+				return false;
+			}
 			GetMoreBytes(CurrentSize + bytes);
+		}
 
 		CurrentSize += bytes;
+		return true;
 	}
 
 public:
@@ -297,71 +312,50 @@ public:
 
 	NetEventData& operator<<(uint8_t it)
 	{
-		if (CurrentStream != nullptr)
-		{
-			AddBytes(1);
+		if (CurrentStream != nullptr && AddBytes(1))
 			UncheckedWriteInt8(it, &CurrentStream);
-		}
 		return *this;
 	}
 
 	NetEventData& operator<<(int16_t it)
 	{
-		if (CurrentStream != nullptr)
-		{
-			AddBytes(2);
+		if (CurrentStream != nullptr && AddBytes(2))
 			UncheckedWriteInt16(it, &CurrentStream);
-		}
 		return *this;
 	}
 
 	NetEventData& operator<<(int32_t it)
 	{
-		if (CurrentStream != nullptr)
-		{
-			AddBytes(4);
+		if (CurrentStream != nullptr && AddBytes(4))
 			UncheckedWriteInt32(it, &CurrentStream);
-		}
 		return *this;
 	}
 
 	NetEventData& operator<<(int64_t it)
 	{
-		if (CurrentStream != nullptr)
-		{
-			AddBytes(8);
+		if (CurrentStream != nullptr && AddBytes(8))
 			UncheckedWriteInt64(it, &CurrentStream);
-		}
 		return *this;
 	}
 
 	NetEventData& operator<<(float it)
 	{
-		if (CurrentStream != nullptr)
-		{
-			AddBytes(4);
+		if (CurrentStream != nullptr && AddBytes(4))
 			UncheckedWriteFloat(it, &CurrentStream);
-		}
 		return *this;
 	}
 
 	NetEventData& operator<<(double it)
 	{
-		if (CurrentStream != nullptr)
-		{
-			AddBytes(8);
+		if (CurrentStream != nullptr && AddBytes(8))
 			UncheckedWriteDouble(it, &CurrentStream);
-		}
 		return *this;
 	}
 
 	NetEventData& operator<<(const char *it)
 	{
-		if (CurrentStream != nullptr)
-		{
-			AddBytes(strlen(it) + 1);
+		if (CurrentStream != nullptr && AddBytes(strlen(it) + 1))
 			UncheckedWriteString(it, &CurrentStream);
-		}
 		return *this;
 	}
 } NetEvents;
@@ -1842,7 +1836,21 @@ void NetUpdate(int tics)
 							// Write out the net events before the user commands so inputs can
 							// be used as a marker for when the given command ends.
 							auto& stream = NetEvents.Streams[curTic % BACKUPTICS];
-							WriteBytes(TArrayView(stream.Stream, stream.Used), cmd);
+							// More events than fit in the packet must not abort the engine;
+							// drop the block (events are optional in the stream) and warn once.
+							if (stream.Used <= cmd.Size())
+							{
+								WriteBytes(TArrayView(stream.Stream, stream.Used), cmd);
+							}
+							else
+							{
+								static bool warnedEventOverflow = false;
+								if (!warnedEventOverflow)
+								{
+									warnedEventOverflow = true;
+									Printf(TEXTCOLOR_YELLOW "Net events for one tic exceeded the packet size and were dropped\n");
+								}
+							}
 
 							WriteUserCmdMessage(LocalCmds[realTic],
 								realLastTic >= 0 ? &LocalCmds[realLastTic] : nullptr, cmd);

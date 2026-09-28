@@ -33,6 +33,7 @@
 */
 
 #include "dthinker.h"
+#include "events.h"
 #include "stats.h"
 #include "p_local.h"
 #include "serializer_doom.h"
@@ -337,6 +338,10 @@ void FThinkerCollection::DestroyAllThinkers(bool fullgc)
 {
 	int i;
 	bool error = false;
+
+	// The destruction notifications below run script handlers against a world
+	// that is being torn down; gameplay mutations must stay blocked here.
+	FWorldTransitionScope transitionScope;
 
 	for (i = 0; i <= MAX_STATNUM; i++)
 	{

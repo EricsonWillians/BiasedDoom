@@ -35,6 +35,7 @@
 */
 
 #include <stdlib.h>
+#include <stdint.h>
 #include "cmdlib.h"
 #include "codegen.h"
 #include "sc_man.h"
@@ -3383,14 +3384,17 @@ goon:
 		}
 		else
 		{
-			int v;
 			int v1 = static_cast<FxConstant *>(left)->GetValue().GetInt();
 			int v2 = static_cast<FxConstant *>(right)->GetValue().GetInt();
 
-			v =	Operator == '+'? v1 + v2 : 
-				Operator == '-'? v1 - v2 : 0;
+			// Compute in 64 bits: folding a signed overflow is UB, so only
+			// fold when the result fits the 32-bit VM register and keep the
+			// runtime expression otherwise.
+			int64_t v64 = Operator == '+'? int64_t(v1) + v2 :
+				Operator == '-'? int64_t(v1) - v2 : 0;
+			if (v64 < INT32_MIN || v64 > INT32_MAX) return this;
 
-			FxExpression *e = new FxConstant(v, ScriptPosition);
+			FxExpression *e = new FxConstant(int(v64), ScriptPosition);
 			delete this;
 			return e;
 
@@ -3646,7 +3650,6 @@ FxExpression *FxMulDiv::Resolve(FCompileContext& ctx)
 		}
 		else
 		{
-			int v;
 			int v1 = static_cast<FxConstant *>(left)->GetValue().GetInt();
 			int v2 = static_cast<FxConstant *>(right)->GetValue().GetInt();
 
@@ -3657,11 +3660,14 @@ FxExpression *FxMulDiv::Resolve(FCompileContext& ctx)
 				return nullptr;
 			}
 
-			v =	Operator == '*'? v1 * v2 : 
-				Operator == '/'? v1 / v2 : 
-				Operator == '%'? v1 % v2 : 0;
+			// Same overflow guard as FxAddSub: INT_MIN / -1 and INT_MIN % -1
+			// do not fit a 32-bit register and are UB if folded directly.
+			int64_t v64 = Operator == '*'? int64_t(v1) * v2 :
+				Operator == '/'? int64_t(v1) / v2 :
+				Operator == '%'? int64_t(v1) % v2 : 0;
+			if (v64 < INT32_MIN || v64 > INT32_MAX) return this;
 
-			FxExpression *e = new FxConstant(v, ScriptPosition);
+			FxExpression *e = new FxConstant(int(v64), ScriptPosition);
 			delete this;
 			return e;
 

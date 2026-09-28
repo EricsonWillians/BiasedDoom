@@ -333,16 +333,24 @@ void FParser::PrintTokens()	// DEBUG
 void FParser::Run(char *rover, char *data, char *end)
 {
 	Rover = rover;
+	unsigned int runaway = 0;	// statement budget, like the ACS interpreter
 	try
 	{
 		PrevSection = NULL;  // clear it
-		
+
 		while(*Rover)   // go through the script executing each statement
 		{
 			// past end of script?
 			if(Rover > end)
 				break;
-			
+
+			// A loop without a wait() would otherwise hang the game loop forever.
+			if(++runaway > 2000000)
+			{
+				script_error("Runaway script %d terminated\n", Script->scriptnum);
+				break;
+			}
+
 			PrevSection = Section; // store from prev. statement
 			
 			// get the line and tokens

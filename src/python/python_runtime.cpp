@@ -23,6 +23,7 @@
 #include "d_player.h"
 #include "doomstat.h"
 #include "engineerrors.h"
+#include "events.h"
 #include "filesystem.h"
 #include "g_level.h"
 #include "g_levellocals.h"
@@ -834,6 +835,12 @@ bool CheckMutationAllowed()
 	{
 		PyErr_SetString(PyExc_RuntimeError,
 			"Python gameplay mutations are unavailable during save and world-unload callbacks");
+		return false;
+	}
+	if (E_WorldTransitionInProgress())
+	{
+		PyErr_SetString(PyExc_RuntimeError,
+			"Python gameplay mutations are unavailable while a world is being torn down or restored");
 		return false;
 	}
 	if (primaryLevel == nullptr || primaryLevel->MapName.IsEmpty())

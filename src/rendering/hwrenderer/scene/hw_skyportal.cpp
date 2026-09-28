@@ -61,6 +61,14 @@ void HWSkyPortal::DrawContents(HWDrawInfo *di, FRenderState &state)
 	state.SetRenderStyle(STYLE_Translucent);
 	bool oldClamp = state.SetDepthClamp(true);
 
+	// The sky dome/box is renderer-generated geometry, not a sector surface:
+	// sampling the world-space bleed map across it paints sector-colored
+	// vertical bands over the sky, so suppress the bleed for this pass. The
+	// uniform block is re-uploaded by SetupView, and restored below so later
+	// passes are unaffected.
+	const float bleedStrength = di->VPUniforms.mSectorBleedParams.X;
+	di->VPUniforms.mSectorBleedParams.X = 0.f;
+
 	di->SetupView(state, 0, 0, 0, !!(mState->MirrorFlag & 1), !!(mState->PlaneMirrorFlag & 1));
 
 	state.SetVertexBuffer(vertexBuffer);
@@ -111,6 +119,7 @@ void HWSkyPortal::DrawContents(HWDrawInfo *di, FRenderState &state)
 			state.SetObjectColor(0xffffffff);
 		}
 	}
+	di->VPUniforms.mSectorBleedParams.X = bleedStrength;
 	di->lightmode = oldlightmode;
 	state.SetDepthClamp(oldClamp);
 }

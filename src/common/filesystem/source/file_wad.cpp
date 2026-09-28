@@ -149,6 +149,20 @@ bool FWadFile::Open(LumpFilterInfo*, FileSystemMessageFunc Printf)
 		Entries[i].FileName = nullptr;
 		Entries[i].Position = isBigEndian ? BigLong(fileinfo[i].FilePos) : LittleLong(fileinfo[i].FilePos);
 		Entries[i].CompressedSize = Entries[i].Length = isBigEndian ? BigLong(fileinfo[i].Size) : LittleLong(fileinfo[i].Size);
+		// Clamp corrupt directory entries to the file's actual end so that
+		// later reads (including memory-buffer backed ones, which cannot
+		// clamp themselves) can never run past the end of the wad.
+		if (Entries[i].Position > (size_t)wadSize)
+		{
+			Printf(FSMessageLevel::Warning, "%s: Lump %u starts past the end of the file, truncated\n", FileName, i);
+			Entries[i].Position = wadSize;
+			Entries[i].CompressedSize = Entries[i].Length = 0;
+		}
+		else if (Entries[i].Length > (size_t)wadSize - Entries[i].Position)
+		{
+			Printf(FSMessageLevel::Warning, "%s: Lump %u overruns the end of the file, truncated\n", FileName, i);
+			Entries[i].CompressedSize = Entries[i].Length = (size_t)wadSize - Entries[i].Position;
+		}
 
 		Entries[i].Namespace = ns_global;
 		Entries[i].Flags = ishigh? RESFF_SHORTNAME | RESFF_COMPRESSED : RESFF_SHORTNAME;
@@ -161,7 +175,10 @@ bool FWadFile::Open(LumpFilterInfo*, FileSystemMessageFunc Printf)
 		if (Entries[i].Method == METHOD_LZSS)
 		{
 			// compressed size is implicit.
-			Entries[i].CompressedSize = (i == NumLumps - 1 ? Reader.GetLength() : Entries[i + 1].Position) - Entries[i].Position;
+			size_t end = i == NumLumps - 1 ? (size_t)Reader.GetLength() : Entries[i + 1].Position;
+			// Lump positions are not guaranteed to be ordered; never let the
+			// derived size underflow.
+			Entries[i].CompressedSize = end > Entries[i].Position ? end - Entries[i].Position : 0;
 		}
 	}
 

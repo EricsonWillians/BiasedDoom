@@ -1333,7 +1333,8 @@ float SoundEngine::GetRolloff(const FRolloffInfo* rolloff, float distance)
 
 	if (rolloff->RolloffType == ROLLOFF_Custom && S_SoundCurve.Size() > 0)
 	{
-		return S_SoundCurve[int(S_SoundCurve.Size() * (1.f - volume))] / 127.f;
+		// Clamp: for tiny volumes 1.f-volume rounds to 1.0, indexing one past the curve.
+		return S_SoundCurve[min(int(S_SoundCurve.Size() * (1.f - volume)), int(S_SoundCurve.Size()) - 1)] / 127.f;
 	}
 	return (powf(10.f, volume) - 1.f) / 9.f;
 }

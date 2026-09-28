@@ -107,19 +107,44 @@ static int ExecScriptFunc(VMFrameStack *stack, VMReturn *ret, int numret)
 
 	OP(LK_R) :
 		ASSERTD(a); ASSERTD(B);
-		reg.d[a] = konstd[reg.d[B] + C];
+		// The index is computed at runtime, so unlike OP(LK) it must be
+		// bounds-checked against the constant pool even in release builds.
+		b = reg.d[B] + C;
+		if ((unsigned)b >= sfunc->NumKonstD)
+		{
+			ThrowAbortException(X_ARRAY_OUT_OF_BOUNDS, "Size = %u, current index = %i\n", (unsigned)sfunc->NumKonstD, b);
+			return 0;
+		}
+		reg.d[a] = konstd[b];
 		NEXTOP;
 	OP(LKF_R) :
 		ASSERTF(a); ASSERTD(B);
-		reg.f[a] = konstf[reg.d[B] + C];
+		b = reg.d[B] + C;
+		if ((unsigned)b >= sfunc->NumKonstF)
+		{
+			ThrowAbortException(X_ARRAY_OUT_OF_BOUNDS, "Size = %u, current index = %i\n", (unsigned)sfunc->NumKonstF, b);
+			return 0;
+		}
+		reg.f[a] = konstf[b];
 		NEXTOP;
 	OP(LKS_R) :
 		ASSERTS(a); ASSERTD(B);
-		reg.s[a] = konsts[reg.d[B] + C];
+		b = reg.d[B] + C;
+		if ((unsigned)b >= sfunc->NumKonstS)
+		{
+			ThrowAbortException(X_ARRAY_OUT_OF_BOUNDS, "Size = %u, current index = %i\n", (unsigned)sfunc->NumKonstS, b);
+			return 0;
+		}
+		reg.s[a] = konsts[b];
 		NEXTOP;
 	OP(LKP_R) :
 		ASSERTA(a); ASSERTD(B);
 		b = reg.d[B] + C;
+		if ((unsigned)b >= sfunc->NumKonstA)
+		{
+			ThrowAbortException(X_ARRAY_OUT_OF_BOUNDS, "Size = %u, current index = %i\n", (unsigned)sfunc->NumKonstA, b);
+			return 0;
+		}
 		reg.a[a] = konsta[b].v;
 		NEXTOP;
 
@@ -853,7 +878,11 @@ static int ExecScriptFunc(VMFrameStack *stack, VMReturn *ret, int numret)
 			}
 			auto p = o->GetClass();
 			if(p->Virtuals.Size() <= 0) ThrowAbortException(X_OTHER,"Attempted to call an invalid virtual function in class %s",p->TypeName.GetChars());
-			assert(C < p->Virtuals.Size());
+			if ((unsigned)C >= p->Virtuals.Size())
+			{
+				ThrowAbortException(X_ARRAY_OUT_OF_BOUNDS, "Size = %u, current index = %i\n", p->Virtuals.Size(), C);
+				return 0;
+			}
 			reg.a[a] = p->Virtuals[C];
 		}
 		NEXTOP;
@@ -879,7 +908,13 @@ static int ExecScriptFunc(VMFrameStack *stack, VMReturn *ret, int numret)
 		ptr = reg.a[a];
 	Do_CALL:
 		assert(B <= f->NumParam);
-		assert(C <= MAX_RETURNS);
+		// C selects the number of RESULT slots that follow; more than the
+		// returns buffer holds must never reach FillReturns/pc += C.
+		if (C > MAX_RETURNS)
+		{
+			ThrowAbortException(X_OTHER, "Attempted to return %i values (max %i)", C, MAX_RETURNS);
+			return 0;
+		}
 		{
 			VMFunction *call = (VMFunction *)ptr;
 			VMReturn returns[MAX_RETURNS];

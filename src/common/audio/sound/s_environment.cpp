@@ -639,7 +639,7 @@ void S_UnloadReverbDef ()
 		if (!probe->Builtin)
 		{
 			if (pNext != NULL) *pNext = probe->Next;
-			free(const_cast<char *>(probe->Name));
+			delete[] const_cast<char *>(probe->Name); // Name comes from copystring (new char[]), free() is a mismatched deallocation
 			delete probe;
 		}
 		else

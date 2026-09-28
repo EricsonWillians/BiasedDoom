@@ -44,6 +44,7 @@
 #include "keydef.h"
 #include "m_joy.h"
 #include "menu.h"
+#include "printf.h"
 #include "utf8.h"
 #include "vm.h"
 
@@ -52,6 +53,10 @@ extern bool ToggleFullscreen;
 int eventhead;
 int eventtail;
 event_t events[MAXEVENTS];
+
+// Counts events dropped because the queue was full; only warned about once.
+static int eventdrops;
+static bool eventdropwarned;
 
 CVAR(Float, m_sensitivity_x, 2.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Float, m_sensitivity_y, 2.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -182,6 +187,19 @@ void D_PostEvent(event_t* ev)
 	}
 	if (sysCallbacks.DispatchEvent && sysCallbacks.DispatchEvent(ev))
 		return;
+
+	// A full queue must drop the incoming event; advancing head here would
+	// silently overwrite events D_ProcessEvents has not consumed yet.
+	if ((eventhead + 1) & (MAXEVENTS - 1) == eventtail)
+	{
+		eventdrops++;
+		if (!eventdropwarned)
+		{
+			eventdropwarned = true;
+			Printf(TEXTCOLOR_YELLOW "Input event queue full, dropping events\n");
+		}
+		return;
+	}
 
 	events[eventhead] = *ev;
 	eventhead = (eventhead + 1) & (MAXEVENTS - 1);

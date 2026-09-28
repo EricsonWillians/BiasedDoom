@@ -193,6 +193,61 @@ All notable changes to this project will be documented in this file.
   serialization is capped at 16 MiB and fails the save cleanly beyond it;
   ImGui style setters reject unmapped indices and non-finite floats; and
   actor `tid` assignment rejects values outside 32 bits.
+- Python gameplay mutations (`bd.spawn` and friends) are now also rejected
+  while a world is being torn down and while the throwaway base map of a
+  savegame load is being set up, closing a window where
+  `actor_spawned`/`actor_destroyed` handlers or `__del__` finalizers could
+  spawn actors into a half-destroyed level; the block lifts before
+  `map_load` handlers fire on the new world.
+- Hardened DEHACKED patch parsing: `Pointer` headers without a closing
+  parenthesis no longer dereference null, `Text` chunk string sizes are
+  validated against the patch, sprite-name replacements can no longer
+  overflow the 4-character field, and sprite-table indices are range-
+  checked instead of growing the table by an unbounded amount.
+- ZScript compile-time constant folding no longer invokes undefined
+  behavior: add/subtract/multiply/divide/modulo folds are computed in 64
+  bits and only folded when the result fits a 32-bit register, so
+  `INT_MIN / -1`, `INT_MIN % -1`, and overflowing arithmetic keep their
+  runtime expressions instead of crashing or miscompiling the mod.
+- The ZScript VM now bounds-checks runtime-indexed constant-pool loads
+  (`LK_R` family), virtual-call table indices, and call return counts even
+  in release builds, turning latent release-mode out-of-bounds reads into
+  clean script aborts; FraggleScript execution has a statement budget so a
+  loop without `wait()` can no longer hang the game; and script-encoded
+  state-label offsets are validated against the label storage before
+  decoding.
+- Network robustness: server-variable changes for unknown cvars can no
+  longer free an uninitialized pointer, a full input event queue now drops
+  new events with a one-time warning instead of silently overwriting
+  unconsumed input, and mods generating more network events per tic than a
+  packet holds get excess events dropped with a warning instead of an
+  engine abort.
+- ACS loader: the enhanced-format claimed code size and the chunk
+  directory base are validated against the lump before any chunk walk.
+- Resource loading: WAD directory lump offsets/sizes are clamped to the
+  file, unordered lump positions can no longer underflow the LZSS size
+  derivation, truncated zip end-of-central-directory records are rejected,
+  and zip local headers are validated before their lengths are trusted.
+- Fixed VPX I440 video frames reading past their chroma planes (I440 has
+  half the luma's chroma rows).
+- Fixed an out-of-range `wipetype` CVAR crashing the engine on the next
+  screen wipe (unknown wipe types now fall back to the melt wipe), and
+  SBARINFO `drawinventorybar` rejecting negative or absurd slot counts
+  instead of attempting multi-gigabyte allocations.
+- Hardened the audio paths: crafted VOC lumps can no longer overflow the
+  decoded-length accumulator into a small allocation (which was followed
+  by gigabyte-sized writes), streamed sound decoding is capped at 256 MiB
+  so a hostile stream cannot wrap the output buffer, reverb environment
+  names are freed with the matching allocator, savegame-restored sound
+  sequence offsets are clamped to the script buffer, and the custom
+  rolloff curve can no longer be indexed one past its end.
+- Fixed sector light bleeding painting vertical sector-colored bands
+  across the sky outdoors: the sky dome and skybox are renderer-generated
+  geometry, not sector surfaces, and are now excluded from the bleed
+  effect. The bleed map also no longer samples arbitrary sectors outside
+  the map bounds (out-of-map texels replicate the nearest real edge
+  sector, fixing wrong colors around outdoor map borders), and it now
+  rebuilds when a sector's sky texture assignment changes at run time.
 
 ## [4.15.15] - 2026-09-26
 

@@ -357,6 +357,9 @@ FState *FStateLabelStorage::GetState(int pos, PClassActor *cls, bool exact)
 		int index = (pos >> 16) & 32767;
 		pos = ((pos & 65535) - 1) * 4;
 		FState *state;
+		// Script-encoded offsets are untrusted: never read past the storage.
+		if (pos < 0 || (size_t)pos + sizeof(int) + sizeof(state) > Storage.Size())
+			return nullptr;
 		memcpy(&state, &Storage[pos + sizeof(int)], sizeof(state));
 		if (VerifyJumpTarget(cls, state, index))
 			return state + index;
@@ -366,17 +369,25 @@ FState *FStateLabelStorage::GetState(int pos, PClassActor *cls, bool exact)
 	else if (pos > 0)
 	{
 		int val;
-		pos = (pos - 1) * 4;
+		// (pos - 1) * 4 can overflow a 32-bit int, so widen before validating.
+		int64_t ofs = (int64_t(pos) - 1) * 4;
+		if (uint64_t(ofs) + sizeof(int) > Storage.Size())
+			return nullptr;
+		pos = (int)ofs;
 		memcpy(&val, &Storage[pos], sizeof(int));
 
 		if (val == 0)
 		{
 			FState *state;
+			if ((size_t)pos + sizeof(int) + sizeof(state) > Storage.Size())
+				return nullptr;
 			memcpy(&state, &Storage[pos + sizeof(int)], sizeof(state));
 			return state;
 		}
 		else if (cls != nullptr)
 		{
+			if (val < 0 || (size_t)pos + sizeof(int) + (size_t)val * sizeof(FName) > Storage.Size())
+				return nullptr;
 			FName *labels = (FName*)&Storage[pos + sizeof(int)];
 			return cls->FindState(val, labels, exact);
 		}

@@ -2356,16 +2356,33 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 			 pretag == MAKE_ID('A','C','S','E')))
 		{
 			Format = (pretag == MAKE_ID('A','C','S','e')) ? ACS_LittleEnhanced : ACS_Enhanced;
-			Chunks = object + LittleLong(((uint32_t *)(object + dirofs))[-2]);
+			uint32_t chunkofs = LittleLong(((uint32_t *)(object + dirofs))[-2]);
+			// The chunk directory base must lie inside the lump.
+			if (chunkofs > (uint32_t)len)
+			{
+				I_Error("Corrupt chunk directory offset in ACS module %s", ModuleName);
+			}
+			Chunks = object + chunkofs;
 			// Forget about the compatibility cruft at the end of the lump
 			DataSize = LittleLong(((uint32_t *)object)[1]) - 8;
+			// The claimed code size must not exceed the lump either.
+			if (DataSize > (uint32_t)len)
+			{
+				I_Error("Corrupt header in ACS module %s", ModuleName);
+			}
 		}
 
 		ShouldLocalize = false;
 	}
 	else
 	{
-		Chunks = object + LittleLong(((uint32_t *)object)[1]);
+		uint32_t chunkofs = LittleLong(((uint32_t *)object)[1]);
+		// The chunk directory base must lie inside the lump.
+		if (chunkofs > (uint32_t)len)
+		{
+			I_Error("Corrupt chunk directory offset in ACS module %s", ModuleName);
+		}
+		Chunks = object + chunkofs;
 	}
 
 	LoadScriptsDirectory ();

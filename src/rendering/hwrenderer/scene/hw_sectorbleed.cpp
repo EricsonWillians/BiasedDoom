@@ -83,6 +83,14 @@ static void BuildSectorBleedMap(FLevelLocals *Level, ELightMode lightmode, float
 		maxY = max(maxY, pos.Y);
 	}
 
+	// The padding ring only exists for texture coverage; texels in it lie
+	// outside the map, where PointInSector would return an arbitrary BSP
+	// leaf. Remember the real bounds so lookups can be clamped to them.
+	const double mapMinX = minX;
+	const double mapMinY = minY;
+	const double mapMaxX = maxX;
+	const double mapMaxY = maxY;
+
 	minX -= distance;
 	minY -= distance;
 	maxX += distance;
@@ -129,7 +137,11 @@ static void BuildSectorBleedMap(FLevelLocals *Level, ELightMode lightmode, float
 		for (int x = 0; x < width; ++x)
 		{
 			const double worldX = minX + (x + 0.5) * extentX / width;
-			sector_t *sector = Level->PointInSector(worldX, worldY);
+			// Padding texels replicate the nearest real edge point instead of
+			// whatever sector the BSP happens to route to outside the map.
+			const double lookupX = mapMaxX - mapMinX > 1e-3 ? clamp(worldX, mapMinX + 1e-4, mapMaxX - 1e-4) : mapMinX;
+			const double lookupY = mapMaxY - mapMinY > 1e-3 ? clamp(worldY, mapMinY + 1e-4, mapMaxY - 1e-4) : mapMinY;
+			sector_t *sector = Level->PointInSector(lookupX, lookupY);
 			uint8_t *pixel = pixels + (y * width + x) * 4;
 
 			const unsigned sectorIndex = unsigned(sector->sectornum) * 4;
@@ -139,7 +151,7 @@ static void BuildSectorBleedMap(FLevelLocals *Level, ELightMode lightmode, float
 
 			double bestDistance = distance;
 			sector_t *bestSector = nullptr;
-			const DVector2 point(worldX, worldY);
+			const DVector2 point(lookupX, lookupY);
 			for (unsigned i = 0; i < sector->Lines.Size(); ++i)
 			{
 				const line_t *line = sector->Lines[i];
@@ -197,6 +209,10 @@ void HW_UpdateSectorLightBleed(FLevelLocals *Level, ELightMode lightmode)
 		hash = SectorBleedHashMix(hash, uint16_t(sector.lightlevel));
 		hash = SectorBleedHashMix(hash, sector.Colormap.LightColor.d);
 		hash = SectorBleedHashMix(hash, uint32_t(sector.Colormap.BlendFactor));
+		// Sky-texture assignments decide bleed eligibility, so changes to
+		// them (e.g. scripts swapping a ceiling to/from the sky flat) must
+		// invalidate the map as well.
+		hash = SectorBleedHashMix(hash, uint64_t(IsSkySector(&sector)));
 	}
 
 	if (hash == Level->SectorBleedHash && Level->SectorBleedData.Size() != 0)

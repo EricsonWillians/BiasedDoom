@@ -1493,7 +1493,12 @@ void DSeqNode::ChangeData (int seqOffset, int delayTics, float volume, FSoundID 
 {
 	m_DelayTics = delayTics;
 	m_Volume = volume;
-	m_SequencePtr += seqOffset;
+	// seqOffset comes from a savegame; clamp it to the script so a corrupt
+	// offset cannot make Tick() dispatch outside the command buffer.
+	int32_t *script = Sequences[m_Sequence]->Script;
+	ptrdiff_t maxOffset = 0;
+	while (GetCommand(script[maxOffset]) != SS_CMD_END) ++maxOffset;
+	m_SequencePtr = script + clamp<ptrdiff_t>(m_SequencePtr - script + seqOffset, 0, maxOffset);
 	m_CurrentSoundID = currentSoundID;
 }
 

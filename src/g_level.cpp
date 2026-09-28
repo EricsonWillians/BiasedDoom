@@ -1478,6 +1478,12 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 		staticEventManager.NewGame();
 	}
 
+	// A savegame load sets up the base map only to replace it with the
+	// serialized world in UnSnapshotLevel below, so script handlers must not
+	// mutate this throwaway world. The guard is disarmed before the
+	// WorldLoaded/map_load handlers fire on the restored world.
+	FWorldTransitionScope transitionScope(savegamerestore);
+
 	P_SetupLevel (this, position, newGame);
 	if (P_IsProceduralMapName(MapName.GetChars()))
 	{
@@ -1567,6 +1573,8 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 	}
 
 	StatusBar->AttachToPlayer (&players[consoleplayer]);
+	// Base-map setup of a savegame load is complete; let handlers mutate again.
+	transitionScope.Disarm();
 	//      unsafe world load
 	staticEventManager.WorldLoaded();
 	//      regular world load (savegames are handled internally)

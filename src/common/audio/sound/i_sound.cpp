@@ -34,6 +34,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <chrono>
 
 #include "oalsound.h"
@@ -509,7 +510,8 @@ FString SoundStream::GetStats()
 SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 {
 	uint8_t * data = NULL;
-	int len, frequency, channels, bits, loopstart, loopend;
+	int64_t len; // 64-bit: silence blocks can declare far more bytes than the lump holds
+	int frequency, channels, bits, loopstart, loopend;
 	len = frequency = channels = bits = 0;
 	loopstart = loopend = -1;
 	do if (length > 26)
@@ -584,10 +586,10 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 			case 5: // Text (ignored)
 				break;
 			case 6: // Repeat start
-				loopstart = len;
+				loopstart = (int)min<int64_t>(len, INT32_MAX);
 				break;
 			case 7: // Repeat end
-				loopend = len;
+				loopend = (int)min<int64_t>(len, INT32_MAX);
 				if (loopend < loopstart)
 					okay = false;
 				break;
@@ -634,10 +636,11 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 			i += blocksize;
 		}
 
-		// Second pass to write the data
-		if (okay && len > 0)
+		// Second pass to write the data. Reject declared sizes that do not
+		// fit the allocation so pass 2 cannot write past the buffer.
+		if (okay && len > 0 && len <= INT32_MAX)
 		{
-			data = new uint8_t[len];
+			data = new uint8_t[(size_t)len];
 			i = 26;
 			int j = 0;
 			while (i < length)
@@ -683,7 +686,7 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 		}
 
 	} while (false);
-	SoundHandle retval = LoadSoundRaw(data, len, frequency, channels, bits, loopstart, loopend);
+	SoundHandle retval = LoadSoundRaw(data, data != NULL ? (int)len : 0, frequency, channels, bits, loopstart, loopend);
 	if (data) delete[] data;
 	return retval;
 }

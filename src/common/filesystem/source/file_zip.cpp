@@ -144,9 +144,14 @@ bool FZipFile::Open(LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 	if (!zip64)
 	{
 		FZipEndOfCentralDirectory info;
-		// Read the central directory info.
+		// Read the central directory info; a truncated record must not be
+		// parsed with uninitialized tail fields.
 		Reader.Seek(centraldir, FileReader::SeekSet);
-		Reader.Read(&info, sizeof(FZipEndOfCentralDirectory));
+		if (Reader.Read(&info, sizeof(FZipEndOfCentralDirectory)) != sizeof(FZipEndOfCentralDirectory))
+		{
+			Printf(FSMessageLevel::Error, "%s: Truncated end of central directory.\n", FileName);
+			return false;
+		}
 
 		// No multi-disk zips!
 		if (info.NumEntries != info.NumEntriesOnAllDisks ||
@@ -163,9 +168,14 @@ bool FZipFile::Open(LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 	else
 	{
 		FZipEndOfCentralDirectory64 info;
-		// Read the central directory info.
+		// Read the central directory info; a truncated record must not be
+		// parsed with uninitialized tail fields.
 		Reader.Seek(centraldir, FileReader::SeekSet);
-		Reader.Read(&info, sizeof(FZipEndOfCentralDirectory64));
+		if (Reader.Read(&info, sizeof(FZipEndOfCentralDirectory64)) != sizeof(FZipEndOfCentralDirectory64))
+		{
+			Printf(FSMessageLevel::Error, "%s: Truncated end of central directory.\n", FileName);
+			return false;
+		}
 
 		// No multi-disk zips!
 		if (info.NumEntries != info.NumEntriesOnAllDisks ||
@@ -401,9 +411,18 @@ void FZipFile::SetEntryAddress(uint32_t entry)
 	int skiplen;
 
 	Reader.Seek(Entries[entry].Position, FileReader::SeekSet);
-	Reader.Read(&localHeader, sizeof(localHeader));
-	skiplen = LittleShort(localHeader.NameLength) + LittleShort(localHeader.ExtraLength);
-	Entries[entry].Position += sizeof(localHeader) + skiplen;
+	if (Reader.Read(&localHeader, sizeof(localHeader)) == sizeof(localHeader)
+		&& LittleLong(localHeader.Magic) == ZIP_LOCALFILE)
+	{
+		skiplen = LittleShort(localHeader.NameLength) + LittleShort(localHeader.ExtraLength);
+		Entries[entry].Position += sizeof(localHeader) + skiplen;
+	}
+	else
+	{
+		// Corrupt or missing local header: point at the file end so later
+		// reads clamp to nothing instead of trusting garbage lengths.
+		Entries[entry].Position = Reader.GetLength();
+	}
 	Entries[entry].Flags &= ~RESFF_NEEDFILESTART;
 }
 

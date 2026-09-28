@@ -1267,6 +1267,14 @@ SoundHandle OpenALSoundRenderer::LoadSound(uint8_t *sfxdata, int length, int def
 	while ((got = (unsigned)SoundDecoder_Read(decoder, (char*)&data[total], data.size() - total)) > 0)
 	{
 		total += got;
+		if (total >= 256u << 20)
+		{
+			// A hostile or corrupt stream can decode to gigabytes; bail out
+			// before the doubling grow below wraps or exhausts memory.
+			SoundDecoder_Close(decoder);
+			Printf("Sound is too large, ignoring\n");
+			return retval;
+		}
 		data.resize(total * 2);
 	}
 	data.resize(total);

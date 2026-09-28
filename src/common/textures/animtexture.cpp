@@ -149,14 +149,19 @@ void AnimTexture::SetFrame(const uint8_t* Palette, const void* data_)
 			}
 			else if(img->fmt == VPX_IMG_FMT_I440)
 			{
+				// I440 chroma has half the rows of the luma; clamp the chroma row
+				// to the plane's actual row count (as sized by libvpx from img->h)
+				// so an odd or tightly packed frame can never read past its end.
+				const unsigned int chromaRows = img->h >> img->y_chroma_shift;
 				for (unsigned int y = 0; y < Height; y++)
 				{
+					const unsigned int cy = min(y >> 1, chromaRows > 0 ? chromaRows - 1 : 0);
 					for (unsigned int x = 0; x < Width; x++)
 					{
 						YUVtoRGB(
 							yplane[ystride * y + x],
-							uplane[ustride * (y >> 1) + x],
-							vplane[vstride * (y >> 1) + x],
+							uplane[ustride * cy + x],
+							vplane[vstride * cy + x],
 							dpix
 						);
 						dpix += 4;

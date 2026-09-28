@@ -15,6 +15,25 @@ struct line_t;
 struct sector_t;
 struct FLevelLocals;
 
+// Set while a world is being torn down or while the throwaway base map of a
+// savegame load is being set up. The embedded Python runtime rejects gameplay
+// mutations for the duration so actor_spawned/actor_destroyed handlers cannot
+// spawn into a level mid-teardown. Always cleared before the WorldLoaded /
+// map_load handlers fire on the new world.
+bool E_WorldTransitionInProgress();
+
+// RAII guard for the above; nests safely. Disarm() releases the guard early
+// (e.g. before the WorldLoaded handlers of a restored savegame fire); the
+// destructor releases it in any case.
+struct FWorldTransitionScope
+{
+	FWorldTransitionScope(bool engage = true);
+	~FWorldTransitionScope();
+	void Disarm();
+	bool prior;
+	bool engaged;
+};
+
 enum class EventHandlerType
 {
 	Global,

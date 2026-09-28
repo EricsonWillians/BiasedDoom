@@ -2439,13 +2439,21 @@ static int PatchPointer (int ptrNum, int flags)
 	if (key++) key=strchr(key, ' '); else key=NULL;
 	if ((ptrNum == 0) && key++)
 	{
-		*strchr(key, ')') = '\0';
+		char *close = strchr(key, ')');
+		if (close == NULL)
+		{
+			Printf ("Malformed Pointer 0 header (missing ')').\n");
+		}
+		else
+		{
+		*close = '\0';
 		indexnum = atoi(key);
 		for (ptrNum = 0; (unsigned int) ptrNum < CodePConv.Size(); ++ptrNum)
 		{
 			if (CodePConv[ptrNum] == indexnum) break;
 		}
 		DPrintf(DMSG_SPAMMY, "Final ptrNum: %i\n", ptrNum);
+		}
 	}
 	// End of hack.
 
@@ -2902,6 +2910,14 @@ static int PatchText (int oldSize, int flags)
 	int result;
 	int i;
 
+	// Reject bogus sizes before they reach the string allocator: a negative value
+	// wraps to a huge unsigned request and no string can outgrow the patch itself.
+	if (oldSize < 0 || oldSize > PatchSize)
+	{
+		Printf ("Text chunk has invalid size of old string.\n");
+		return 0;
+	}
+
 	// Skip old size, since we already know it
 	temp = Line2;
 	while (*temp > ' ')
@@ -2915,6 +2931,11 @@ static int PatchText (int oldSize, int flags)
 		return 2;
 	}
 	newSize = atoi (temp);
+	if (newSize < 0 || newSize > PatchSize)
+	{
+		Printf ("Text chunk has invalid size of new string.\n");
+		return 0;
+	}
 
 	FString oldStrData, newStrData;
 	oldStr = oldStrData.LockNewBuffer(oldSize + 1);
@@ -2952,7 +2973,9 @@ static int PatchText (int oldSize, int flags)
 			{
 				if (!stricmp(OrgSprNames[ii].c, oldStr))
 				{
-					strcpy(OrgSprNames[ii].c, newStr);
+					// Sprite names are 4 characters; a longer replacement would overflow the field.
+					strncpy(OrgSprNames[ii].c, newStr, 4);
+					OrgSprNames[ii].c[4] = 0;
 				}
 			}
 			ReplaceSpriteInData(oldStr, newStr);
@@ -3072,10 +3095,17 @@ static int PatchSpriteNames (int dummy, int flags)
 				continue;
 			}
 			int64_t line1val = strtoll(Line1, nullptr, 10);
-			if (line1val >= OrgSprNames.Size())
+			// Reject bogus indices: a negative value would index out of bounds and an
+			// arbitrarily large one would force an unbounded allocation from a single line.
+			if (line1val < 0 || line1val >= (int64_t)OrgSprNames.Size() + 4096)
+			{
+				Printf("Sprite number %s out of range.\n", Line1);
+				continue;
+			}
+			if (line1val >= (int64_t)OrgSprNames.Size())
 			{
 				unsigned osize = OrgSprNames.Size();
-				OrgSprNames.Resize(line1val + 1);
+				OrgSprNames.Resize((unsigned)line1val + 1);
 				DEHSprName nulname{};
 				for (unsigned o = osize; o < OrgSprNames.Size(); o++)
 				{

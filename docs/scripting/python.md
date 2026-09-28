@@ -352,7 +352,11 @@ handlers run before Python's callback. A savegame load can produce an unload
 with `next_map=None` before it rebuilds the saved map.
 
 Actor mutation and `execute_acs` raise `RuntimeError` during this teardown
-callback. Record state or queue non-gameplay work instead.
+callback. The same block applies across the whole world teardown (including
+the `actor_destroyed` notifications fired while thinkers are destroyed) and
+while the throwaway base map of a savegame load is being set up; it lifts
+before `map_load` handlers fire on the new world. Record state or queue
+non-gameplay work instead.
 
 Do not rely on `map_unload` being an engine-shutdown notification; use
 `engine_shutdown` for process cleanup.

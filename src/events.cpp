@@ -45,6 +45,34 @@
 
 EventManager staticEventManager;
 
+static bool worldTransitionInProgress = false;
+
+bool E_WorldTransitionInProgress()
+{
+	return worldTransitionInProgress;
+}
+
+FWorldTransitionScope::FWorldTransitionScope(bool engage)
+{
+	prior = worldTransitionInProgress;
+	engaged = engage;
+	if (engage) worldTransitionInProgress = true;
+}
+
+FWorldTransitionScope::~FWorldTransitionScope()
+{
+	Disarm();
+}
+
+void FWorldTransitionScope::Disarm()
+{
+	if (engaged)
+	{
+		worldTransitionInProgress = prior;
+		engaged = false;
+	}
+}
+
 static int ListGetInt(VMVa_List& tags)
 {
 	if (tags.curindex < tags.numargs)
@@ -678,6 +706,9 @@ void EventManager::WorldLoaded()
 
 void EventManager::WorldUnloaded(const FString& nextmap)
 {
+	// The world is about to be torn down; block gameplay mutations from
+	// script handlers for the duration of the unload notification.
+	FWorldTransitionScope transitionScope;
 	for (DStaticEventHandler* handler = LastEventHandler; handler; handler = handler->prev)
 	{
 		handler->WorldUnloaded(nextmap);
