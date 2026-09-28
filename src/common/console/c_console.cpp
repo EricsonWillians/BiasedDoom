@@ -135,6 +135,32 @@ CUSTOM_CVAR(Float, con_alpha, 0.75f, CVAR_ARCHIVE)
 	if (self > 1.f) self = 1.f;
 }
 
+// Selects the console scrollback font: 0 = new console font (default),
+// 1 = classic CONFONT, 2 = small font.
+CUSTOM_CVAR(Int, con_font, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0) self = 0;
+	if (self > 2) self = 2;
+}
+
+FFont *ActiveConsoleFont()
+{
+	switch ((int)con_font)
+	{
+	case 1:
+		if (ConFont != nullptr) return ConFont;
+		break;
+	case 2:
+		if (SmallFont != nullptr) return SmallFont;
+		break;
+	default:
+		break;
+	}
+	return NewConsoleFont != nullptr ? NewConsoleFont : ConFont;
+}
+
+CVARD(Bool, con_timestamps, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "Prefix console scrollback lines with a [HH:MM:SS] timestamp (console display only, logfile is unaffected)")
+
 CUSTOM_CVARD(Bool, con_quick_home_end, true, CVAR_ARCHIVE, "Use HOME/END keys to scroll when cursor is at start/end of line already")
 {}
 
@@ -236,10 +262,10 @@ void C_InitConsole (int width, int height, bool ingame)
 	int cwidth, cheight;
 
 	vidactive = ingame;
-	if (CurrentConsoleFont != NULL)
+	if (ActiveConsoleFont() != NULL)
 	{
-		cwidth = CurrentConsoleFont->GetCharWidth ('M');
-		cheight = CurrentConsoleFont->GetHeight();
+		cwidth = ActiveConsoleFont()->GetCharWidth ('M');
+		cheight = ActiveConsoleFont()->GetHeight();
 	}
 	else
 	{
@@ -675,15 +701,15 @@ static int C_PixelsToColumn(FFont *font, const FString &text, int pixels)
 // (must match the drawing code in C_DrawConsole)
 static void C_ConsoleTextGeometry(int textScale, int &lines, int &offset)
 {
-	lines = (ConBottom/textScale-CurrentConsoleFont->GetHeight()*2)/CurrentConsoleFont->GetHeight();
-	if (-CurrentConsoleFont->GetHeight() + lines*CurrentConsoleFont->GetHeight() > ConBottom/textScale - CurrentConsoleFont->GetHeight()*7/2)
+	lines = (ConBottom/textScale-ActiveConsoleFont()->GetHeight()*2)/ActiveConsoleFont()->GetHeight();
+	if (-ActiveConsoleFont()->GetHeight() + lines*ActiveConsoleFont()->GetHeight() > ConBottom/textScale - ActiveConsoleFont()->GetHeight()*7/2)
 	{
-		offset = -CurrentConsoleFont->GetHeight()/2;
+		offset = -ActiveConsoleFont()->GetHeight()/2;
 		lines--;
 	}
 	else
 	{
-		offset = -CurrentConsoleFont->GetHeight();
+		offset = -ActiveConsoleFont()->GetHeight();
 	}
 }
 
@@ -701,12 +727,12 @@ static bool C_ConsoleHitTest(int scrx, int scry, int &outline, int &outcol, bool
 
 	// make sure the formatted lines are current (normally done every frame
 	// by C_DrawConsole, but events can arrive before the first draw)
-	conbuffer->FormatText(CurrentConsoleFont, ConWidth / textScale);
+	conbuffer->FormatText(ActiveConsoleFont(), ConWidth / textScale);
 
 	unsigned int consolelines = conbuffer->GetFormattedLineCount();
 	if (consolelines == 0) return false;
 
-	int fontheight = CurrentConsoleFont->GetHeight();
+	int fontheight = ActiveConsoleFont()->GetHeight();
 	int vx = scrx / textScale - LEFTMARGIN;
 	int vy = scry / textScale;
 
@@ -728,7 +754,7 @@ static bool C_ConsoleHitTest(int scrx, int scry, int &outline, int &outcol, bool
 	FString stripped = C_StripColorEscapes(blines[fi].Text.GetChars());
 
 	outline = fi;
-	outcol = C_PixelsToColumn(CurrentConsoleFont, stripped, max(vx, 0));
+	outcol = C_PixelsToColumn(ActiveConsoleFont(), stripped, max(vx, 0));
 	return true;
 }
 
@@ -830,14 +856,14 @@ void C_DrawConsole ()
 		if (ConBottom >= 12)
 		{
 			if (textScale == 1)
-				DrawText(twod, CurrentConsoleFont, CR_ORANGE, twod->GetWidth() - 8 -
-					CurrentConsoleFont->StringWidth (GetVersionString()),
-					round((float)ConBottom / textScale) - CurrentConsoleFont->GetHeight() - 4,
+				DrawText(twod, ActiveConsoleFont(), CR_ORANGE, twod->GetWidth() - 8 -
+					ActiveConsoleFont()->StringWidth (GetVersionString()),
+					round((float)ConBottom / textScale) - ActiveConsoleFont()->GetHeight() - 4,
 					GetVersionString(), TAG_DONE);
 			else
-				DrawText(twod, CurrentConsoleFont, CR_ORANGE, (float)twod->GetWidth() / textScale - 8 -
-					CurrentConsoleFont->StringWidth(GetVersionString()),
-					round((float)ConBottom / textScale) - CurrentConsoleFont->GetHeight() - 4,
+				DrawText(twod, ActiveConsoleFont(), CR_ORANGE, (float)twod->GetWidth() / textScale - 8 -
+					ActiveConsoleFont()->StringWidth(GetVersionString()),
+					round((float)ConBottom / textScale) - ActiveConsoleFont()->GetHeight() - 4,
 					GetVersionString(),
 					DTA_VirtualWidth, twod->GetWidth() / textScale,
 					DTA_VirtualHeight, twod->GetHeight() / textScale,
@@ -855,14 +881,14 @@ void C_DrawConsole ()
 	if (lines > 0)
 	{
 		// No more enqueuing because adding new text to the console won't touch the actual print data.
-		conbuffer->FormatText(CurrentConsoleFont, ConWidth / textScale);
+		conbuffer->FormatText(ActiveConsoleFont(), ConWidth / textScale);
 		unsigned int consolelines = conbuffer->GetFormattedLineCount();
 		FBrokenLines *blines = conbuffer->GetLines();
 		if (blines != nullptr)
 		{
 			FBrokenLines* printline = blines + consolelines - 1 - RowAdjust;
 
-			int bottomline = ConBottom / textScale - CurrentConsoleFont->GetHeight() * 2 - 4;
+			int bottomline = ConBottom / textScale - ActiveConsoleFont()->GetHeight() * 2 - 4;
 
 			C_ValidateConsoleSelection();
 			int sell1 = 0, selc1 = 0, sell2 = -1, selc2 = 0;
@@ -889,12 +915,12 @@ void C_DrawConsole ()
 
 						if (ce > c0)
 						{
-							int x0 = LEFTMARGIN + C_ColumnToPixels(CurrentConsoleFont, stripped, c0);
-							int x1 = LEFTMARGIN + C_ColumnToPixels(CurrentConsoleFont, stripped, ce);
-							int y = offset + lines * CurrentConsoleFont->GetHeight();
+							int x0 = LEFTMARGIN + C_ColumnToPixels(ActiveConsoleFont(), stripped, c0);
+							int x1 = LEFTMARGIN + C_ColumnToPixels(ActiveConsoleFont(), stripped, ce);
+							int y = offset + lines * ActiveConsoleFont()->GetHeight();
 
 							twod->AddColorOnlyQuad(x0 * textScale, y * textScale,
-								(x1 - x0) * textScale, CurrentConsoleFont->GetHeight() * textScale,
+								(x1 - x0) * textScale, ActiveConsoleFont()->GetHeight() * textScale,
 								PalEntry(140, 70, 100, 180));
 						}
 					}
@@ -902,11 +928,11 @@ void C_DrawConsole ()
 
 				if (textScale == 1)
 				{
-					DrawText(twod, CurrentConsoleFont, CR_TAN, LEFTMARGIN, offset + lines * CurrentConsoleFont->GetHeight(), p->Text.GetChars(), TAG_DONE);
+					DrawText(twod, ActiveConsoleFont(), CR_TAN, LEFTMARGIN, offset + lines * ActiveConsoleFont()->GetHeight(), p->Text.GetChars(), TAG_DONE);
 				}
 				else
 				{
-					DrawText(twod, CurrentConsoleFont, CR_TAN, LEFTMARGIN, offset + lines * CurrentConsoleFont->GetHeight(), p->Text.GetChars(),
+					DrawText(twod, ActiveConsoleFont(), CR_TAN, LEFTMARGIN, offset + lines * ActiveConsoleFont()->GetHeight(), p->Text.GetChars(),
 						DTA_VirtualWidth, twod->GetWidth() / textScale,
 						DTA_VirtualHeight, twod->GetHeight() / textScale,
 						DTA_KeepRatio, true, TAG_DONE);
@@ -925,14 +951,14 @@ void C_DrawConsole ()
 					}
 					CmdLine.Draw(left, bottomline, textScale, cursoron);
 				}
-				if (RowAdjust && ConBottom >= CurrentConsoleFont->GetHeight() * 7 / 2)
+				if (RowAdjust && ConBottom >= ActiveConsoleFont()->GetHeight() * 7 / 2)
 				{
 					// Indicate that the view has been scrolled up (10)
 					// and if we can scroll no further (12)
 					if (textScale == 1)
-						DrawChar(twod, CurrentConsoleFont, CR_GREEN, 0, bottomline, RowAdjust == conbuffer->GetFormattedLineCount() ? 12 : 10, TAG_DONE);
+						DrawChar(twod, ActiveConsoleFont(), CR_GREEN, 0, bottomline, RowAdjust == conbuffer->GetFormattedLineCount() ? 12 : 10, TAG_DONE);
 					else
-						DrawChar(twod, CurrentConsoleFont, CR_GREEN, 0, bottomline, RowAdjust == conbuffer->GetFormattedLineCount() ? 12 : 10,
+						DrawChar(twod, ActiveConsoleFont(), CR_GREEN, 0, bottomline, RowAdjust == conbuffer->GetFormattedLineCount() ? 12 : 10,
 							DTA_VirtualWidth, twod->GetWidth() / textScale,
 							DTA_VirtualHeight, twod->GetHeight() / textScale,
 							DTA_KeepRatio, true, TAG_DONE);
@@ -999,7 +1025,7 @@ static bool C_HandleKey (event_t *ev, FCommandBuffer &buffer)
 	bool keepappending = false;
 
 	int page_height = (twod->GetHeight()-4)/active_con_scale(twod) /
-		((gamestate == GS_FULLCONSOLE || gamestate == GS_STARTUP) ? CurrentConsoleFont->GetHeight() : CurrentConsoleFont->GetHeight()*2) - 3;
+		((gamestate == GS_FULLCONSOLE || gamestate == GS_STARTUP) ? ActiveConsoleFont()->GetHeight() : ActiveConsoleFont()->GetHeight()*2) - 3;
 	int total_lines = conbuffer->GetFormattedLineCount();
 	int top_row = total_lines - page_height - 1;
 
@@ -1328,7 +1354,7 @@ static bool C_HandleKey (event_t *ev, FCommandBuffer &buffer)
 			{
 				int textScale = active_con_scale(twod);
 
-				conbuffer->FormatText(CurrentConsoleFont, ConWidth / textScale);
+				conbuffer->FormatText(ActiveConsoleFont(), ConWidth / textScale);
 
 				unsigned int consolelines = conbuffer->GetFormattedLineCount();
 

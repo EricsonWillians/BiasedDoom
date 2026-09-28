@@ -285,6 +285,7 @@ The project contains approximately **1,195 source files** (~596 `.cpp`, ~574 `.h
 | `tools/test-framework-hotfixes.py` | Offline regression checks (IWAD-free `biaseddoom` stub) for engine-API contracts used by `bd_rpg`, `bd_vtm`, `bd_npcs`, `bd_dialogue`, and `bd_horror`: actor-handle identity, map-local scheduling, shop delivery/refund, dialogue map-unload cleanup, stale-session talk recovery, hub/savegame TID adoption with auto-allocated free TIDs, and hub-restore light-program state |
 | `tools/check-appimage-deps.sh` | AppImage dependency-closure gate: extraction, AppRun/libc sanity, and host-resolution checks for every bundled ELF object |
 | `tools/smoke-appimage.sh` | Clean-container AppImage startup smoke test used with Ubuntu 22.04 and 20.04 images |
+| `tools/test-console.sh` | Headless console smoke test: asserts the live default backquote `toggleconsole` binding, exercises the console option cvars (`con_font` scrollback font, `con_timestamps` insert-time `[HH:MM:SS]` prefixes, plus `con_scale`/`con_alpha`), and pixel-compares baseline/open/closed screenshots. The open console pauses the world ticker in single player, so the driver chains its post-open steps through the console command buffer's `wait` instead of `bd.schedule` |
 | `supreme-build.sh` | Automated build script with vcpkg bootstrapping |
 | `CLAUDE.md` | Additional AI assistant guidance (includes glTF implementation architecture) |
 

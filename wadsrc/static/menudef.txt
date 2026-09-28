@@ -796,7 +796,53 @@ OptionMenu "SystemMenu" protected
 	Command "$OPTMNU_OPENSCREENSHOTS",	"openscreenshots"
 	Command "$OPTMNU_OPENSAVES",		"opensaves"
 	StaticText " "
-	Command "$OPTMNU_CONSOLE",			"menuconsole"
+	Submenu "$OPTMNU_CONSOLE",			"ConsoleOptions"
+}
+
+//-------------------------------------------------------------------------------------------
+//
+// Console options
+//
+//-------------------------------------------------------------------------------------------
+
+OptionValue "ConsoleTextScales"
+{
+	0, "Auto"
+	1, "1x"
+	2, "2x"
+	3, "3x"
+	4, "4x"
+}
+
+OptionValue "ConsoleBufferSizes"
+{
+	-1, "Default"
+	128, "128 lines"
+	256, "256 lines"
+	512, "512 lines"
+	1024, "1024 lines"
+	2048, "2048 lines"
+	4096, "4096 lines"
+}
+
+OptionValue "ConsoleFonts"
+{
+	0, "New"
+	1, "Classic"
+	2, "Small"
+}
+
+OptionMenu "ConsoleOptions" protected
+{
+	Title "$OPTMNU_CONSOLE"
+
+	Command "Open Console",				"menuconsole"
+	StaticText " "
+	Option "Text scale",				"con_scale", "ConsoleTextScales"
+	Slider "Background dim",			"con_alpha", 0.0, 1.0, 0.05
+	Option "Scrollback buffer size",	"con_buffersize", "ConsoleBufferSizes"
+	Option "Timestamps",				"con_timestamps", "OnOff"
+	Option "Font",						"con_font", "ConsoleFonts"
 }
 
 //-------------------------------------------------------------------------------------------

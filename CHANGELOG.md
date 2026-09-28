@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- New console options, exposed under System > Console in the options menu:
+  `con_font` selects the scrollback font (new console font, classic CONFONT,
+  or small font; the input line intentionally keeps the new console font
+  because its cell metrics are hardcoded to it), and `con_timestamps`
+  prefixes scrollback lines with a local `[HH:MM:SS]` timestamp at insert
+  time (console display only; the logfile is unaffected). The menu also
+  surfaces the existing `con_scale`, `con_alpha`, and `con_buffersize`
+  settings next to an "Open Console" entry.
+- `tools/test-console.sh`: headless engine smoke test that asserts the live
+  default backquote binding for `toggleconsole`, exercises the new console
+  cvars, and pixel-compares baseline/open/closed console screenshots
+  captured through a Python driver PK3.
+
 ### Changed
 
 - The `map_load` Python event now carries `from_hub` (true when the map was

@@ -33,9 +33,14 @@
 **
 */
 
+#include <time.h>
+
 #include "c_console.h"
 #include "c_consolebuffer.h"
+#include "c_cvars.h"
 #include "printf.h"
+
+EXTERN_CVAR(Bool, con_timestamps)
 
 
 //==========================================================================
@@ -73,6 +78,8 @@ FConsoleBuffer::FConsoleBuffer()
 void FConsoleBuffer::AddText(int printlevel, const char *text)
 {
 	FString build = TEXTCOLOR_TAN;
+	// APPENDLINE continues the previous line (already timestamped), anything else starts a fresh one.
+	const bool freshLine = (mAddType != APPENDLINE);
 
 	if (mAddType == REPLACELINE)
 	{
@@ -91,6 +98,18 @@ void FConsoleBuffer::AddText(int printlevel, const char *text)
 	{
 		if (printlevel == 200) build = TEXTCOLOR_GREEN;
 		else if (printlevel < PRINTLEVELS) build.Format("%c%c", TEXTCOLOR_ESCAPE, PrintColors[printlevel]+'A');
+	}
+
+	if (con_timestamps && freshLine)
+	{
+		time_t now = time(nullptr);
+		struct tm *tmnow = localtime(&now);
+		char stamp[12];
+		if (tmnow != nullptr &&
+			strftime(stamp, sizeof(stamp), "[%H:%M:%S] ", tmnow) > 0)
+		{
+			build += stamp;
+		}
 	}
 
 	size_t textsize = strlen(text);

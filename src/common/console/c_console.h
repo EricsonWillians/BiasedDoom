@@ -70,6 +70,11 @@ int PrintStringHigh (const char *string);
 int VPrintf (int printlevel, const char *format, va_list parms) GCCFORMAT(2);
 
 void C_DrawConsole ();
+class FFont;
+// The font used for console scrollback text, selected by the con_font cvar
+// (resolved per call so font/cvar init order never matters). The command
+// input line keeps its metric-coupled default font instead.
+FFont *ActiveConsoleFont();
 void C_ToggleConsole (void);
 void C_FullConsole (void);
 void C_HideConsole (void);

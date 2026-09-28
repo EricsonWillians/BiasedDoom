@@ -1155,7 +1155,7 @@ static void PrintSecretString(const char *string, bool thislevel)
 				else colstr = TEXTCOLOR_GREEN;
 			}
 		}
-		auto brok = V_BreakLines(CurrentConsoleFont, twod->GetWidth()*95/100, *string == '$' ? GStrings.GetString(++string) : string);
+		auto brok = V_BreakLines(ActiveConsoleFont(), twod->GetWidth()*95/100, *string == '$' ? GStrings.GetString(++string) : string);
 
 		for (auto &line : brok)
 		{
