@@ -184,10 +184,13 @@ struct FReader
 	TArray<DObject *> mDObjects;
 	rapidjson::Value *mKeyValue = nullptr;
 	bool mObjectsRead = false;
+	bool mFailed = false;
 
 	FReader(const char *buffer, size_t length)
 	{
 		mDoc.Parse(buffer, length);
+		// A corrupt save must fail cleanly instead of feeding garbage to the deserializer.
+		mFailed = mDoc.HasParseError();
 		mObjects.Push(FJSONObject(&mDoc));
 	}
 

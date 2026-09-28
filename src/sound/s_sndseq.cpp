@@ -723,7 +723,9 @@ void S_ParseSndSeq (int levellump)
 					volumebase = float(sc.Float);
 					ScriptTemp.Push(MakeCommand(SS_CMD_VOLUMERAND, int(sc.Float * (65536.f / 100.f))));
 					sc.MustGetFloat ();
-					ScriptTemp.Push(int((sc.Float - volumebase) * (256/100.f)));
+					// Clamp the divisor to at least 1, like delayrand, so a zero
+					// width range cannot cause a modulo-by-zero at run time.
+					ScriptTemp.Push(max(1, int((sc.Float - volumebase) * (256/100.f))));
 					break;
 
 				case SS_STRING_STOPSOUND:
@@ -860,7 +862,7 @@ DSeqSectorNode::DSeqSectorNode (sector_t *sec, int chan, int sequence, int moden
 
 static bool TwiddleSeqNum (int &sequence, seqtype_t type)
 {
-	if (type < SEQ_NUMSEQTYPES)
+	if ((unsigned)type < SEQ_NUMSEQTYPES)
 	{
 		// [GrafZahl] Needs some range checking:
 		// Sector_ChangeSound doesn't do it so this makes invalid sequences play nothing.

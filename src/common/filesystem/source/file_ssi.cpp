@@ -73,7 +73,8 @@ static bool OpenSSI(FResourceFile* file, int version, int EntryCount, LumpFilter
 
 		// SSI files can swap the order of the extension's characters - but there's no reliable detection for this and it can be mixed inside the same container, 
 		// so we have no choice but to create another file record for the altered name.
-		std::swap(fn[strlength - 1], fn[strlength - 3]);
+		// This needs a name of at least 3 characters to be possible at all.
+		if (strlength >= 3) std::swap(fn[strlength - 1], fn[strlength - 3]);
 
 		Entries[i + 1].Position = j;
 		Entries[i + 1].CompressedSize = Entries[i + 1].Length = flength;
@@ -123,6 +124,8 @@ FResourceFile* CheckSSI(const char* filename, FileReader& file, LumpFilterInfo* 
 		if (version == 1 || version == 2) // if
 		{
 			int numfiles = file.ReadInt32();
+			// Each entry record is 121 bytes, so the count cannot exceed the file size.
+			if (numfiles < 0 || 121 * (int64_t)numfiles > file.GetLength()) return nullptr;
 			if (!skipstring(32)) return nullptr;
 			if (version == 2 && !skipstring(12)) return nullptr;
 			for (int i = 0; i < 3; i++)

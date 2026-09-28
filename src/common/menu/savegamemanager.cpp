@@ -85,6 +85,13 @@ FSavegameManagerBase::~FSavegameManagerBase()
 
 int FSavegameManagerBase::RemoveSaveSlot(int index)
 {
+	// The slot index comes from the menu (and can be scripted), so guard
+	// against out-of-range values and an empty list before dereferencing.
+	if (SaveGames.Size() == 0)
+		return -1;
+	if ((unsigned)index >= SaveGames.Size())
+		return 0;
+
 	int listindex = SaveGames[0]->bNoDelete ? index - 1 : index;
 	if (listindex < 0) return index;
 
@@ -238,6 +245,8 @@ void FSavegameManagerBase::NotifyNewSave(const FString &file, const FString &tit
 
 void FSavegameManagerBase::LoadSavegame(int Selected)
 {
+	if ((unsigned)Selected >= SaveGames.Size())
+		return;
 	PerformLoadGame(SaveGames[Selected]->Filename.GetChars(), true);
 	if (quickSaveSlot == (FSaveGameNode*)1)
 	{
@@ -265,6 +274,8 @@ void FSavegameManagerBase::DoSave(int Selected, const char *savegamestring)
 {
 	if (Selected != 0)
 	{
+		if ((unsigned)Selected >= SaveGames.Size())
+			return;
 		auto node = SaveGames[Selected];
 		PerformSaveGame(node->Filename.GetChars(), savegamestring);
 	}
@@ -476,6 +487,8 @@ DEFINE_ACTION_FUNCTION(FSavegameManager, DrawSavePic)
 
 void FSavegameManagerBase::SetFileInfo(int Selected)
 {
+	if ((unsigned)Selected >= SaveGames.Size())
+		return;
 	if (!SaveGames[Selected]->Filename.IsEmpty())
 	{
 		SaveCommentString.Format("File on disk:\n%s", SaveGames[Selected]->Filename.GetChars());

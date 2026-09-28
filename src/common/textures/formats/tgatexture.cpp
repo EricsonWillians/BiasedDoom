@@ -103,10 +103,14 @@ FImageSource *TGAImage_TryCreate(FileReader & file, int lumpnum)
 	file.Read(&hdr, sizeof(hdr));
 	hdr.width = LittleShort(hdr.width);
 	hdr.height = LittleShort(hdr.height);
+	hdr.cm_first = LittleShort(hdr.cm_first);
+	hdr.cm_length = LittleShort(hdr.cm_length);
 
 	// Not much that can be done here because TGA does not have a proper
 	// header to be identified with.
 	if (hdr.has_cm != 0 && hdr.has_cm != 1) return NULL;
+	// Negative color map offsets would index the palette arrays backwards.
+	if (hdr.cm_first < 0 || hdr.cm_length < 0) return NULL;
 	if (hdr.width <=0 || hdr.height <=0 || hdr.width > 2048 || hdr.height > 2048) return NULL;
 	if (hdr.bpp != 8 && hdr.bpp != 15 && hdr.bpp != 16 && hdr.bpp !=24 && hdr.bpp !=32) return NULL;
 	if (hdr.img_type <= 0 || hdr.img_type > 11) return NULL;

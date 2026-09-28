@@ -109,10 +109,14 @@ static const FPresetPairing GGraphicsPresetPairing[] = {
 static_assert(sizeof(GGraphicsPresetPairing) / sizeof(GGraphicsPresetPairing[0]) == MaxGraphicsPreset + 1,
               "every graphics preset needs a lighting/fog pairing");
 
-// Last lighting/fog preset ID installed by auto-pairing. Reset to 0 whenever
-// the user changes the selector directly, so explicit choices are respected.
-static int GAutoPairedLighting = 0;
-static int GAutoPairedFog = 0;
+// Durable record of the last lighting/fog preset ID installed by graphics
+// preset auto-pairing. These are archived global-config CVARs (not in-memory
+// state) because config load replays every archived selector independently,
+// which would destroy in-memory tracking depending on load order. They are
+// reset to 0 whenever the user changes a selector directly, so explicit
+// choices are always respected.
+EXTERN_CVAR(Int, bd_autopaired_lighting)
+EXTERN_CVAR(Int, bd_autopaired_fog)
 
 static bool IsApplyingPreset()
 {
@@ -3125,15 +3129,15 @@ static void SetGraphicsPreset(FIntCVar &self) {
   const FPresetPairing &pairing = GGraphicsPresetPairing[self];
 
   if (pairing.lighting > 0 &&
-      (bd_lighting_preset == 0 || bd_lighting_preset == GAutoPairedLighting)) {
-    GAutoPairedLighting = pairing.lighting;
+      (bd_lighting_preset == 0 || bd_lighting_preset == bd_autopaired_lighting)) {
+    bd_autopaired_lighting = pairing.lighting;
     if (bd_lighting_preset != pairing.lighting)
       bd_lighting_preset = pairing.lighting; // fires ApplyLightingPreset
   }
 
   if (pairing.fog > 0 &&
-      (bd_fog_preset == 0 || bd_fog_preset == GAutoPairedFog)) {
-    GAutoPairedFog = pairing.fog;
+      (bd_fog_preset == 0 || bd_fog_preset == bd_autopaired_fog)) {
+    bd_autopaired_fog = pairing.fog;
     if (bd_fog_preset != pairing.fog)
       bd_fog_preset = pairing.fog; // fires ApplyFogPreset
   }
@@ -3263,8 +3267,17 @@ CUSTOM_CVAR(Bool, gl_paltonemap_reverselookup, true,
 
 CVAR(Float, gl_menu_blur, -1.0f, CVAR_ARCHIVE)
 
+// Archived auto-pair trackers; see the comment at the top of this file.
+CVAR(Int, bd_autopaired_lighting, 0,
+     CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
+CVAR(Int, bd_autopaired_fog, 0,
+     CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
+
 CUSTOM_CVAR(Int, bd_graphics_preset, 0,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
+  // The auto-pair state itself survives config load (it is archived), so no
+  // lazy re-inference is needed here; SetGraphicsPreset consults the loaded
+  // tracker values directly.
   SetGraphicsPreset(self);
 }
 
@@ -3976,7 +3989,7 @@ CUSTOM_CVAR(Int, bd_lighting_preset, 0,
   // A user-driven selection (menu, console, config) is an explicit choice:
   // drop the auto-pair tracking so graphics presets stop overriding it.
   if (!IsApplyingPreset())
-    GAutoPairedLighting = 0;
+    bd_autopaired_lighting = 0;
 
   FPresetApplyScope applyScope;
   ApplyLightingPreset(self);
@@ -4235,7 +4248,7 @@ CUSTOM_CVAR(Int, bd_fog_preset, 0,
   // A user-driven selection (menu, console, config) is an explicit choice:
   // drop the auto-pair tracking so graphics presets stop overriding it.
   if (!IsApplyingPreset())
-    GAutoPairedFog = 0;
+    bd_autopaired_fog = 0;
 
   FPresetApplyScope applyScope;
   ApplyFogPreset(self);

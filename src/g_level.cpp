@@ -1809,7 +1809,8 @@ static int RemoveTravellingObjects(FLevelLocals& level, TArray<DThinker*>& toCal
 		{
 			// Do some basic relinking. Modders will figure out what to do with it
 			// in the callback.
-			if (mo->flags & MF_UNMORPHED)
+			// MF_UNMORPHED does not guarantee that the unmorphed original still exists.
+			if ((mo->flags & MF_UNMORPHED) && mo->alternative != nullptr)
 			{
 				mo->Angles = mo->alternative->Angles;
 				mo->SetOrigin(mo->alternative->Pos(), true);

@@ -38,6 +38,8 @@
 %name XlatParse
 %extra_argument { FParseContext *context }
 %syntax_error { context->PrintError("syntax error");}
+%stack_size 0
+%stack_overflow { context->PrintError("parser stack overflow");}
 
 
 main ::= translation_unit.

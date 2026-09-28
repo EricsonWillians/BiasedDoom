@@ -1008,6 +1008,10 @@ bool FCompressedBuffer::Decompress(char* destbuffer)
 {
 	if (mMethod == METHOD_STORED)
 	{
+		// A hostile entry can claim an uncompressed size larger than the
+		// stored data; copying it would read past the source buffer.
+		if (mSize > mCompressedSize)
+			return false;
 		memcpy(destbuffer, mBuffer, mSize);
 		return true;
 	}
@@ -1018,7 +1022,8 @@ bool FCompressedBuffer::Decompress(char* destbuffer)
 		FileReader frz;
 		if (OpenDecompressor(frz, mr, mSize, mMethod))
 		{
-			return frz.Read(destbuffer, mSize) != mSize;
+			// Read returns the number of bytes read, so success means the full size.
+			return frz.Read(destbuffer, mSize) == mSize;
 		}
 	}
 	return false;

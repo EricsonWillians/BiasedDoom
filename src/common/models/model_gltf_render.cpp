@@ -654,14 +654,19 @@ void FGLTFModel::UploadVertexData(IModelVertexBuffer *buffer,
 
   // Lock buffers and get pointers (following MD3 pattern)
   FModelVertex *vertptr = buffer->LockVertexBuffer(vertices.Size());
-  unsigned int *indxptr = buffer->LockIndexBuffer(indices.Size());
+  // Non-indexed primitives are drawn with DrawArrays and the vertex buffer
+  // was created without an index buffer (needIndex == totalIndices > 0),
+  // so only lock it when there are indices to upload; requiring it here
+  // would abort before the vertex data is ever copied.
+  unsigned int *indxptr =
+      indices.Size() > 0 ? buffer->LockIndexBuffer(indices.Size()) : nullptr;
 
   if (!vertptr) {
     DPrintf(DMSG_ERROR, "Failed to lock vertex buffer\n");
     return;
   }
 
-  if (!indxptr) {
+  if (indices.Size() > 0 && !indxptr) {
     DPrintf(DMSG_ERROR, "Failed to lock index buffer\n");
     buffer->UnlockVertexBuffer();
     return;
@@ -671,11 +676,15 @@ void FGLTFModel::UploadVertexData(IModelVertexBuffer *buffer,
   memcpy(vertptr, vertices.Data(), vertices.Size() * sizeof(FModelVertex));
 
   // Copy index data
-  memcpy(indxptr, indices.Data(), indices.Size() * sizeof(unsigned int));
+  if (indxptr) {
+    memcpy(indxptr, indices.Data(), indices.Size() * sizeof(unsigned int));
+  }
 
   // Unlock buffers to commit data to GPU
   buffer->UnlockVertexBuffer();
-  buffer->UnlockIndexBuffer();
+  if (indxptr) {
+    buffer->UnlockIndexBuffer();
+  }
 
   DPrintf(DMSG_NOTIFY, "glTF vertex data uploaded successfully\n");
 }

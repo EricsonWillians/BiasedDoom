@@ -221,7 +221,8 @@ class OpenALSoundStream : public SoundStream
 	ALuint Source;
 
 	std::atomic<bool> Playing;
-	//bool Looping;
+	bool Looping;
+	bool Paused;
 	ALfloat Volume;
 	uint64_t Offset = 0;
 	std::mutex Mutex;
@@ -272,7 +273,7 @@ class OpenALSoundStream : public SoundStream
 
 public:
 	OpenALSoundStream(OpenALSoundRenderer *renderer)
-	  : Renderer(renderer), Source(0), Playing(false), Volume(1.0f)
+	  : Renderer(renderer), Source(0), Playing(false), Looping(false), Paused(false), Volume(1.0f)
 	{
 		memset(Buffers, 0, sizeof(Buffers));
 		Renderer->AddStream(this);
@@ -280,28 +281,80 @@ public:
 
 	virtual ~OpenALSoundStream()
 	{
-		Renderer->RemoveStream(this);
-
-		if(Source)
+		// Only touch AL state while the renderer is still alive. An orphaned
+		// stream (whose renderer was destroyed) has no renderer or AL state
+		// left to release; the owner just deletes it.
+		if(Renderer != nullptr)
 		{
-			alSourceRewind(Source);
-			alSourcei(Source, AL_BUFFER, 0);
+			Renderer->RemoveStream(this);
 
-			Renderer->FreeSfx.Push(Source);
-			Source = 0;
-		}
+			if(Source)
+			{
+				alSourceRewind(Source);
+				alSourcei(Source, AL_BUFFER, 0);
 
-		if(Buffers[0])
-		{
-			alDeleteBuffers(BufferCount, &Buffers[0]);
-			memset(Buffers, 0, sizeof(Buffers));
+				Renderer->FreeSfx.Push(Source);
+				Source = 0;
+			}
+
+			if(Buffers[0])
+			{
+				alDeleteBuffers(BufferCount, &Buffers[0]);
+				memset(Buffers, 0, sizeof(Buffers));
+			}
+			getALError();
 		}
-		getALError();
+	}
+
+	// Called by the renderer when it is being destroyed. Streams are owned by
+	// their creators, not the renderer, so instead of deleting them the
+	// renderer orphans them: every entry point below safely no-ops while
+	// orphaned, and the owner remains solely responsible for deletion.
+	void Orphan()
+	{
+		std::lock_guard<std::mutex> lock(Mutex);
+		Playing.store(false);
+		Renderer = nullptr;
+		Source = 0;
+		memset(Buffers, 0, sizeof(Buffers));
+	}
+
+	// First phase of a device-reopen resume, called by the renderer while it
+	// holds StreamLock. Any stream that was still playing had its source
+	// stopped by the reopen; mark it not-playing so the background thread
+	// will not touch it once the lock is released, and report whether the
+	// caller must resume it on the main thread afterwards.
+	bool PrepareForDeviceReopenResume()
+	{
+		if(Renderer == nullptr || !Playing.load())
+			return false;
+		Playing.store(false);
+		return true;
+	}
+
+	// Second phase of a device-reopen resume, called on the main thread with
+	// StreamLock released: rebuilding re-invokes the stream callback, which
+	// must not run under the renderer lock. A stream that was paused before
+	// the device was lost is rebuilt and left paused.
+	void ResumeAfterDeviceReopen()
+	{
+		if(Renderer == nullptr)
+			return;
+		// Play() clears the paused flag; capture it first so a stream that was
+		// paused before the device was lost comes back paused.
+		const bool resumePaused = Paused;
+		Play(Looping, Volume);
+		if(resumePaused)
+			SetPaused(true);
 	}
 
 
 	virtual bool Play(bool loop, float vol)
 	{
+		if(Renderer == nullptr)
+			return false;
+		Looping = loop;
+		Paused = false;
 		SetVolume(vol);
 
 		if(Playing.load())
@@ -335,6 +388,11 @@ public:
 
 	virtual void Stop()
 	{
+		if(Renderer == nullptr)
+		{
+			Playing.store(false);
+			return;
+		}
 		if(!Playing.load())
 			return;
 
@@ -350,17 +408,23 @@ public:
 	virtual void SetVolume(float vol)
 	{
 		Volume = vol;
-		UpdateVolume();
+		if(Renderer != nullptr)
+			UpdateVolume();
 	}
 
 	void UpdateVolume()
 	{
+		if(Renderer == nullptr)
+			return;
 		alSourcef(Source, AL_GAIN, Renderer->MusicVolume*Volume);
 		getALError();
 	}
 
 	virtual bool SetPaused(bool pause)
 	{
+		if(Renderer == nullptr)
+			return false;
+		Paused = pause;
 		if(pause)
 			alSourcePause(Source);
 		else
@@ -377,7 +441,12 @@ public:
 	{
 		using namespace std::chrono;
 
+		// Lock first, then test the renderer: Orphan() takes this mutex
+		// before clearing Renderer, so holding it for the whole query keeps
+		// the renderer pointer valid.
 		std::lock_guard _{Mutex};
+		if(Renderer == nullptr)
+			return Position{0, nanoseconds{0}};
 		ALint64SOFT offset[2]{};
 		ALint state{}, queued{};
 		alGetSourcei(Source, AL_BUFFERS_QUEUED, &queued);
@@ -414,6 +483,8 @@ public:
 	virtual FString GetStats()
 		{
 		FString stats;
+		if(Renderer == nullptr)
+			return FString("Inactive");
 		ALfloat volume;
 		ALint offset;
 		ALint processed;
@@ -452,6 +523,8 @@ public:
 
 	bool Process()
 	{
+		if(Renderer == nullptr)
+			return false;
 		if(!Playing.load())
 			return false;
 
@@ -507,6 +580,8 @@ public:
 
 	bool Init(SoundStreamCallback callback, int buffbytes, SampleType stype, ChannelConfig chans, int samplerate, void *userdata)
 	{
+		if(Renderer == nullptr)
+			return false;
 		if(!SetupSource())
 			return false;
 
@@ -634,36 +709,7 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 	DPrintf(DMSG_SPAMMY, "  ALC Version: " TEXTCOLOR_BLUE"%d.%d\n", major, minor);
 	DPrintf(DMSG_SPAMMY, "  ALC Extensions: " TEXTCOLOR_ORANGE"%s\n", alcGetString(Device, ALC_EXTENSIONS));
 
-	TArray<ALCint> attribs;
-	if(*snd_samplerate > 0)
-	{
-		attribs.Push(ALC_FREQUENCY);
-		attribs.Push(*snd_samplerate);
-	}
-	// Make sure one source is capable of stereo output with the rest doing
-	// mono, without running out of voices
-	attribs.Push(ALC_MONO_SOURCES);
-	attribs.Push(max<ALCint>(snd_channels, 2) - 1);
-	attribs.Push(ALC_STEREO_SOURCES);
-	attribs.Push(1);
-	if(ALC.SOFT_HRTF)
-	{
-		attribs.Push(ALC_HRTF_SOFT);
-		if(*snd_hrtf == 0)
-			attribs.Push(ALC_FALSE);
-		else if(*snd_hrtf > 0)
-			attribs.Push(ALC_TRUE);
-		else
-			attribs.Push(ALC_DONT_CARE_SOFT);
-	}
-	if(ALC.SOFT_output_limiter)
-	{
-		attribs.Push(ALC_OUTPUT_LIMITER_SOFT);
-		attribs.Push(ALC_TRUE);
-	}
-	// Other attribs..?
-	attribs.Push(0);
-
+	TArray<ALCint> attribs = GetContextAttribs();
 	Context = alcCreateContext(Device, &attribs[0]);
 	if(!Context || alcMakeContextCurrent(Context) == ALC_FALSE)
 	{
@@ -680,7 +726,6 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 		Device = NULL;
 		return;
 	}
-	attribs.Clear();
 
 	const ALchar *const version = alGetString(AL_VERSION);
 
@@ -909,6 +954,40 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 #undef LOAD_DEV_FUNC
 #undef LOAD_FUNC
 
+TArray<ALCint> OpenALSoundRenderer::GetContextAttribs()
+{
+	TArray<ALCint> attribs;
+	if(*snd_samplerate > 0)
+	{
+		attribs.Push(ALC_FREQUENCY);
+		attribs.Push(*snd_samplerate);
+	}
+	// Make sure one source is capable of stereo output with the rest doing
+	// mono, without running out of voices
+	attribs.Push(ALC_MONO_SOURCES);
+	attribs.Push(max<ALCint>(snd_channels, 2) - 1);
+	attribs.Push(ALC_STEREO_SOURCES);
+	attribs.Push(1);
+	if(ALC.SOFT_HRTF)
+	{
+		attribs.Push(ALC_HRTF_SOFT);
+		if(*snd_hrtf == 0)
+			attribs.Push(ALC_FALSE);
+		else if(*snd_hrtf > 0)
+			attribs.Push(ALC_TRUE);
+		else
+			attribs.Push(ALC_DONT_CARE_SOFT);
+	}
+	if(ALC.SOFT_output_limiter)
+	{
+		attribs.Push(ALC_OUTPUT_LIMITER_SOFT);
+		attribs.Push(ALC_TRUE);
+	}
+	// Other attribs..?
+	attribs.Push(0);
+	return attribs;
+}
+
 OpenALSoundRenderer::~OpenALSoundRenderer()
 {
 	if(!Device)
@@ -923,8 +1002,16 @@ OpenALSoundRenderer::~OpenALSoundRenderer()
 		StreamThread.join();
 	}
 
-	while(Streams.Size() > 0)
-		delete Streams[0];
+	// The renderer does not own the streams; their creators (the music
+	// system, custom stream users like the movie player) delete them. Orphan
+	// them so every stream entry point no-ops safely once this renderer is
+	// gone, then clear our bookkeeping.
+	{
+		std::unique_lock<std::mutex> lock(StreamLock);
+		for(size_t i = 0;i < Streams.Size();i++)
+			Streams[i]->Orphan();
+		Streams.Clear();
+	}
 
 	alDeleteSources(Sources.Size(), &Sources[0]);
 	Sources.Clear();
@@ -1315,7 +1402,10 @@ FISoundChannel *OpenALSoundRenderer::StartSound(SoundHandle sfx, float vol, floa
 
 	if(!reuse_chan || reuse_chan->StartTime == 0)
 	{
-		float st = (chanflags&SNDF_LOOP) ? fmod(startTime, (float)GetMSLength(sfx) / 1000.f) : clamp<float>(startTime, 0.f, (float)GetMSLength(sfx) / 1000.f);
+		float sfxlength = (float)GetMSLength(sfx) / 1000.f;
+		float st = (chanflags & SNDF_LOOP)
+				? (sfxlength > 0 ? fmod(startTime, sfxlength) : 0)
+				: clamp<float>(startTime, 0.f, sfxlength);
 		alSourcef(source, AL_SEC_OFFSET, st);
 	}
 	else
@@ -1856,7 +1946,10 @@ bool OpenALSoundRenderer::TryReopenDevice()
 	{
 		// Clear a prior disconnect error so the result below is unambiguous.
 		alcGetError(Device);
-		const ALCboolean reopened = alcReopenDeviceSOFT(Device, name, NULL);
+		// Pass the same attributes used for context creation so the configured
+		// sample rate, source counts, HRTF and output limiter are preserved.
+		TArray<ALCint> attribs = GetContextAttribs();
+		const ALCboolean reopened = alcReopenDeviceSOFT(Device, name, &attribs[0]);
 		const ALCenum reopenError = alcGetError(Device);
 		if(reopened == ALC_FALSE || reopenError != ALC_NO_ERROR)
 		{
@@ -1888,6 +1981,28 @@ bool OpenALSoundRenderer::TryReopenDevice()
 	else if(configured == NULL && !tryDevice(NULL))
 	{
 		return false;
+	}
+
+	// The device was recreated in place: all sources were stopped and stream
+	// playback halted. Collect the streams that need to be restarted, marking
+	// them not-playing under StreamLock so the background thread leaves them
+	// alone; then release the lock and resume them. Resuming re-invokes the
+	// stream callbacks, which must not run while holding the renderer lock.
+	TArray<OpenALSoundStream*> resumeStreams;
+	for(size_t i = 0;i < Streams.Size();i++)
+	{
+		if(Streams[i]->PrepareForDeviceReopenResume())
+			resumeStreams.Push(Streams[i]);
+	}
+	lock.unlock();
+
+	for(size_t i = 0;i < resumeStreams.Size();i++)
+		resumeStreams[i]->ResumeAfterDeviceReopen();
+
+	if(soundEngine)
+	{
+		soundEngine->EvictAllChannels();
+		soundEngine->RestoreEvictedChannels();
 	}
 
 	const ALCchar *current = NULL;

@@ -1087,6 +1087,7 @@ class GLDefsParser
 	void ParseGldefSkybox()
 	{
 		int facecount=0;
+		bool error = false;
 
 		sc.MustGetString();
 
@@ -1103,6 +1104,14 @@ class GLDefsParser
 			if (facecount<6) 
 			{
 				sb->faces[facecount] = TexMan.GetGameTexture(TexMan.GetTextureID(sc.String, ETextureType::Wall, FTextureManager::TEXMAN_TryAny|FTextureManager::TEXMAN_Overridable));
+				// Like the Vavoom parser: an unresolvable face would stay null
+				// and crash the skybox renderer in SetMaterial, so track the
+				// error and refuse to register the skybox below.
+				if (sb->faces[facecount] == nullptr)
+				{
+					sc.ScriptMessage("Texture '%s' not found in skybox '%s'\n", sc.String, s.GetChars());
+					error = true;
+				}
 			}
 			facecount++;
 		}
@@ -1111,7 +1120,10 @@ class GLDefsParser
 			sc.ScriptError("%s: Skybox definition requires either 3 or 6 faces", s.GetChars());
 		}
 		sb->SetSize();
-		TexMan.AddGameTexture(MakeGameTexture(sb, s.GetChars(), ETextureType::Override));
+		if (!error)
+		{
+			TexMan.AddGameTexture(MakeGameTexture(sb, s.GetChars(), ETextureType::Override));
+		}
 	}
 
 	//===========================================================================

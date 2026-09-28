@@ -47,8 +47,16 @@ static bool OpenMvl(FResourceFile* rf, LumpFilterInfo* filter)
 {
     auto Reader = rf->GetContainerReader();
     auto count = Reader->ReadUInt32();
+
+    // Clamp the entry count to what the file can actually hold (17 bytes per record).
+    auto avail = Reader->GetLength() - 8;
+    if (avail < 0) return false;
+    if ((uint64_t)count * 17 > (uint64_t)avail)
+    {
+        count = (uint32_t)(avail / 17);
+    }
     auto Entries = rf->AllocateEntries(count);
-    size_t pos = 8 + (17 * count);   // files start after the directory
+    size_t pos = 8 + (17 * (size_t)count);   // files start after the directory
 
     for (uint32_t i = 0; i < count; i++)
     {

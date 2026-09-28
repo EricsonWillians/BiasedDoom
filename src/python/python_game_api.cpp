@@ -342,8 +342,18 @@ void ActorRefDealloc(PyObject* object)
 		{
 			if (--slot.PythonReferences == 0)
 			{
-				InvalidateActorSlot(reference->Slot);
+				// Bump the generation BEFORE the purge, and purge the actor_data
+				// dict under the OLD generation: the purge decrefs the dict, whose
+				// finalizers can re-enter MakeActorRef for this same actor and
+				// re-acquire this slot. Bumping first keeps that re-entrant handle
+				// (and its fresh actor_data, keyed by its own newer generation)
+				// valid; bumping afterwards would stale it and orphan its data.
+				const uint32_t oldGeneration = slot.Generation;
 				if (++slot.Generation == 0) ++slot.Generation;
+				AActor* actor = slot.Actor.ForceGet();
+				if (actor != nullptr) actorLookup.erase(actor);
+				slot.Actor = nullptr;
+				PurgeActorData(reference->Slot, oldGeneration);
 			}
 		}
 	}
@@ -493,7 +503,15 @@ int ActorScalarSet(PyObject* object, PyObject* value, void* closure)
 		if (PyErr_Occurred()) return -1;
 		switch (field)
 		{
-		case ActorScalar::Tid: actor->SetTID(static_cast<int>(number)); break;
+		case ActorScalar::Tid:
+			// static_cast<int> would silently truncate values outside int32.
+			if (number < INT_MIN || number > INT_MAX)
+			{
+				PyErr_SetString(PyExc_OverflowError, "tid is outside the int32 range");
+				return -1;
+			}
+			actor->SetTID(static_cast<int>(number));
+			break;
 		case ActorScalar::Health: actor->health = static_cast<int>(number); break;
 		case ActorScalar::Mass: actor->Mass = static_cast<int32_t>(number); break;
 		case ActorScalar::Tics: actor->tics = static_cast<int32_t>(number); break;
@@ -3373,6 +3391,15 @@ void DrainDeferredInvalidations()
 	DrainDeferredInvalidationsInternal();
 }
 
+void OnWorldLoaded()
+{
+	// InvalidateWorld bumps the generation at unload; bump again now that the
+	// new world is valid. Refs minted during the teardown window in between
+	// carry the post-unload generation and must never resolve into the new
+	// map's sector/line arrays.
+	if (++worldGeneration == 0) ++worldGeneration;
+}
+
 void InvalidateWorld()
 {
 	// Flush anything the markers queued before the wholesale invalidation
@@ -3458,6 +3485,7 @@ namespace PythonRuntime::GameApi
 bool Initialize(_object*) { return false; }
 void MarkRoots() {}
 void DrainDeferredInvalidations() {}
+void OnWorldLoaded() {}
 void InvalidateWorld() {}
 void Shutdown() {}
 _object* MakeActorRef(AActor*) { return nullptr; }

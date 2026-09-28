@@ -26,6 +26,7 @@
 #include "texturemanager.h"
 #include "modelrenderer.h"
 #include "m_swap.h"
+#include "printf.h"
 
 #define MAX_QPATH 64
 
@@ -130,10 +131,44 @@ struct md3_frame_t
 
 bool FMD3Model::Load(const char * path, int lumpnum, const char * buffer, int length)
 {
+	if (length < (int)sizeof(md3_header_t))
+	{
+		Printf("LoadModel: Model '%s' file too short\n", path);
+		return false;
+	}
+
 	md3_header_t * hdr = (md3_header_t *)buffer;
 
-	auto numFrames = LittleLong(hdr->Num_Frames);
-	auto numSurfaces = LittleLong(hdr->Num_Surfaces);
+	if ((int)hdr->Magic != LittleLong(MD3_MAGIC))
+	{
+		Printf("LoadModel: Model '%s' is not a valid MD3\n", path);
+		return false;
+	}
+
+	// Header counts/offsets are uint32_t: values above INT_MAX are treated as
+	// negative by the original signed code and must be rejected before any
+	// arithmetic or allocations.
+	uint32_t numFrames = LittleLong(hdr->Num_Frames);
+	uint32_t numSurfaces = LittleLong(hdr->Num_Surfaces);
+	uint32_t ofsFrames = LittleLong(hdr->Ofs_Frames);
+	uint32_t ofsSurfaces = LittleLong(hdr->Ofs_Surfaces);
+	if (numFrames == 0 || numFrames > 0x10000 || numSurfaces == 0 || numSurfaces > 0x1000 ||
+		ofsFrames > 0x7fffffffu || ofsSurfaces > 0x7fffffffu)
+	{
+		Printf("LoadModel: Model '%s' has invalid counts\n", path);
+		return false;
+	}
+	if ((int64_t)ofsFrames + (int64_t)numFrames * (int)sizeof(md3_frame_t) > length)
+	{
+		Printf("LoadModel: Model '%s' file too short\n", path);
+		return false;
+	}
+	if ((int64_t)ofsSurfaces + (int)sizeof(md3_surface_t) > length)
+	{
+		Printf("LoadModel: Model '%s' file too short\n", path);
+		return false;
+	}
+
 	hasSurfaces = numSurfaces > 1;
 
 	numTags = LittleLong(hdr->Num_Tags);
@@ -154,13 +189,56 @@ bool FMD3Model::Load(const char * path, int lumpnum, const char * buffer, int le
 	for (unsigned i = 0; i < numSurfaces; i++)
 	{
 		MD3Surface * s = &Surfaces[i];
+
+		// Validate the surface before walking to the next one, so a corrupt
+		// Ofs_End cannot send the walk out of the file or backwards.
+		if ((int64_t)((const char*)surf - buffer) + (int)sizeof(md3_surface_t) > length)
+		{
+			Printf("LoadModel: Model '%s' has a corrupt surface\n", path);
+			return false;
+		}
+		uint32_t surfEnd = LittleLong(surf->Ofs_End);
+		if (surfEnd > 0x7fffffffu || surfEnd < sizeof(md3_surface_t) ||
+			(int64_t)((const char*)surf - buffer) + surfEnd > length)
+		{
+			Printf("LoadModel: Model '%s' has a corrupt surface\n", path);
+			return false;
+		}
+
 		md3_surface_t * ss = surf;
 
-		surf = (md3_surface_t *)(((char*)surf) + LittleLong(surf->Ofs_End));
+		surf = (md3_surface_t *)(((char*)surf) + surfEnd);
 
-		s->numSkins = LittleLong(ss->Num_Shaders);
-		s->numTriangles = LittleLong(ss->Num_Triangles);
-		s->numVertices = LittleLong(ss->Num_Verts);
+		uint32_t numSkins = LittleLong(ss->Num_Shaders);
+		uint32_t numTriangles = LittleLong(ss->Num_Triangles);
+		uint32_t numVertices = LittleLong(ss->Num_Verts);
+		uint32_t ofsShaders = LittleLong(ss->Ofs_Shaders);
+		uint32_t ofsTriangles = LittleLong(ss->Ofs_Triangles);
+		uint32_t ofsTexcoord = LittleLong(ss->Ofs_Texcoord);
+		uint32_t ofsXYZNormal = LittleLong(ss->Ofs_XYZNormal);
+
+		// Values above INT_MAX were negative to the original signed code; the
+		// caps also keep the offset products below int64_t overflow.
+		if (numSkins > 0x10000 || numTriangles > 0x100000 || numVertices > 0x100000 ||
+			ofsShaders > 0x7fffffffu || ofsTriangles > 0x7fffffffu ||
+			ofsTexcoord > 0x7fffffffu || ofsXYZNormal > 0x7fffffffu)
+		{
+			Printf("LoadModel: Model '%s' has a corrupt surface\n", path);
+			return false;
+		}
+		s->numSkins = numSkins;
+		s->numTriangles = numTriangles;
+		s->numVertices = numVertices;
+
+		// All surface-local offsets must stay inside the surface.
+		if ((int64_t)ofsShaders + (int64_t)numSkins * (int)sizeof(md3_shader_t) > surfEnd ||
+			(int64_t)ofsTriangles + (int64_t)numTriangles * (int)sizeof(md3_triangle_t) > surfEnd ||
+			(int64_t)ofsTexcoord + (int64_t)numVertices * (int)sizeof(md3_texcoord_t) > surfEnd ||
+			(int64_t)ofsXYZNormal + (int64_t)numVertices * (int64_t)Frames.Size() * (int)sizeof(md3_vertex_t) > surfEnd)
+		{
+			Printf("LoadModel: Model '%s' has a corrupt surface\n", path);
+			return false;
+		}
 
 		// copy shaders (skins)
 		md3_shader_t * shader = (md3_shader_t*)(((char*)ss) + LittleLong(ss->Ofs_Shaders));
@@ -207,7 +285,10 @@ void FMD3Model::LoadGeometry()
 
 		for (unsigned ii = 0; ii < s->numTriangles; ii++) for (int j = 0; j < 3; j++)
 		{
-			s->Tris[ii].VertIndex[j] = LittleLong(tris[ii].vt_index[j]);
+			// Clamp corrupt vertex indices so the index buffer can never
+			// reference past the surface's vertex data.
+			unsigned int idx = LittleLong(tris[ii].vt_index[j]);
+			s->Tris[ii].VertIndex[j] = (int)min<unsigned int>(idx, s->numVertices > 0 ? s->numVertices - 1 : 0);
 		}
 
 		// Load texture coordinates
@@ -306,9 +387,13 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 
 void FMD3Model::AddSkins(uint8_t *hitlist, const FTextureID* surfaceskinids)
 {
+	// The caller provides only MD3_MAX_SURFACES skin slots per model, so
+	// never index past that: a crafted model with more surfaces would read
+	// garbage FTextureIDs and write the precache hitlist out of bounds.
+	size_t maxSurfaces = min((size_t)Surfaces.Size(), (size_t)MD3_MAX_SURFACES);
 	for (unsigned i = 0; i < Surfaces.Size(); i++)
 	{
-		if (surfaceskinids && surfaceskinids[i].isValid())
+		if (surfaceskinids && i < maxSurfaces && surfaceskinids[i].isValid())
 		{
 			hitlist[surfaceskinids[i].GetIndex()] |= FTextureManager::HIT_Flat;
 		}
@@ -359,7 +444,8 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FGameTexture * skin, int f
 		FGameTexture *surfaceSkin = skin;
 		if (!surfaceSkin)
 		{
-			if (surfaceskinids && surfaceskinids[i].isValid())
+			// Same MD3_MAX_SURFACES slice limit as in AddSkins.
+			if (surfaceskinids && i < MD3_MAX_SURFACES && surfaceskinids[i].isValid())
 			{
 				surfaceSkin = TexMan.GetGameTexture(surfaceskinids[i], true);
 			}

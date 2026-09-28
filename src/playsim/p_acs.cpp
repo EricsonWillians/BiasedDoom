@@ -1668,6 +1668,8 @@ static void ReadArrayVars (FSerializer &file, FWorldGlobalArray *vars, size_t co
 		while ((arraykey = file.GetKey()))
 		{
 			int i = (int)strtoll(arraykey, nullptr, 10);
+			// A corrupt save can reference arrays that do not exist; consume but skip those.
+			bool inrange = (unsigned)i < count;
 			if (file.BeginObject(nullptr))
 			{
 				while ((arraykey = file.GetKey()))
@@ -1675,7 +1677,8 @@ static void ReadArrayVars (FSerializer &file, FWorldGlobalArray *vars, size_t co
 					int k = (int)strtoll(arraykey, nullptr, 10);
 					int val;
 					file(nullptr, val);
-					vars[i].Insert(k, val);
+					if (inrange)
+						vars[i].Insert(k, val);
 				}
 				file.EndObject();
 			}
@@ -2338,6 +2341,12 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 	if (Format == ACS_Old)
 	{
 		uint32_t dirofs = LittleLong(((uint32_t *)object)[1]);
+		// The script directory and the two dwords in front of it must lie inside the lump.
+		// (The module is already registered at this point, so this cannot just return false.)
+		if (dirofs < 8 || dirofs + 8 > (uint32_t)len)
+		{
+			I_Error("Corrupt script directory offset in ACS module %s", ModuleName);
+		}
 		uint32_t pretag = ((uint32_t *)(object + dirofs))[-1];
 
 		Chunks = object + len;
@@ -2364,7 +2373,13 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 	if (Format == ACS_Old)
 	{
 		StringTable = LittleLong(((uint32_t *)Data)[1]);
-		StringTable += LittleLong(((uint32_t *)(Data + StringTable))[0]) * 12 + 4;
+		// The string table sits right behind the script directory and must fit in the lump.
+		uint64_t tableofs = (uint64_t)StringTable + (uint64_t)LittleLong(((uint32_t *)(Data + StringTable))[0]) * 12 + 4;
+		if (tableofs + 4 > (uint32_t)DataSize)
+		{
+			I_Error("Corrupt string table in ACS module %s", ModuleName);
+		}
+		StringTable = (uint32_t)tableofs;
 		UnescapeStringTable(Data + StringTable, Data, false);
 		// If this is an original Hexen BEHAVIOR, set up some localization info for it. Original Hexen BEHAVIORs are always in the old format.
 		if ((Level->flags2 & LEVEL2_HEXENHACK) && gameinfo.gametype == GAME_Hexen && lumpnum == -1 && reallumpnum > 0)
@@ -2452,7 +2467,15 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 		if (chunk != NULL)
 		{
 			for (i = 0;i < (int)LittleLong(chunk[1]);i += 4)
-				JumpPoints.Push(LittleLong(chunk[2 + i/4]));
+			{
+				uint32_t jp = LittleLong(chunk[2 + i/4]);
+				// Jump targets must be valid code offsets.
+				if (jp >= (uint32_t)DataSize)
+				{
+					I_Error("Out of bounds jump point in ACS module %s", ModuleName);
+				}
+				JumpPoints.Push(jp);
+			}
 		}
 
 		// Initialize this object's map variables
@@ -2464,7 +2487,11 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 			int firstvar = LittleLong(chunk[2]);
 			for (i = 0; i < numvars; ++i)
 			{
-				MapVarStore[i+firstvar] = LittleLong(chunk[3+i]);
+				// A corrupt lump can initialize map variables that do not exist.
+				if ((unsigned)(i+firstvar) < NUM_MAPVARS)
+				{
+					MapVarStore[i+firstvar] = LittleLong(chunk[3+i]);
+				}
 			}
 			chunk = (uint32_t *)NextChunk ((uint8_t *)chunk);
 		}
@@ -2485,7 +2512,12 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 			memset (ArrayStore, 0, sizeof(*Arrays)*NumArrays);
 			for (i = 0; i < NumArrays; ++i)
 			{
-				MapVarStore[LittleLong(chunk[2+i*2])] = i;
+				uint32_t varnum = LittleLong(chunk[2+i*2]);
+				// A corrupt lump can reference map variables that do not exist.
+				if (varnum < NUM_MAPVARS)
+				{
+					MapVarStore[varnum] = i;
+				}
 				ArrayStore[i].ArraySize = LittleLong(chunk[3+i*2]);
 				ArrayStore[i].Elements = new int32_t[ArrayStore[i].ArraySize];
 				memset(ArrayStore[i].Elements, 0, ArrayStore[i].ArraySize*sizeof(uint32_t));
@@ -2496,7 +2528,9 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 		chunk = (uint32_t *)FindChunk (MAKE_ID('A','I','N','I'));
 		while (chunk != NULL)
 		{
-			int arraynum = MapVarStore[LittleLong(chunk[2])];
+			uint32_t varnum = LittleLong(chunk[2]);
+			// A corrupt lump can reference map variables that do not exist.
+			int arraynum = varnum < NUM_MAPVARS ? MapVarStore[varnum] : -1;
 			if ((unsigned)arraynum < (unsigned)NumArrays)
 			{
 				// Use unsigned iterator here to avoid issue with GCC 4.9/5.x
@@ -2536,10 +2570,13 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 			{
 				for (uint32_t i = 0; i < LittleLong(chunk[1])/4; ++i)
 				{
-					const char *str = LookupString(MapVarStore[LittleLong(chunk[i+2])]);
+					uint32_t varnum = LittleLong(chunk[i+2]);
+					if (varnum >= NUM_MAPVARS)
+						continue;	// A corrupt lump can reference map variables that do not exist.
+					const char *str = LookupString(MapVarStore[varnum]);
 					if (str != NULL)
 					{
-						MapVarStore[LittleLong(chunk[i+2])] = GlobalACSStrings.AddString(str);
+						MapVarStore[varnum] = GlobalACSStrings.AddString(str);
 					}
 				}
 			}
@@ -2549,7 +2586,10 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 			{
 				for (uint32_t i = 0; i < LittleLong(chunk[1])/4; ++i)
 				{
-					int arraynum = MapVarStore[LittleLong(chunk[i+2])];
+					uint32_t varnum = LittleLong(chunk[i+2]);
+					if (varnum >= NUM_MAPVARS)
+						continue;	// A corrupt lump can reference map variables that do not exist.
+					int arraynum = MapVarStore[varnum];
 					if ((unsigned)arraynum < (unsigned)NumArrays)
 					{
 						int32_t *elems = ArrayStore[arraynum].Elements;
@@ -2574,8 +2614,10 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 				// First byte is version, it should be 0
 				if(*chunkData++ == 0)
 				{
-					int arraynum = MapVarStore[uallong(LittleLong(*(const int*)(chunkData)))];
+					uint32_t varnum = uallong(LittleLong(*(const int*)(chunkData)));
 					chunkData += 4;
+					// A corrupt lump can reference map variables that do not exist.
+					int arraynum = varnum < NUM_MAPVARS ? MapVarStore[varnum] : -1;
 					if ((unsigned)arraynum < (unsigned)NumArrays)
 					{
 						int32_t *elems = ArrayStore[arraynum].Elements;
@@ -2615,6 +2657,11 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 				if (parse[i])
 				{
 					FBehavior *module = NULL;
+					// Each library name must be terminated inside the declared chunk.
+					if (memchr(&parse[i], '\0', LittleLong(chunk[1]) - i) == NULL)
+					{
+						I_Error("Unterminated library name in LOAD chunk of ACS module %s", ModuleName);
+					}
 					int lump = fileSystem.CheckNumForName (&parse[i], FileSys::ns_acslibrary);
 					if (lump < 0)
 					{
@@ -2647,7 +2694,11 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 					ScriptFunction *func = &((ScriptFunction *)Functions)[j];
 					if (func->Address == 0 && func->ImportNum == 0)
 					{
-						int libfunc = lib->FindFunctionName ((char *)(chunk + 2) + LittleLong(chunk[3+j]));
+						// The name offset comes from the (untrusted) FNAM chunk.
+						const char *funcname = GetChunkString(chunk, j);
+						if (funcname == NULL)
+							continue;
+						int libfunc = lib->FindFunctionName (funcname);
 						if (libfunc >= 0)
 						{
 							ScriptFunction *realfunc = &((ScriptFunction *)lib->Functions)[libfunc];
@@ -2660,7 +2711,7 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 								if (realfunc->ArgCount != func->ArgCount)
 								{
 									Printf (TEXTCOLOR_ORANGE "Function %s in %s has %d arguments. %s expects it to have %d.\n",
-										(char *)(chunk + 2) + LittleLong(chunk[3+j]), lib->ModuleName, realfunc->ArgCount,
+										funcname, lib->ModuleName, realfunc->ArgCount,
 										ModuleName, func->ArgCount);
 									Format = ACS_Unknown;
 								}
@@ -2679,12 +2730,18 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 				if (chunk != NULL)
 				{
 					char *parse = (char *)&chunk[2];
-					for (uint32_t j = 0; j < LittleLong(chunk[1]); )
+					uint32_t chunksize = LittleLong(chunk[1]);
+					for (uint32_t j = 0; j < chunksize; )
 					{
+						// Each entry must fit in the chunk and its name must terminate inside it.
+						if (j + 4 > chunksize || memchr(&parse[j + 4], '\0', chunksize - j - 4) == NULL)
+						{
+							I_Error("Corrupt MIMP chunk in ACS module %s", ModuleName);
+						}
 						uint32_t varNum = LittleLong(*(uint32_t *)&parse[j]);
 						j += 4;
 						int impNum = lib->FindMapVarName (&parse[j]);
-						if (impNum >= 0)
+						if (impNum >= 0 && impNum < NUM_MAPVARS)
 						{
 							MapVars[varNum] = &lib->MapVarStore[impNum];
 						}
@@ -2698,14 +2755,20 @@ bool FBehavior::Init(FLevelLocals *Level, int lumpnum, FileReader * fr, int len,
 				{
 					chunk = (uint32_t *)FindChunk(MAKE_ID('A','I','M','P'));
 					char *parse = (char *)&chunk[3];
+					char *chunkend = (char *)&chunk[2] + LittleLong(chunk[1]);
 					for (uint32_t j = 0; j < LittleLong(chunk[2]); ++j)
 					{
+						// Each entry must fit in the chunk and its name must terminate inside it.
+						if (parse + 8 > chunkend || memchr(parse + 8, '\0', chunkend - parse - 8) == NULL)
+						{
+							I_Error("Corrupt AIMP chunk in ACS module %s", ModuleName);
+						}
 						uint32_t varNum = LittleLong(*(uint32_t *)parse);
 						parse += 4;
 						uint32_t expectedSize = LittleLong(*(uint32_t *)parse);
 						parse += 4;
 						int impNum = lib->FindMapArray (parse);
-						if (impNum >= 0)
+						if (impNum >= 0 && impNum < lib->NumArrays && varNum < NUM_MAPVARS)
 						{
 							Arrays[NumArrays + j] = &lib->ArrayStore[impNum];
 							MapVarStore[varNum] = NumArrays + j;
@@ -2794,6 +2857,11 @@ void FBehavior::LoadScriptsDirectory ()
 	case ACS_Old:
 		scripts.dw = (uint32_t *)(Data + LittleLong(((uint32_t *)Data)[1]));
 		NumScripts = LittleLong(scripts.dw[0]);
+		// The directory entries must fit inside the lump behind the count.
+		if (NumScripts < 0 || (uint64_t)NumScripts * sizeof(ScriptPtr2) + 4 > (uint64_t)DataSize - LittleLong(((uint32_t *)Data)[1]))
+		{
+			I_Error("Corrupt script directory in ACS module %s", ModuleName);
+		}
 		if (NumScripts != 0)
 		{
 			scripts.dw++;
@@ -2867,6 +2935,11 @@ void FBehavior::LoadScriptsDirectory ()
 #endif
 	for (i = 0; i < NumScripts; ++i)
 	{
+		// Script entry points must reference code inside the module.
+		if (Scripts[i].Address >= (uint32_t)DataSize)
+		{
+			I_Error("Script %d in ACS module %s has an out of bounds entry point", Scripts[i].Number, ModuleName);
+		}
 		Scripts[i].Flags = 0;
 		Scripts[i].VarCount = LOCAL_SIZE;
 	}
@@ -2959,9 +3032,14 @@ void FBehavior::LoadScriptsDirectory ()
 			// a negative index into the global name table.
 			if (Scripts[i].Number < 0)
 			{
-				const char *str = (const char *)(scripts.b + 8 + scripts.dw[3 + (-Scripts[i].Number - 1)]);
-				FName name(str);
-				Scripts[i].Number = -name.GetIndex();
+				// The name index must reference a string that is actually in the SNAM chunk.
+				unsigned nameidx = (unsigned)(-Scripts[i].Number - 1);
+				if (nameidx < (uint32_t)scripts.dw[2])
+				{
+					const char *str = (const char *)(scripts.b + 8 + scripts.dw[3 + nameidx]);
+					FName name(str);
+					Scripts[i].Number = -name.GetIndex();
+				}
 			}
 		}
 		// We need to resort scripts, because the new numbers for named scripts likely
@@ -2991,17 +3069,42 @@ void FBehavior::UnencryptStrings ()
 	uint32_t *chunk = (uint32_t *)FindChunk(MAKE_ID('S','T','R','E'));
 	while (chunk != NULL)
 	{
+		uint8_t *chunkend = (uint8_t *)chunk + 8 + LittleLong(chunk[1]);
+		if (LittleLong(chunk[1]) < 8)
+		{
+			I_Error("Corrupt STRE chunk in ACS module %s", ModuleName);
+		}
 		for (uint32_t strnum = 0; strnum < LittleLong(chunk[3]); ++strnum)
 		{
+			// The offset entry, the string and its terminator must all lie inside the
+			// chunk, because the loop below rewrites the string in place up to the NUL.
+			if ((uint8_t *)&chunk[5 + strnum] + 4 > chunkend)
+			{
+				I_Error("Corrupt STRE chunk in ACS module %s", ModuleName);
+			}
 			int ofs = LittleLong(chunk[5+strnum]);
 			uint8_t *data = (uint8_t *)chunk + ofs + 8, last;
+			if (ofs < 0 || data >= chunkend)
+			{
+				I_Error("Corrupt STRE chunk in ACS module %s", ModuleName);
+			}
+			// The terminator is the byte that decrypts to NUL, i.e. the mask byte
+			// itself; it must lie inside the chunk before anything is rewritten.
 			int p = (uint8_t)(ofs*157135);
+			{
+				int k = 0;
+				while (data + k < chunkend && data[k] != (uint8_t)(p+(k>>1))) ++k;
+				if (data + k >= chunkend)
+				{
+					I_Error("Unterminated encrypted string in ACS module %s", ModuleName);
+				}
+			}
 			int i = 0;
 			do
 			{
 				last = (data[i] ^= (uint8_t)(p+(i>>1)));
 				++i;
-			} while (last != 0);
+			} while (last != 0 && data + i < chunkend);
 		}
 		prevchunk = chunk;
 		chunk = (uint32_t *)NextChunk ((uint8_t *)chunk);
@@ -3035,14 +3138,31 @@ void FBehavior::UnescapeStringTable(uint8_t *chunkstart, uint8_t *datastart, boo
 	{
 		datastart = chunkstart;
 	}
+	// The table header must fit inside the module.
+	if (chunkstart + (has_padding ? 8 : 4) > Data + DataSize)
+	{
+		I_Error("Corrupt string table in ACS module %s", ModuleName);
+	}
 	if (!has_padding)
 	{
 		chunk[0] = LittleLong(chunk[0]);
 		for (uint32_t strnum = 0; strnum < chunk[0]; ++strnum)
 		{
+			// The offset entry, the string and its terminator must all lie inside the
+			// module, because strbin rewrites the string in place up to the NUL.
+			if ((uint8_t *)&chunk[1 + strnum] + 4 > Data + DataSize)
+			{
+				I_Error("Corrupt string table in ACS module %s", ModuleName);
+			}
 			int ofs = LittleLong(chunk[1 + strnum]);	// Byte swap offset, if needed.
 			chunk[1 + strnum] = ofs;
-			strbin((char *)datastart + ofs);
+			uint8_t *str = datastart + ofs;
+			if (ofs < 0 || str < Data || str >= Data + DataSize ||
+				memchr(str, '\0', (Data + DataSize) - str) == NULL)
+			{
+				I_Error("Corrupt string table in ACS module %s", ModuleName);
+			}
+			strbin((char *)str);
 		}
 	}
 	else
@@ -3050,9 +3170,19 @@ void FBehavior::UnescapeStringTable(uint8_t *chunkstart, uint8_t *datastart, boo
 		chunk[1] = LittleLong(chunk[1]);
 		for (uint32_t strnum = 0; strnum < chunk[1]; ++strnum)
 		{
+			if ((uint8_t *)&chunk[3 + strnum] + 4 > Data + DataSize)
+			{
+				I_Error("Corrupt string table in ACS module %s", ModuleName);
+			}
 			int ofs = LittleLong(chunk[3 + strnum]);	// Byte swap offset, if needed.
 			chunk[3 + strnum] = ofs;
-			strbin((char *)datastart + ofs);
+			uint8_t *str = datastart + ofs;
+			if (ofs < 0 || str < Data || str >= Data + DataSize ||
+				memchr(str, '\0', (Data + DataSize) - str) == NULL)
+			{
+				I_Error("Corrupt string table in ACS module %s", ModuleName);
+			}
+			strbin((char *)str);
 		}
 	}
 }
@@ -3082,8 +3212,10 @@ bool FBehavior::IsGood ()
 		if (funcdef->Address == 0 && funcdef->ImportNum == 0)
 		{
 			uint32_t *chunk = (uint32_t *)FindChunk (MAKE_ID('F','N','A','M'));
+			// The name offset comes from the (untrusted) FNAM chunk.
+			const char *funcname = GetChunkString(chunk, i);
 			Printf (TEXTCOLOR_RED "Could not find ACS function %s for use in %s.\n",
-				(char *)(chunk + 2) + chunk[3+i], ModuleName);
+				funcname != NULL ? funcname : "<corrupt>", ModuleName);
 			bad = true;
 		}
 	}
@@ -3141,6 +3273,11 @@ ScriptFunction *FBehavior::GetFunction (int funcnum, FBehavior *&module) const
 	ScriptFunction *funcdef = (ScriptFunction *)Functions + funcnum;
 	if (funcdef->ImportNum)
 	{
+		// A corrupt module can reference an import that does not exist.
+		if (funcdef->ImportNum > (int)Imports.Size())
+		{
+			return NULL;
+		}
 		return Imports[funcdef->ImportNum - 1]->GetFunction (funcdef->Address, module);
 	}
 	// Should I just un-const this function instead of using a const_cast?
@@ -3161,11 +3298,35 @@ int FBehavior::FindMapVarName (const char *varname) const
 int FBehavior::FindMapArray (const char *arrayname) const
 {
 	int var = FindMapVarName (arrayname);
-	if (var >= 0)
+	if (var >= 0 && var < NUM_MAPVARS)
 	{
 		return MapVarStore[var];
 	}
 	return -1;
+}
+
+// Returns a validated pointer to the index-th string in a name chunk (FNAM/MEXP),
+// or NULL if the chunk is corrupt. The offset entry and the string itself must lie
+// inside the module, and the string must be terminated before the end of the data.
+const char *FBehavior::GetChunkString (uint32_t *names, uint32_t index) const
+{
+	if (names == NULL || LittleLong(names[1]) < 4)
+	{
+		return NULL;
+	}
+	uint8_t *chunkend = (uint8_t *)names + 8 + LittleLong(names[1]);
+	if ((uint64_t)index >= LittleLong(names[2]) || (uint8_t *)&names[3 + index] + 4 > chunkend)
+	{
+		return NULL;
+	}
+	uint32_t ofs = LittleLong(names[3 + index]);
+	const char *namestr = (const char *)(names + 2) + ofs;
+	if (namestr < (const char *)Data || namestr >= (const char *)(Data + DataSize) ||
+		memchr(namestr, '\0', (const char *)(Data + DataSize) - namestr) == NULL)
+	{
+		return NULL;
+	}
+	return namestr;
 }
 
 int FBehavior::FindStringInChunk (uint32_t *names, const char *varname) const
@@ -3176,7 +3337,8 @@ int FBehavior::FindStringInChunk (uint32_t *names, const char *varname) const
 
 		for (i = 0; i < LittleLong(names[2]); ++i)
 		{
-			if (stricmp (varname, (char *)(names + 2) + LittleLong(names[3+i])) == 0)
+			const char *namestr = GetChunkString(names, i);
+			if (namestr != NULL && stricmp (varname, namestr) == 0)
 			{
 				return (int)i;
 			}
@@ -3228,8 +3390,13 @@ uint8_t *FBehavior::FindChunk (uint32_t id) const
 {
 	uint8_t *chunk = Chunks;
 
-	while (chunk != NULL && chunk < Data + DataSize)
+	while (chunk != NULL && Data + DataSize - chunk >= 8)
 	{
+		// A chunk whose declared size overruns the module means a corrupt lump.
+		if (LittleLong(((uint32_t *)chunk)[1]) > (uint32_t)(Data + DataSize - (chunk + 8)))
+		{
+			return NULL;
+		}
 		if (((uint32_t *)chunk)[0] == id)
 		{
 			return chunk;
@@ -3243,8 +3410,13 @@ uint8_t *FBehavior::NextChunk (uint8_t *chunk) const
 {
 	uint32_t id = *(uint32_t *)chunk;
 	chunk += LittleLong(((uint32_t *)chunk)[1]) + 8;
-	while (chunk != NULL && chunk < Data + DataSize)
+	while (chunk != NULL && Data + DataSize - chunk >= 8)
 	{
+		// A chunk whose declared size overruns the module means a corrupt lump.
+		if (LittleLong(((uint32_t *)chunk)[1]) > (uint32_t)(Data + DataSize - (chunk + 8)))
+		{
+			return NULL;
+		}
 		if (((uint32_t *)chunk)[0] == id)
 		{
 			return chunk;
@@ -3282,6 +3454,9 @@ const char *FBehavior::LookupString (uint32_t index, bool forprint) const
 		if (index >= list[0])
 			return NULL;	// Out of range for this list;
 
+		// Offsets were validated when the table was unescaped; double-check anyway.
+		if (list[1 + index] >= (uint32_t)DataSize)
+			return NULL;
 		const char *s = (const char *)(Data + list[1 + index]);
 		// Allow translations for Hexen's original strings.
 		// This synthesizes a string label and looks it up.
@@ -3308,6 +3483,9 @@ const char *FBehavior::LookupString (uint32_t index, bool forprint) const
 
 		if (index >= list[1])
 			return NULL;	// Out of range for this list
+		// Offsets were validated when the table was unescaped; double-check anyway.
+		if (StringTable + list[3+index] >= (uint32_t)DataSize)
+			return NULL;
 		return (const char *)(Data + StringTable + list[3+index]);
 	}
 }
@@ -7055,6 +7233,16 @@ int DLevelScript::RunScript()
 			break;
 		}
 
+		// The program counter must stay inside the active module at all times; branch
+		// targets and function addresses come from the (untrusted) behavior lump.
+		if (!activeBehavior->IsValidPC(pc))
+		{
+			Printf ("%s jumped out of bounds; terminated\n", ScriptPresentation(script).GetChars());
+			activeBehavior = savedActiveBehavior;
+			state = SCRIPT_PleaseRemove;
+			break;
+		}
+
 		if (fmt == ACS_LittleEnhanced)
 		{
 			pcd = getbyte(pc);
@@ -7141,6 +7329,14 @@ int DLevelScript::RunScript()
 
 		case PCD_PUSHBYTES:
 			temp = *(uint8_t *)pc;
+			// The byte count must not run past the end of the module.
+			if (temp + 1 > activeBehavior->GetDataSize() - (int)activeBehavior->PC2Ofs(pc))
+			{
+				Printf ("Out of bounds byte push in %s\n", ScriptPresentation(script).GetChars());
+				activeBehavior = savedActiveBehavior;
+				state = SCRIPT_PleaseRemove;
+				break;
+			}
 			pc = (int *)((uint8_t *)pc + temp + 1);
 			for (temp = -temp; temp; temp++)
 			{
@@ -7350,11 +7546,25 @@ int DLevelScript::RunScript()
 					module = activeBehavior;
 					funcnum = NEXTBYTE;
 				}
+				// The library tag on the stack may reference a module that does not exist.
+				if (module == NULL)
+				{
+					Printf ("Function %d in %s references an invalid library\n", funcnum, ScriptPresentation(script).GetChars());
+					state = SCRIPT_PleaseRemove;
+					break;
+				}
 				func = module->GetFunction (funcnum, module);
 
 				if (func == NULL)
 				{
 					Printf ("Function %d in %s out of range\n", funcnum, ScriptPresentation(script).GetChars());
+					state = SCRIPT_PleaseRemove;
+					break;
+				}
+				// A corrupt module can point a function outside its own code.
+				if (func->Address >= (uint32_t)module->GetDataSize())
+				{
+					Printf ("Function %d in %s has an out of bounds address\n", funcnum, ScriptPresentation(script).GetChars());
 					state = SCRIPT_PleaseRemove;
 					break;
 				}
@@ -8552,8 +8762,23 @@ scriptwait:
 		case PCD_CASEGOTOSORTED:
 			// The count and jump table are 4-byte aligned
 			pc = (int *)(((size_t)pc + 3) & ~3);
+			// The case count and table must fit inside the code remaining in the module.
+			if (!activeBehavior->IsValidPC(pc) || activeBehavior->GetDataSize() - (int)activeBehavior->PC2Ofs(pc) < 4)
+			{
+				Printf ("Out of bounds case table in %s\n", ScriptPresentation(script).GetChars());
+				activeBehavior = savedActiveBehavior;
+				state = SCRIPT_PleaseRemove;
+				break;
+			}
 			{
 				int numcases = uallong(pc[0]); pc++;
+				if (numcases < 0 || (int64_t)numcases * 8 > (int64_t)(activeBehavior->GetDataSize() - (int)activeBehavior->PC2Ofs(pc)))
+				{
+					Printf ("Out of bounds case table in %s\n", ScriptPresentation(script).GetChars());
+					activeBehavior = savedActiveBehavior;
+					state = SCRIPT_PleaseRemove;
+					break;
+				}
 				int min = 0, max = numcases-1;
 				while (min <= max)
 				{
@@ -10633,11 +10858,12 @@ int P_StartScript (FLevelLocals *Level, AActor *who, line_t *where, int script, 
 			if ((flags & ACS_NET) && !(scriptdata->Flags & SCRIPTF_Net)
 				&& !sv_allowallscripts && (netgame || !allowsingleplayerscripts))
 			{
-				if (who->Level->isConsolePlayer(who))
+				if (who != NULL && who->Level->isConsolePlayer(who))
 				{
 					Printf(PRINT_BOLD, "Non-net scripts are currently not requestable\n");
 				}
-				else if (consoleplayer == Net_Arbitrator && !IsClientSideScript(who, *scriptdata))
+				else if (who != NULL && who->player != NULL
+					&& consoleplayer == Net_Arbitrator && !IsClientSideScript(who, *scriptdata))
 				{
 					Printf(PRINT_BOLD, "%s tried to puke %s (\n",
 						who->player->userinfo.GetName(), ScriptPresentation(script).GetChars());
@@ -10670,7 +10896,8 @@ int P_StartScript (FLevelLocals *Level, AActor *who, line_t *where, int script, 
 			// reason for the line_activation_failed / WorldLineActivationFailed
 			// events.
 			Level->LastSpecialFailReason = SPECIAL_FAIL_SCRIPT_NOT_FOUND;
-			if (!(flags & ACS_NET) || (who && Level->isConsolePlayer(who->player->mo))) // The indirection is necessary here.
+			if (!(flags & ACS_NET) || (who != NULL && who->player != NULL && who->player->mo != NULL
+				&& Level->isConsolePlayer(who->player->mo))) // The indirection is necessary here.
 			{
 				Printf("P_StartScript: Unknown %s\n", ScriptPresentation(script).GetChars());
 			}

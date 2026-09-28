@@ -334,8 +334,12 @@ void FVoxelModel::BuildVertexBuffer(FModelRenderer *renderer)
 		FModelVertex *vertptr = vbuf->LockVertexBuffer(mVertices.Size());
 		unsigned int *indxptr = vbuf->LockIndexBuffer(mIndices.Size());
 
-		memcpy(vertptr, &mVertices[0], sizeof(FModelVertex)* mVertices.Size());
-		memcpy(indxptr, &mIndices[0], sizeof(unsigned int)* mIndices.Size());
+		// An empty voxel would take the address of element 0 of an empty
+		// array, which is undefined behavior.
+		if (mVertices.Size() > 0)
+			memcpy(vertptr, &mVertices[0], sizeof(FModelVertex)* mVertices.Size());
+		if (mIndices.Size() > 0)
+			memcpy(indxptr, &mIndices[0], sizeof(unsigned int)* mIndices.Size());
 
 		vbuf->UnlockVertexBuffer();
 		vbuf->UnlockIndexBuffer();

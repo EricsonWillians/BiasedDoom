@@ -224,7 +224,7 @@ FResourceFile::~FResourceFile()
 
 FCompressedBuffer FResourceFile::GetRawData(uint32_t entry)
 {
-	size_t LumpSize = entry << NumLumps ? Entries[entry].Length : 0;
+	size_t LumpSize = entry < NumLumps ? Entries[entry].Length : 0;
 	FCompressedBuffer cbuf = { LumpSize, LumpSize, METHOD_STORED, 0, 0, LumpSize == 0? nullptr : new char[LumpSize] };
 	if (LumpSize > 0)
 	{

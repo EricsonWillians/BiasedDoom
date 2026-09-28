@@ -78,6 +78,14 @@ static bool OpenGrp(FResourceFile* file, LumpFilterInfo* filter)
 	auto Reader = file->GetContainerReader();
 	Reader->Read(&header, sizeof(header));
 	uint32_t NumLumps = LittleLong(header.NumLumps);
+
+	// Clamp the lump count to what the file can actually hold (16 bytes per record).
+	auto avail = Reader->GetLength() - (ptrdiff_t)sizeof(GrpHeader);
+	if (avail < 0) avail = 0;
+	if ((uint64_t)NumLumps * sizeof(GrpLump) > (uint64_t)avail)
+	{
+		NumLumps = (uint32_t)(avail / (ptrdiff_t)sizeof(GrpLump));
+	}
 	auto Entries = file->AllocateEntries(NumLumps);
 
 	GrpLump *fileinfo = new GrpLump[NumLumps];

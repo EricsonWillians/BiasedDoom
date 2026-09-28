@@ -106,20 +106,37 @@ enum
 
 bool FDMDModel::Load(const char * path, int lumpnum, const char * buffer, int length)
 {
+	if (length < 12 + (int)sizeof(dmd_chunk_t))
+	{
+		Printf("LoadModel: Model '%s' file too short\n", path);
+		return false;
+	}
+
 	dmd_chunk_t * chunk = (dmd_chunk_t*)(buffer + 12);
 	char   *temp;
 	ModelFrame *frame;
 	int     i;
+	bool    gotInfo = false;
 
 	int fileoffset = 12 + sizeof(dmd_chunk_t);
 
 	chunk->type = LittleLong(chunk->type);
 	while (chunk->type != DMC_END)
 	{
+		if (chunk->length < 0 || (int64_t)fileoffset + chunk->length > length)
+		{
+			Printf("LoadModel: Model '%s' has a corrupt chunk\n", path);
+			return false;
+		}
 		switch (chunk->type)
 		{
 		case DMC_INFO:			// Standard DMD information chunk.
-			memcpy(&info, buffer + fileoffset, LittleLong(chunk->length));
+			if (chunk->length != sizeof(DMDInfo))
+			{
+				Printf("LoadModel: Model '%s' has an invalid DMC_INFO chunk\n", path);
+				return false;
+			}
+			memcpy(&info, buffer + fileoffset, sizeof(DMDInfo));
 			info.skinWidth = LittleLong(info.skinWidth);
 			info.skinHeight = LittleLong(info.skinHeight);
 			info.frameSize = LittleLong(info.frameSize);
@@ -133,6 +150,7 @@ bool FDMDModel::Load(const char * path, int lumpnum, const char * buffer, int le
 			info.offsetFrames = LittleLong(info.offsetFrames);
 			info.offsetLODs = LittleLong(info.offsetLODs);
 			info.offsetEnd = LittleLong(info.offsetEnd);
+			gotInfo = true;
 			fileoffset += chunk->length;
 			break;
 
@@ -142,9 +160,47 @@ bool FDMDModel::Load(const char * path, int lumpnum, const char * buffer, int le
 			break;
 		}
 		// Read the next chunk header.
+		if (fileoffset + (int)sizeof(dmd_chunk_t) > length)
+		{
+			Printf("LoadModel: Model '%s' file too short\n", path);
+			return false;
+		}
 		chunk = (dmd_chunk_t*)(buffer + fileoffset);
 		chunk->type = LittleLong(chunk->type);
 		fileoffset += sizeof(dmd_chunk_t);
+	}
+
+	if (!gotInfo)
+	{
+		Printf("LoadModel: Model '%s' has no DMC_INFO chunk\n", path);
+		return false;
+	}
+
+	// Clamp the LOD count to the number of LODs this class can hold.
+	info.numLODs = clamp(info.numLODs, 0, MAX_LODS);
+
+	// Validate counts, frame size and source offsets before allocating anything.
+	if (info.skinWidth <= 0 || info.skinHeight <= 0 ||
+		info.numSkins < 0 || info.numVertices <= 0 || info.numTexCoords < 0 ||
+		info.numFrames <= 0)
+	{
+		Printf("LoadModel: Model '%s' has invalid counts\n", path);
+		return false;
+	}
+	if (info.frameSize < (int)(sizeof(dmd_packedFrame_t) - sizeof(dmd_packedVertex_t)) + info.numVertices * (int)sizeof(dmd_packedVertex_t))
+	{
+		Printf("LoadModel: Model '%s' has an invalid frame size\n", path);
+		return false;
+	}
+	if (info.offsetSkins < 0 || info.offsetFrames < 0 ||
+		info.offsetTexCoords < 0 || info.offsetLODs < 0 ||
+		(int64_t)info.offsetSkins + (int64_t)info.numSkins * 64 > length ||
+		(int64_t)info.offsetFrames + (int64_t)info.frameSize * info.numFrames > length ||
+		(int64_t)info.offsetTexCoords + (int64_t)info.numTexCoords * (int)sizeof(FTexCoord) > length ||
+		(int64_t)info.offsetLODs + (int64_t)info.numLODs * (int)sizeof(DMDLoDInfo) > length)
+	{
+		Printf("LoadModel: Model '%s' file too short\n", path);
+		return false;
 	}
 
 	// Allocate and load in the data.
@@ -179,6 +235,11 @@ void FDMDModel::LoadGeometry()
 	static int axis[3] = { VX, VY, VZ };
 	auto lumpdata = fileSystem.ReadFile(mLumpNum);
 	auto buffer = lumpdata.string();
+	if (info.offsetTexCoords < 0 || info.offsetLODs < 0 ||
+		lumpdata.size() < (size_t)info.offsetTexCoords + (size_t)info.numTexCoords * sizeof(FTexCoord))
+	{
+		return;
+	}
 	texCoords = new FTexCoord[info.numTexCoords];
 	memcpy(texCoords, buffer + info.offsetTexCoords, info.numTexCoords * sizeof(FTexCoord));
 
@@ -214,6 +275,12 @@ void FDMDModel::LoadGeometry()
 		lodInfo[i].offsetTriangles = LittleLong(lodInfo[i].offsetTriangles);
 		if (lodInfo[i].numTriangles > 0)
 		{
+			if (lodInfo[i].offsetTriangles < 0 ||
+				(int64_t)lodInfo[i].offsetTriangles + (int64_t)lodInfo[i].numTriangles * (int)sizeof(FTriangle) > (int64_t)lumpdata.size())
+			{
+				lodInfo[i].numTriangles = 0;
+				continue;
+			}
 			lods[i].triangles = new FTriangle[lodInfo[i].numTriangles];
 			memcpy(lods[i].triangles, buffer + lodInfo[i].offsetTriangles, lodInfo[i].numTriangles * sizeof(FTriangle));
 			for (int j = 0; j < lodInfo[i].numTriangles; j++)
@@ -366,7 +433,7 @@ int FDMDModel::FindFrame(const char* name, bool nodefault)
 
 void FDMDModel::RenderFrame(FModelRenderer *renderer, FGameTexture * skin, int frameno, int frameno2, double inter, FTranslationID translation, const FTextureID*, int boneStartPosition)
 {
-	if (frameno >= info.numFrames || frameno2 >= info.numFrames) return;
+	if (frameno < 0 || frameno2 < 0 || frameno >= info.numFrames || frameno2 >= info.numFrames) return;
 
 	if (!skin)
 	{
@@ -431,6 +498,12 @@ struct md2_packedFrame_t
 
 bool FMD2Model::Load(const char * path, int lumpnum, const char * buffer, int length)
 {
+	if (length < (int)sizeof(md2_header_t))
+	{
+		Printf("LoadModel: Model '%s' file too short\n", path);
+		return false;
+	}
+
 	md2_header_t * md2header = (md2_header_t *)buffer;
 	ModelFrame *frame;
 	uint8_t   *md2_frames;
@@ -458,7 +531,25 @@ bool FMD2Model::Load(const char * path, int lumpnum, const char * buffer, int le
 	lodInfo[0].offsetGlCommands = LittleLong(md2header->offsetGlCommands);
 	info.offsetEnd = LittleLong(md2header->offsetEnd);
 
-	if (info.offsetFrames + info.frameSize * info.numFrames > length)
+	if (info.skinWidth <= 0 || info.skinHeight <= 0 ||
+		info.numSkins < 0 || info.numVertices <= 0 || info.numTexCoords < 0 ||
+		lodInfo[0].numTriangles <= 0 || info.numFrames <= 0)
+	{
+		Printf("LoadModel: Model '%s' has invalid counts\n", path);
+		return false;
+	}
+	// A frame must at least hold its scale/translate/name header and all of its packed vertices.
+	if (info.frameSize < (int)(sizeof(md2_packedFrame_t) - sizeof(md2_triangleVertex_t)) + info.numVertices * (int)sizeof(md2_triangleVertex_t))
+	{
+		Printf("LoadModel: Model '%s' has an invalid frame size\n", path);
+		return false;
+	}
+	if (info.offsetSkins < 0 || info.offsetFrames < 0 || info.offsetTexCoords < 0 ||
+		lodInfo[0].offsetTriangles < 0 ||
+		(int64_t)info.offsetSkins + (int64_t)info.numSkins * 64 > length ||
+		(int64_t)info.offsetFrames + (int64_t)info.frameSize * info.numFrames > length ||
+		(int64_t)info.offsetTexCoords + (int64_t)info.numTexCoords * (int)sizeof(FTexCoord) > length ||
+		(int64_t)lodInfo[0].offsetTriangles + (int64_t)lodInfo[0].numTriangles * (int)sizeof(FTriangle) > length)
 	{
 		Printf("LoadModel: Model '%s' file too short\n", path);
 		return false;
@@ -523,8 +614,17 @@ void FMD2Model::LoadGeometry()
 		// Translate each vertex.
 		for(k = 0, pVtx = pfr->vertices; k < info.numVertices; k++, pVtx++)
 		{
-			memcpy(framev->normals[k].xyz,
-				avertexnormals[pVtx->lightNormalIndex], sizeof(float) * 3);
+			// The normal table only has NUMVERTEXNORMALS entries; files with
+			// out-of-range indices get a zero normal instead of reading OOB.
+			if (pVtx->lightNormalIndex < NUMVERTEXNORMALS)
+			{
+				memcpy(framev->normals[k].xyz,
+					avertexnormals[pVtx->lightNormalIndex], sizeof(float) * 3);
+			}
+			else
+			{
+				memset(framev->normals[k].xyz, 0, sizeof(float) * 3);
+			}
 
 			for(c = 0; c < 3; c++)
 			{

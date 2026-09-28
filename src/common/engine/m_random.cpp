@@ -337,6 +337,10 @@ void FRandom::StaticReadRNGState(FSerializer &arc)
 					{
 						arc("index", rng->idx)
 							.Array("u", rng->sfmt.u, SFMT::N32);
+						// GenRand32 only guards against idx >= N32, so a negative
+						// index from a corrupt save would read before the state array.
+						if (rng->idx < 0) rng->idx = 0;
+						else if (rng->idx > SFMT::N32) rng->idx = SFMT::N32;
 						break;
 					}
 				}

@@ -115,7 +115,9 @@ void base64_decode(void *memory, size_t maxlen, const char *encoded_string) {
             char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
             char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
 
-            for (i = 0; (i < 3); i++)
+            // The bounds check must happen per byte: a hostile input can
+            // decode to more bytes than the destination buffer holds.
+            for (i = 0; (i < 3) && (dest < end); i++)
                 *dest++ = char_array_3[i];
             if (dest >= end) return;
             i = 0;

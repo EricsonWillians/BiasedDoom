@@ -172,6 +172,10 @@ int MusicEnabled() // int return is for scripting
 //==========================================================================
 
 static std::unique_ptr<SoundStream> musicStream;
+// Custom streams are owned by their creators (e.g. the movie player) and are
+// only ever deleted through S_StopCustomStream. The sound renderer never
+// deletes them: when it is reset or replaced it merely orphans them, so the
+// entries kept here can never dangle.
 static TArray<SoundStream*> customStreams;
 
 SoundStream *S_CreateCustomStream(size_t size, int samplerate, int numchannels, MusicCustomStreamType sampletype, StreamCallback cb, void *userdata)

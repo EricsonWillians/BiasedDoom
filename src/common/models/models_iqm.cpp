@@ -209,7 +209,13 @@ bool IQMModel::Load(const char* path, int lumpnum, const char* buffer, int lengt
 			}			
 		}
 
-		TRSData.Resize(num_frames * num_poses);
+		// Compute the TRS count in size_t so a corrupt file cannot overflow
+		// the allocation, and cap it to something sane.
+		size_t num_trs = (size_t)num_frames * num_poses;
+		if (num_trs > 0x1000000)
+			return false;
+
+		TRSData.Resize((unsigned int)num_trs);
 		reader.SeekTo(ofs_frames);
 		for (uint32_t i = 0; i < num_frames; i++)
 		{
@@ -491,7 +497,9 @@ void IQMModel::RenderFrame(FModelRenderer* renderer, FGameTexture* skin, int fra
 
 		if (!meshSkin)
 		{
-			if (surfaceskinids && surfaceskinids[i].isValid())
+			// The caller provides only MD3_MAX_SURFACES skin slots per model;
+			// past that the surfaceskinids pointer reads out of bounds.
+			if (surfaceskinids && i < MD3_MAX_SURFACES && surfaceskinids[i].isValid())
 			{
 				meshSkin = TexMan.GetGameTexture(surfaceskinids[i], true);
 			}
@@ -540,9 +548,13 @@ void IQMModel::BuildVertexBuffer(FModelRenderer* renderer)
 
 void IQMModel::AddSkins(uint8_t* hitlist, const FTextureID* surfaceskinids)
 {
+	// The caller provides only MD3_MAX_SURFACES skin slots per model, so
+	// never index past that: a crafted model with more meshes would read
+	// garbage FTextureIDs and write the precache hitlist out of bounds.
+	size_t maxSurfaces = min((size_t)Meshes.Size(), (size_t)MD3_MAX_SURFACES);
 	for (unsigned i = 0; i < Meshes.Size(); i++)
 	{
-		if (surfaceskinids && surfaceskinids[i].isValid())
+		if (surfaceskinids && i < maxSurfaces && surfaceskinids[i].isValid())
 			hitlist[surfaceskinids[i].GetIndex()] |= FTextureManager::HIT_Flat;
 	}
 }
@@ -635,9 +647,21 @@ ModelAnimFramePrecalculatedIQM IQMModel::CalculateFrameIQM(int frame1, int frame
 
 	out.precalcBones.Resize(Joints.Size());
 
-	if (Joints.Size() > 0 && animationFrames.Size() > 0)
+	if (Joints.Size() > 0 && animationFrames.Size() >= Joints.Size())
 	{
 		int numbones = Joints.SSize();
+
+		// Only full frames are addressable: frame*numbones+i must stay below
+		// the array size even when the pose and joint counts do not divide it.
+		const int maxFrame = animationFrames.SSize() / numbones - 1;
+		auto clampFrame = [maxFrame](int frame)
+		{
+			return frame >= 0 ? clamp(frame, 0, maxFrame) : frame;
+		};
+		frame1 = clampFrame(frame1);
+		frame2 = clampFrame(frame2);
+		frame1_prev = clampFrame(frame1_prev);
+		frame2_prev = clampFrame(frame2_prev);
 
 		int offset1 = frame1 * numbones;
 		int offset2 = frame2 * numbones;
@@ -672,7 +696,10 @@ ModelAnimFramePrecalculatedIQM IQMModel::CalculateFrameIQM(int frame1, int frame
 				next = inter2_prev <= 0 ? animationFrames[offset2 + i] : InterpolateBone(animationFrames[offset2_1 + i], animationFrames[offset2 + i], inter2_prev, invt2);
 			}
 
-			if(frame1 >= 0 || inter < 0)
+			// The sentinel-preserving clamp above keeps frame1 == -1 intact, so
+			// the inter < 0 fast path must also require a valid frame; the old
+			// unconditional clamp guaranteed offset1 was always in range here.
+			if(frame1 >= 0)
 			{
 				out.precalcBones[i] = inter < 0 ? animationFrames[offset1 + i] : InterpolateBone(prev, next , inter, invt);
 			}
@@ -700,17 +727,26 @@ const TArray<VSMatrix>* IQMModel::CalculateBonesIQM(int frame1, int frame2, floa
 
 	if(in && in->size() != Joints.Size()) in = nullptr;
 
-	if (numbones > 0 && animationFrames.Size() > 0)
+	if (numbones > 0 && animationFrames.Size() >= (size_t)numbones)
 	{
 
-		frame1 = clamp(frame1, 0, (animationFrames.SSize() - 1) / numbones);
-		frame2 = clamp(frame2, 0, (animationFrames.SSize() - 1) / numbones);
+		// Only full frames are addressable: frame*numbones+i must stay below
+		// the array size even when the pose and joint counts do not divide it.
+		const int maxFrame = animationFrames.SSize() / numbones - 1;
+		auto clampFrame = [maxFrame](int frame)
+		{
+			return frame >= 0 ? clamp(frame, 0, maxFrame) : frame;
+		};
+		frame1 = clampFrame(frame1);
+		frame2 = clampFrame(frame2);
+		frame1_prev = clampFrame(frame1_prev);
+		frame2_prev = clampFrame(frame2_prev);
 
 		unsigned int offset1 = frame1 * numbones;
 		unsigned int offset2 = frame2 * numbones;
 
-		unsigned int offset1_1 = frame1_prev * numbones;
-		unsigned int offset2_1 = frame2_prev * numbones;
+		unsigned int offset1_1 = frame1_prev >= 0 ? frame1_prev * numbones : 0;
+		unsigned int offset2_1 = frame2_prev >= 0 ? frame2_prev * numbones : 0;
 
 		float invt = 1.0f - inter;
 		float invt1 = 1.0f - inter1_prev;
@@ -749,7 +785,10 @@ const TArray<VSMatrix>* IQMModel::CalculateBonesIQM(int frame1, int frame2, floa
 
 			TRS bone;
 
-			if(frame1 >= 0 || inter < 0)
+			// The sentinel-preserving clamp above keeps frame1 == -1 intact, so
+			// the inter < 0 fast path must also require a valid frame; the old
+			// unconditional clamp guaranteed offset1 was always in range here.
+			if(frame1 >= 0)
 			{
 				bone = inter < 0 ? animationFrames[offset1 + i] : InterpolateBone(prev, next , inter, invt);
 			}

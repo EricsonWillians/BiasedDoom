@@ -473,12 +473,16 @@ bool MapLoader::LoadGLSubsectors(FileReader &lump)
 			const unsigned firstseg = LittleShort(data[i].firstseg);
 			if (firstseg >= numsegs)
 				return false;
+			// The entire seg range of the subsector must be valid.
+			if (subsectors[i].numlines > numsegs - firstseg)
+				return false;
 			subsectors[i].firstline = &Level->segs[firstseg];
 		}
 	}
 	else
 	{
 		auto data = (const gl3_mapsubsector_t*) (datab.bytes()+(format5? 0:4));
+		if (!format5) numsubsectors-=4;
 		numsubsectors /= sizeof(gl3_mapsubsector_t);
 		Level->subsectors.Alloc(numsubsectors);
 		auto &subsectors = Level->subsectors;
@@ -499,6 +503,9 @@ bool MapLoader::LoadGLSubsectors(FileReader &lump)
 
 			const unsigned firstseg = LittleLong(data[i].firstseg);
 			if (firstseg >= numsegs)
+				return false;
+			// The entire seg range of the subsector must be valid.
+			if (subsectors[i].numlines > numsegs - firstseg)
 				return false;
 			subsectors[i].firstline = &Level->segs[firstseg];
 		}

@@ -140,9 +140,11 @@ static void ParseStatistics(const char *fn, TArray<FStatistics> &statlist)
 
 				sc.MustGetString();
 				sc.MustGetString();
-				strncpy(session.name, sc.String, 24);
+				strncpy(session.name, sc.String, sizeof(session.name) - 1);
+				session.name[sizeof(session.name) - 1] = '\0';
 				sc.MustGetString();
-				strncpy(session.info, sc.String, 60);
+				strncpy(session.info, sc.String, sizeof(session.info) - 1);
+				session.info[sizeof(session.info) - 1] = '\0';
 
 				int h,m,s;
 				sc.MustGetString();
@@ -158,9 +160,11 @@ static void ParseStatistics(const char *fn, TArray<FStatistics> &statlist)
 						FLevelStatistics &lstats = session.levelstats[session.levelstats.Reserve(1)];
 
 						sc.MustGetString();
-						strncpy(lstats.name, sc.String, 24);
+						strncpy(lstats.name, sc.String, sizeof(lstats.name) - 1);
+						lstats.name[sizeof(lstats.name) - 1] = '\0';
 						sc.MustGetString();
-						strncpy(lstats.info, sc.String, 60);
+						strncpy(lstats.info, sc.String, sizeof(lstats.info) - 1);
+						lstats.info[sizeof(lstats.info) - 1] = '\0';
 
 						int h,m,s;
 						sc.MustGetString();

@@ -1051,7 +1051,8 @@ static void S_AddSNDINFO (int lump)
 					sc.MustGetString();
 					char* p;
 					double f = strtod(sc.String, &p);
-					if (!stricmp(p, "db")) sc.Float = dBToAmplitude((float)sc.Float);
+					// Convert the parsed value, not the stale scanner float.
+					if (!stricmp(p, "db")) sc.Float = dBToAmplitude((float)f);
 					else sc.ScriptError("Bad value for music volume: %s", sc.String);
 				}
 				if (lumpnum >= 0) MusicVolumes[lumpnum] = (float)sc.Float;

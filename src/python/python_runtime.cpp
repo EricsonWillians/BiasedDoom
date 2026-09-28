@@ -76,9 +76,12 @@ CVAR(Int, py_max_tasks, 4096, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL
 // Defined in python_game_api.cpp: flushes actor-slot invalidations that the
 // engine GC markers queued instead of running Py_DECREF inside the marker
 // (python_game_api.h is frozen for this change, hence the local declaration).
+// OnWorldLoaded (same situation) re-bumps the world-ref generation so refs
+// minted during the unload window can never alias the next map's arrays.
 namespace PythonRuntime::GameApi
 {
 	void DrainDeferredInvalidations();
+	void OnWorldLoaded();
 }
 
 namespace PythonRuntime
@@ -152,6 +155,14 @@ bool loadCallbackPending = false;
 bool gameplayMutationBlocked = false;
 bool callbacksNeedSort = false;
 unsigned callbackDispatchDepth = 0;
+// Cap on nested event dispatch. A gameplay handler can synchronously re-enter
+// dispatch (e.g. an actor_before_damage filter that deals damage re-enters
+// P_DamageMobj and dispatches again), and CPython 3.10/3.11 have no C-level
+// recursion guard, so without a cap that loop exhausts the native stack.
+constexpr unsigned MaxCallbackDispatchDepth = 8;
+// One-shot latch for the depth-cap warning; re-armed when the outermost
+// dispatch unwinds so a recursion storm warns once per storm, not per event.
+bool dispatchCapWarned = false;
 uint64_t tickBudgetMicroseconds = 0;
 uint64_t tickBudgetOverruns = 0;
 uint64_t tickBudgetSkips = 0;
@@ -930,6 +941,21 @@ bool IsTickEvent(const char* eventName)
 		strcmp(eventName, "post_tick") == 0 || strcmp(eventName, "custom_action") == 0;
 }
 
+// -scripttest CI runs must be deterministic: wall-clock hard-budget skips
+// would silently drop tick callbacks/scheduled tasks and flake autotests on
+// slow machines, so the hard budget is treated as disabled while the switch
+// is present. d_main.cpp keeps the parsed tic count file-static; the switch
+// itself never changes after startup, so probing Args once is equivalent.
+int scripttestMode = -1;
+bool ScripttestModeActive()
+{
+	if (scripttestMode < 0)
+	{
+		scripttestMode = Args != nullptr && Args->CheckParm("-scripttest") > 0 ? 1 : 0;
+	}
+	return scripttestMode != 0;
+}
+
 void InvokeEvent(const char* eventName, PyObject* event, AActor* subject = nullptr, int playerIndex = -1)
 {
 	if (!active)
@@ -938,6 +964,20 @@ void InvokeEvent(const char* eventName, PyObject* event, AActor* subject = nullp
 		return;
 	}
 	if (event == nullptr) event = BuildEvent(eventName);
+
+	// Drop dispatches nested deeper than the cap (see MaxCallbackDispatchDepth).
+	// Placed before the ++ below so the depth counter stays balanced.
+	if (callbackDispatchDepth >= MaxCallbackDispatchDepth)
+	{
+		if (!dispatchCapWarned)
+		{
+			dispatchCapWarned = true;
+			ReportScriptWarning("event dispatch depth cap (%u) reached; dropping nested '%s' event (recursive handler?)",
+				MaxCallbackDispatchDepth, eventName);
+		}
+		Py_DECREF(event);
+		return;
+	}
 
 	SortCallbacks();
 	PyObject* arguments = PyTuple_Pack(1, event);
@@ -962,9 +1002,10 @@ void InvokeEvent(const char* eventName, PyObject* event, AActor* subject = nullp
 	{
 		if (callbacks[index].Failed || callbacks[index].BudgetDisabled || callbacks[index].EventIndex != eventIndex) continue;
 		if (!CallbackMatches(callbacks[index], subject, playerIndex)) continue;
+		const bool hardBudgetEnabled = py_tick_hard_budget && !ScripttestModeActive();
 		const uint64_t hardLimit = py_tick_budget_ms > 0
 			? static_cast<uint64_t>(static_cast<int>(py_tick_budget_ms)) * 1000u : 0;
-		if (tickEvent && py_tick_hard_budget && hardLimit > 0 && tickBudgetMicroseconds >= hardLimit)
+		if (tickEvent && hardBudgetEnabled && hardLimit > 0 && tickBudgetMicroseconds >= hardLimit)
 		{
 			++callbacks[index].BudgetSkips;
 			++tickBudgetSkips;
@@ -1005,7 +1046,7 @@ void InvokeEvent(const char* eventName, PyObject* event, AActor* subject = nullp
 			Printf(TEXTCOLOR_YELLOW "Python %s callback in %s took %.3f ms (whole-tic budget: %d ms).\n",
 				 eventName, source.c_str(), elapsed / 1000.0, static_cast<int>(py_tick_budget_ms));
 		}
-		if (tickEvent && py_tick_hard_budget && hardLimit > 0 && elapsedMicroseconds >= hardLimit)
+		if (tickEvent && hardBudgetEnabled && hardLimit > 0 && elapsedMicroseconds >= hardLimit)
 		{
 			++callbacks[index].BudgetOverruns;
 			++callbacks[index].ConsecutiveOverruns;
@@ -1026,6 +1067,7 @@ void InvokeEvent(const char* eventName, PyObject* event, AActor* subject = nullp
 		}
 	}
 	--callbackDispatchDepth;
+	if (callbackDispatchDepth == 0) dispatchCapWarned = false; // re-arm the cap warning per storm
 	if (callbackAvailabilityChanged) RebuildEventPresence();
 	SortCallbacks();
 	// Actor APIs can synchronously dispatch nested spawn/death events. Restore
@@ -1071,7 +1113,7 @@ void ProcessScheduledTasks()
 		}
 		const uint64_t hardLimit = py_tick_budget_ms > 0
 			? static_cast<uint64_t>(static_cast<int>(py_tick_budget_ms)) * 1000u : 0;
-		if (py_tick_hard_budget && hardLimit > 0 && tickBudgetMicroseconds >= hardLimit)
+		if (py_tick_hard_budget && !ScripttestModeActive() && hardLimit > 0 && tickBudgetMicroseconds >= hardLimit)
 		{
 			++scheduledTasks[index].BudgetSkips;
 			++tickBudgetSkips;
@@ -3186,6 +3228,17 @@ std::string DumpStateJson()
 		if (text != nullptr) result = text;
 	}
 	else ReportPythonError("state serialization", "biaseddoom.state");
+	// Cap the serialized blob: an unbounded bd.state would otherwise produce
+	// unwritable/huge savegames. Fail through the same abort path as
+	// unserializable state (set an error, report it, return an empty string).
+	constexpr size_t MaxStateJsonBytes = 16u * 1024u * 1024u;
+	if (result.size() > MaxStateJsonBytes)
+	{
+		result.clear();
+		PyErr_Format(PyExc_RuntimeError,
+			"biaseddoom.state serialized to more than %zu bytes", MaxStateJsonBytes);
+		ReportPythonError("state serialization", "biaseddoom.state");
+	}
 	if (rngMerged && PyDict_DelItemString(stateDictionary, RngStateKey) != 0)
 	{
 		PyErr_Clear();
@@ -3403,6 +3456,7 @@ void Shutdown()
 	scheduledTasks.clear();
 	callbacksNeedSort = false;
 	callbackDispatchDepth = 0;
+	dispatchCapWarned = false;
 	tickBudgetMicroseconds = 0;
 	tickBudgetOverruns = 0;
 	tickBudgetSkips = 0;
@@ -3451,6 +3505,7 @@ bool Reload()
 void OnWorldLoaded()
 {
 	++mapSerial;
+	GameApi::OnWorldLoaded();
 	// Savegame and hub-snapshot restores already restored (or reseeded) the
 	// script RNG inside LoadStateJson; only fresh map entries seed here, so a
 	// loaded stream position is never clobbered.
@@ -3469,23 +3524,23 @@ void OnWorldLoaded()
 void OnWorldUnloaded(const char* nextMap)
 {
 	std::fill(std::begin(s_lastPlayerSector), std::end(s_lastPlayerSector), -1);
-	if (!HasCallbacks("map_unload"))
-	{
-		CancelMapLocalTasks();
-		GameApi::InvalidateWorld();
-		PythonDisplayList::PurgeWorldItems();
-		return;
-	}
-	PyObject* event = BuildEvent("map_unload");
-	if (nextMap == nullptr || *nextMap == 0) DictSet(event, "next_map", Py_NewRef(Py_None));
-	else DictSetString(event, "next_map", nextMap);
+	// Keep mutations blocked through the ENTIRE teardown, not just the
+	// map_unload event: CancelMapLocalTasks/InvalidateWorld/PurgeWorldItems
+	// decref Python objects whose __del__ finalizers could otherwise call
+	// bd.spawn against a half-torn-down level.
 	const bool wasBlocked = gameplayMutationBlocked;
 	gameplayMutationBlocked = true;
-	InvokeEvent("map_unload", event);
-	gameplayMutationBlocked = wasBlocked;
+	if (HasCallbacks("map_unload"))
+	{
+		PyObject* event = BuildEvent("map_unload");
+		if (nextMap == nullptr || *nextMap == 0) DictSet(event, "next_map", Py_NewRef(Py_None));
+		else DictSetString(event, "next_map", nextMap);
+		InvokeEvent("map_unload", event);
+	}
 	CancelMapLocalTasks();
 	GameApi::InvalidateWorld();
 	PythonDisplayList::PurgeWorldItems();
+	gameplayMutationBlocked = wasBlocked;
 }
 
 namespace

@@ -241,6 +241,13 @@ FImageSource *DDSImage_TryCreate (FileReader &data, int lumpnum)
 	surfdesc.PixelFormat.FourCC = LittleLong(surfdesc.PixelFormat.FourCC);
 #endif
 
+	// Reject absurd dimensions. Aside from being unrealistic they would
+	// overflow the 16 bit fields the texture is created with.
+	if (surfdesc.Width > 16384 || surfdesc.Height > 16384)
+	{
+		return NULL;
+	}
+
 	if (surfdesc.PixelFormat.Flags & DDPF_FOURCC)
 	{
 		// Check for supported FourCC
@@ -264,9 +271,14 @@ FImageSource *DDSImage_TryCreate (FileReader &data, int lumpnum)
 		{
 			return NULL;
 		}
-		if ((surfdesc.Flags & DDSD_PITCH) && (surfdesc.Pitch <= 0))
+		if (surfdesc.Flags & DDSD_PITCH)
 		{
-			return NULL;
+			// The line buffer is Pitch bytes, but a full row of pixels gets
+			// consumed from it, so the pitch must cover an entire row.
+			if (surfdesc.Pitch < (int32_t)(surfdesc.Width * (surfdesc.PixelFormat.RGBBitCount >> 3)))
+			{
+				return NULL;
+			}
 		}
 	}
 	else

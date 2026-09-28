@@ -405,13 +405,14 @@ FSerializer &Serialize(FSerializer &arc, const char *key, FState *&state, FState
 			else if (val->IsArray())
 			{
 				if (retcode) *retcode = true;
-				const rapidjson::Value &cls = (*val)[0];
-				const rapidjson::Value &ndx = (*val)[1];
 
 				state = nullptr;
-				assert(cls.IsString() && ndx.IsUint());
-				if (cls.IsString() && ndx.IsUint())
+				// A truncated array cannot name a state; check the size before indexing.
+				if (val->Size() >= 2 && (*val)[0].IsString() && (*val)[1].IsUint())
 				{
+					const rapidjson::Value &cls = (*val)[0];
+					const rapidjson::Value &ndx = (*val)[1];
+
 					auto str = UnicodeToString(cls.GetString());
 					PClassActor *clas = PClass::FindActor(str);
 					if (clas && ndx.GetUint() < (unsigned)clas->GetStateCount())

@@ -48,6 +48,7 @@
 #include "menustate.h"
 #include "engineerrors.h"
 #include "keydef.h"
+#include "menu.h"
 
 
 EXTERN_CVAR(Int, m_use_mouse)
@@ -59,6 +60,19 @@ EXTERN_CVAR(Bool, k_allowfullscreentoggle)
 extern int paused;
 extern bool ToggleFullscreen;
 bool GUICapture;
+
+// The screenshot bypass in ProcessKeyboardEvent is only appropriate while no
+// text field owns the keyboard: with the console input line, chat, or a menu
+// text field active, a printable screenshot key must stay a GUI event or it
+// would fire a screenshot and swallow the typed character.
+static bool ScreenshotKeyMayBypassGUICapture()
+{
+	if (ConsoleState == c_down || ConsoleState == c_falling || chatmodeon)
+		return false;
+	if (CurrentMenu != nullptr && CurrentMenu->IsKindOf("TextEnterMenu"))
+		return false;
+	return true;
+}
 
 
 namespace
@@ -516,9 +530,11 @@ void ProcessKeyboardEvent(NSEvent* theEvent)
 	if (GUICapture)
 	{
 		// Keys bound to the screenshot command bypass GUI capture so the
-		// binding still fires while a menu is open.
+		// binding still fires while a menu is open, except while a text field
+		// owns the keyboard (console, chat, menu text entry) so typing is not
+		// swallowed by a screenshot.
 		const uint8_t dik = KEYCODE_TO_DIK[ keyCode ];
-		if (dik != 0 && C_IsScreenshotKey(dik))
+		if (dik != 0 && C_IsScreenshotKey(dik) && ScreenshotKeyMayBypassGUICapture())
 		{
 			if (!isARepeat)
 			{

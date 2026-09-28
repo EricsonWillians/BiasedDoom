@@ -709,6 +709,19 @@ tick
 
 Old saves without `pythonstate` simply do not dispatch `load`.
 
+Hub travel snapshots `bd.state` per level: leaving hub map A stores a copy
+of the state in A's snapshot, and re-entering A restores that copy
+(clear-and-replace). Progress made on another hub map in the meantime is
+**not** carried back — `bd.state` effectively rolls back to what it was
+when A was last visited. Treat `bd.state` as per-map persistent state in
+hub-based mods; if you need cross-map global progression, re-derive or
+re-merge it in a `map_load` (`from_hub=True`) handler rather than relying
+on mutations made on other hub maps.
+
+The JSON encoding of `bd.state` is capped at 16 MiB per save; a larger
+state fails the save through the same error path as unserializable state
+(the save is aborted with an error report, nothing is written).
+
 ### `engine_shutdown`
 
 Extra fields: none.
@@ -2696,6 +2709,10 @@ and `post_tick` share that whole-tic wall-clock budget. With
 `py_tick_hard_budget=true`, once the budget is consumed the dispatcher skips
 remaining Python callables until the next tic. This limits cumulative Python
 work without adding tracing overhead to every Python line.
+
+Under `-scripttest` the hard budget is disabled so autotests are
+deterministic: every scheduled task and tick callback runs on every tic
+regardless of wall-clock cost (soft per-callback warnings still apply).
 
 An individual callable cannot be interrupted safely while it is executing.
 It may exceed the limit once; the runtime records and warns about that

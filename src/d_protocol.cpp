@@ -301,7 +301,9 @@ void ReadUserCmdMessage(TArrayView<uint8_t>& stream, int player, int tic)
 	// executing but that breaks packet-server mode and I have no idea what side effects
 	// might happen if it's not wiped first.
 	curTic.Data.SetData(nullptr, 0u);
-	curTic.Data.SetData(start, int(stream.Data() - start - 1));
+	// An empty stream leaves the head on start, which would make the length
+	// negative; clamp it so SetData doesn't get a huge size_t.
+	curTic.Data.SetData(start, max(0, int(stream.Data() - start - 1)));
 
 	if (type == DEM_USERCMD)
 	{

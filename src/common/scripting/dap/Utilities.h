@@ -212,7 +212,7 @@ inline bool ParseInt(const std::string &str, int *value, std::size_t *pos = null
 	{
 		*value = std::stoi(str, pos, base);
 	}
-	catch (void *)
+	catch (...)
 	{
 		return false;
 	}

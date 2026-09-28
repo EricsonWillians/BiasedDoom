@@ -28,6 +28,7 @@ CUSTOM_CVAR(Bool, py_imgui, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 #ifdef BIASEDDOOM_IMGUI
 
 #include <algorithm>
+#include <cmath>
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
@@ -447,6 +448,8 @@ FString GetDefaultFontName()
 
 bool SetUiScale(float factor)
 {
+	// std::clamp passes NaN through; reject non-finite input before applying.
+	if (!std::isfinite(factor)) return false;
 	factor = (float)std::clamp((double)factor, 0.5, 4.0);
 	if (factor == sUiScale) return true;
 	const float previous = sUiScale;
@@ -540,6 +543,11 @@ static void RenderDrawData(ImDrawData* drawData)
 
 			// ClipRect is (x1, y1, x2, y2) in display coordinates; clamp to
 			// the 2D surface and honor the drawer's offset like AddPoly does.
+			// A non-finite rect (NaN/Inf from script-fed window geometry) would
+			// be UB in the float->int conversion below; drop the command.
+			if (!std::isfinite(cmd.ClipRect.x) || !std::isfinite(cmd.ClipRect.y) ||
+				!std::isfinite(cmd.ClipRect.z) || !std::isfinite(cmd.ClipRect.w) ||
+				!std::isfinite(displayPos.x) || !std::isfinite(displayPos.y)) continue;
 			const int clipL = (int)floorf(cmd.ClipRect.x - displayPos.x);
 			const int clipT = (int)floorf(cmd.ClipRect.y - displayPos.y);
 			const int clipR = (int)ceilf(cmd.ClipRect.z - displayPos.x);

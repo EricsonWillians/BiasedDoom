@@ -101,11 +101,13 @@ public:
 		mLumpNum = -1;
 		frames = NULL;
 		skins = NULL;
+		memset(&header, 0, sizeof(header));
+		memset(&info, 0, sizeof(info));
+		memset(lodInfo, 0, sizeof(lodInfo));
 		for (int i = 0; i < MAX_LODS; i++)
 		{
 			lods[i].triangles = NULL;
 		}
-		info.numLODs = 0;
 		texCoords = NULL;
 		framevtx = NULL;
 	}

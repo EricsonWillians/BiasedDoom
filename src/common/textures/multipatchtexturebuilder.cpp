@@ -326,7 +326,8 @@ void FMultipatchTextureBuilder::AddTexturesLump(const void *lumpdata, int lumpsi
 	for (i = 0, directory = maptex + 1; i < numtextures; ++i)
 	{
 		offset = LittleLong(directory[i]);
-		if (offset > maxoff)
+		// The fixed part of the texture header must fit inside the lump.
+		if (offset > maxoff || maxoff - offset < (uint32_t)offsetof(maptexture_t, patches))
 		{
 			Printf("Bad texture directory\n");
 			return;
@@ -350,21 +351,34 @@ void FMultipatchTextureBuilder::AddTexturesLump(const void *lumpdata, int lumpsi
 	// but later TEXTUREx lumps take precedence over earlier ones.
 	for (i = 1, directory = maptex; i <= numtextures; ++i)
 	{
+		offset = LittleLong(directory[i]);
+		// The fixed part of the texture header must fit inside the lump.
+		if (offset > maxoff || maxoff - offset < (uint32_t)offsetof(maptexture_t, patches))
+		{
+			Printf("Bad texture directory\n");
+			return;
+		}
+
+		// The patch list claimed by the header must fit inside the lump as well.
+		{
+			const maptexture_t *tex = (const maptexture_t *)((const uint8_t *)maptex + offset);
+			int patchcount = isStrife ? SAFESHORT(((const strifemaptexture_t *)tex)->patchcount) : SAFESHORT(tex->patchcount);
+			uint32_t hdrsize = (uint32_t)(isStrife ? offsetof(strifemaptexture_t, patches) : offsetof(maptexture_t, patches));
+			uint32_t patsize = (uint32_t)(isStrife ? sizeof(strifemappatch_t) : sizeof(mappatch_t));
+			if (patchcount < 0 || (uint64_t)patchcount * patsize > maxoff - offset - hdrsize)
+			{
+				Printf("Bad texture directory\n");
+				return;
+			}
+		}
+
 		if (i == 1 && texture1)
 		{
 			// The very first texture is just a dummy. Copy its dimensions to texture 0.
 			// It still needs to be created in case someone uses it by name.
-			offset = LittleLong(directory[1]);
 			const maptexture_t *tex = (const maptexture_t *)((const uint8_t *)maptex + offset);
 			auto tex0 = TexMan.GameByIndex(0);
 			tex0->SetSize(SAFESHORT(tex->width), SAFESHORT(tex->height));
-		}
-
-		offset = LittleLong(directory[i]);
-		if (offset > maxoff)
-		{
-			Printf("Bad texture directory\n");
-			return;
 		}
 
 		// If this texture was defined already in this lump, skip it

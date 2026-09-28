@@ -115,12 +115,20 @@ FImageSource * PCXImage_TryCreate(FileReader & file, int lumpnum)
 
 	hdr.xmin = LittleShort(hdr.xmin);
 	hdr.xmax = LittleShort(hdr.xmax);
+	hdr.ymin = LittleShort(hdr.ymin);
+	hdr.ymax = LittleShort(hdr.ymax);
 	hdr.bytesPerScanLine = LittleShort(hdr.bytesPerScanLine);
 
 	if (hdr.manufacturer != 10 || hdr.encoding != 1) return NULL;
 	if (hdr.version != 0 && hdr.version != 2 && hdr.version != 3 && hdr.version != 4 && hdr.version != 5) return NULL;
 	if (hdr.bitsPerPixel != 1 && hdr.bitsPerPixel != 8 && hdr.bitsPerPixel != 4) return NULL; 
 	if (hdr.bitsPerPixel == 1 && hdr.numColorPlanes !=1 && hdr.numColorPlanes != 4) return NULL;
+	if (hdr.xmax < hdr.xmin || hdr.ymax < hdr.ymin) return NULL;
+	// The decoders read bytesPerScanLine bytes per plane, so the bound only
+	// depends on the bits per pixel, not on the number of color planes.
+	int width = hdr.xmax - hdr.xmin + 1;
+	int minBytes = ((int)width * hdr.bitsPerPixel + 7) / 8;
+	if (hdr.bytesPerScanLine < minBytes) return NULL;
 	if (hdr.bitsPerPixel == 8 && hdr.bytesPerScanLine != ((hdr.xmax - hdr.xmin + 2)&~1)) return NULL;
 
 	for (int i = 0; i < 54; i++) 
@@ -160,8 +168,11 @@ void FPCXTexture::ReadPCX1bit (uint8_t *dst, FileReader & lump, PCXHeader *hdr)
 	int rle_count = 0;
 	uint8_t rle_value = 0;
 
-	auto srcp = lump.Read(lump.GetLength() - sizeof(PCXHeader));
+	auto srclen = lump.GetLength() - (ptrdiff_t)sizeof(PCXHeader);
+	if (srclen < 0) srclen = 0;
+	auto srcp = lump.Read(srclen);
 	const uint8_t * src = srcp.bytes();
+	const uint8_t * srcend = src + srclen;
 
 	for (y = 0; y < Height; ++y)
 	{
@@ -173,12 +184,14 @@ void FPCXTexture::ReadPCX1bit (uint8_t *dst, FileReader & lump, PCXHeader *hdr)
 		{
 			if (rle_count == 0)
 			{
+				if (src >= srcend) return;	// truncated source
 				if ( (rle_value = *src++) < 0xc0)
 				{
 					rle_count = 1;
 				}
 				else
 				{
+					if (src >= srcend) return;	// truncated source
 					rle_count = rle_value - 0xc0;
 					rle_value = *src++;
 				}
@@ -188,8 +201,8 @@ void FPCXTexture::ReadPCX1bit (uint8_t *dst, FileReader & lump, PCXHeader *hdr)
 
 			for (i = 7; i >= 0; --i, ptr ++)
 			{
-				// This can overflow for the last byte if not checked.
-				if (ptr < dst+Width*Height)
+				// This can overflow for the last byte of a scan line if not checked.
+				if (ptr < dst + (y + 1) * Width)
 					*ptr = ((rle_value & (1 << i)) > 0);
 			}
 		}
@@ -210,8 +223,11 @@ void FPCXTexture::ReadPCX4bits (uint8_t *dst, FileReader & lump, PCXHeader *hdr)
 	TArray<uint8_t> line(hdr->bytesPerScanLine, true);
 	TArray<uint8_t> colorIndex(Width, true);
 
-	auto srcp = lump.Read(lump.GetLength() - sizeof(PCXHeader));
+	auto srclen = lump.GetLength() - (ptrdiff_t)sizeof(PCXHeader);
+	if (srclen < 0) srclen = 0;
+	auto srcp = lump.Read(srclen);
 	const uint8_t * src = srcp.bytes();
+	const uint8_t * srcend = src + srclen;
 
 	for (y = 0; y < Height; ++y)
 	{
@@ -228,12 +244,14 @@ void FPCXTexture::ReadPCX4bits (uint8_t *dst, FileReader & lump, PCXHeader *hdr)
 			{
 				if (rle_count == 0)
 				{
+					if (src >= srcend) return;	// truncated source
 					if ( (rle_value = *src++) < 0xc0)
 					{
 						rle_count = 1;
 					}
 					else
 					{
+						if (src >= srcend) return;	// truncated source
 						rle_count = rle_value - 0xc0;
 						rle_value = *src++;
 					}
@@ -264,31 +282,43 @@ void FPCXTexture::ReadPCX8bits (uint8_t *dst, FileReader & lump, PCXHeader *hdr)
 	int rle_count = 0, rle_value = 0;
 	int y, bytes;
 
-	auto srcp = lump.Read(lump.GetLength() - sizeof(PCXHeader));
+	auto srclen = lump.GetLength() - (ptrdiff_t)sizeof(PCXHeader);
+	if (srclen < 0) srclen = 0;
+	auto srcp = lump.Read(srclen);
 	const uint8_t * src = srcp.bytes();
+	const uint8_t * srcend = src + srclen;
 
 	for (y = 0; y < Height; ++y)
 	{
 		uint8_t * ptr = &dst[y * Width];
 
 		bytes = hdr->bytesPerScanLine;
+		int x = 0;
 		while (bytes--)
 		{
 			if (rle_count == 0)
 			{
+				if (src >= srcend) return;	// truncated source
 				if( (rle_value = *src++) < 0xc0)
 				{
 					rle_count = 1;
 				}
 				else
 				{
+					if (src >= srcend) return;	// truncated source
 					rle_count = rle_value - 0xc0;
 					rle_value = *src++;
 				}
 			}
 
 			rle_count--;
-			*ptr++ = rle_value;
+			// Never write past the end of the scan line; the remaining
+			// bytesPerScanLine bytes are only line padding.
+			if (x < Width)
+			{
+				*ptr++ = rle_value;
+				x++;
+			}
 		}
 	}
 }
@@ -305,8 +335,11 @@ void FPCXTexture::ReadPCX24bits (uint8_t *dst, FileReader & lump, PCXHeader *hdr
 	int y, c;
 	int bytes;
 
-	auto srcp = lump.Read(lump.GetLength() - sizeof(PCXHeader));
+	auto srclen = lump.GetLength() - (ptrdiff_t)sizeof(PCXHeader);
+	if (srclen < 0) srclen = 0;
+	auto srcp = lump.Read(srclen);
 	const uint8_t * src = srcp.bytes();
+	const uint8_t * srcend = src + srclen;
 
 	for (y = 0; y < Height; ++y)
 	{
@@ -315,25 +348,34 @@ void FPCXTexture::ReadPCX24bits (uint8_t *dst, FileReader & lump, PCXHeader *hdr
 		{
 			uint8_t * ptr = &dst[y * Width * planes];
 			bytes = hdr->bytesPerScanLine;
+			int x = 0;
 
 			while (bytes--)
 			{
 				if (rle_count == 0)
 				{
+					if (src >= srcend) return;	// truncated source
 					if( (rle_value = *src++) < 0xc0)
 					{
 						rle_count = 1;
 					}
 					else
 					{
+						if (src >= srcend) return;	// truncated source
 						rle_count = rle_value - 0xc0;
 						rle_value = *src++;
 					}
 				}
 
 				rle_count--;
-				ptr[c] = (uint8_t)rle_value;
-				ptr += planes;
+				// Never write past the end of the scan line; the remaining
+				// bytesPerScanLine bytes are only line padding.
+				if (x < Width)
+				{
+					ptr[c] = (uint8_t)rle_value;
+					ptr += planes;
+					x++;
+				}
 			}
 		}
 	}

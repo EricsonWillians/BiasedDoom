@@ -653,8 +653,14 @@ void FGameConfigFile::DoGameSetup (const char *gamename)
 {
 	const char *key;
 	const char *value;
+	int len;
 
-	sublen = countof(section) - 1 - mysnprintf (section, countof(section), "%s.", gamename);
+	len = mysnprintf (section, countof(section), "%s.", gamename);
+	// If the name was truncated (or formatting failed), leave no room for
+	// subsections instead of letting the arithmetic below underflow.
+	if (len < 0 || (size_t)len > countof(section) - 1)
+		len = countof(section) - 1;
+	sublen = countof(section) - 1 - len;
 	subsection = section + countof(section) - sublen - 1;
 	section[countof(section) - 1] = '\0';
 	
@@ -730,8 +736,14 @@ void FGameConfigFile::DoKeySetup(const char *gamename)
 		{ NULL, NULL }
 	};
 	const char *key, *value;
+	int len;
 
-	sublen = countof(section) - 1 - mysnprintf(section, countof(section), "%s.", gamename);
+	len = mysnprintf(section, countof(section), "%s.", gamename);
+	// If the name was truncated (or formatting failed), leave no room for
+	// subsections instead of letting the arithmetic below underflow.
+	if (len < 0 || (size_t)len > countof(section) - 1)
+		len = countof(section) - 1;
+	sublen = countof(section) - 1 - len;
 	subsection = section + countof(section) - sublen - 1;
 	section[countof(section) - 1] = '\0';
 
@@ -846,16 +858,28 @@ void FGameConfigFile::ReadCVars (uint32_t flags)
 void FGameConfigFile::ArchiveGameData (const char *gamename)
 {
 	char section[32*3], *subsection;
+	int len;
 
-	sublen = countof(section) - 1 - mysnprintf (section, countof(section), "%s.", gamename);
+	len = mysnprintf (section, countof(section), "%s.", gamename);
+	// If the name was truncated (or formatting failed), leave no room for
+	// subsections instead of letting the arithmetic below underflow.
+	if (len < 0 || (size_t)len > countof(section) - 1)
+		len = countof(section) - 1;
+	sublen = countof(section) - 1 - len;
 	subsection = section + countof(section) - 1 - sublen;
 
+	// The setup paths guarantee section[] is NUL-terminated at the last
+	// byte; do the same here so the strncpy() calls below cannot leave the
+	// section name unterminated.
+	section[countof(section) - 1] = '\0';
 	strncpy (subsection, "Player", sublen);
 	SetSection (section, true);
 	ClearCurrentSection ();
 	C_ArchiveCVars (this, CVAR_ARCHIVE|CVAR_USERINFO);
 
-	if (bModSetup)
+	// Appending ".Mod" needs room for the 6-char "Player" base, the 4-char
+	// suffix and a terminating NUL inside the subsection.
+	if (bModSetup && sublen >= 11)
 	{
 		strncpy (subsection + 6, ".Mod", sublen - 6);
 		SetSection (section, true);

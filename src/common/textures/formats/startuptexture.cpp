@@ -287,7 +287,7 @@ PalettedPixels FNotchTexture::CreatePalettedPixels(int conversion, int frame)
 
 	TArray<uint8_t> Work(Width*Height, true);
 	PalettedPixels Pixels(Width*Height);
-	for(int i=0; i * Width * Height / 2; i++)
+	for(int i=0; i < Width * Height / 2; i++)
 	{
 		Work[i * 2] = startuppalette8[source[i] >> 4];
 		Work[i * 2 + 1] = startuppalette8[source[i] & 15];

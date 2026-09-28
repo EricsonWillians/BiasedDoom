@@ -127,6 +127,12 @@ FSingleLumpFont::FSingleLumpFont (const char *name, int lump) : FFont(lump)
 	auto data1 = fileSystem.ReadFile (lump);
 	auto data = data1.bytes();
 
+	// Need at least the 4 byte magic to identify the format.
+	if (data1.size() < 4)
+	{
+		I_Error ("%s is not a recognizable font", name);
+	}
+
 	if (data[0] == 0xE1 && data[1] == 0xE6 && data[2] == 0xD5 && data[3] == 0x1A)
 	{
 		LoadBMF(lump, data);
@@ -211,6 +217,12 @@ void FSingleLumpFont::LoadFON1 (int lump, const uint8_t *data)
 {
 	int w, h;
 
+	// The header is 8 bytes; reject truncated lumps.
+	if (fileSystem.FileLength(lump) < 8)
+	{
+		I_Error ("%s: FON1 font is truncated", FontName.GetChars());
+	}
+
 	// The default console font is for Windows-1252 and fills the 0x80-0x9f range with valid glyphs.
 	// Since now all internal text is processed as Unicode, these have to be remapped to their proper places.
 	// The highest valid character in this range is 0x2122, so we need 0x2123 entries in our character table.
@@ -254,6 +266,15 @@ void FSingleLumpFont::LoadFON2 (int lump, const uint8_t *data)
 	const uint8_t *palette;
 	const uint8_t *data_p;
 
+	const ptrdiff_t lumpSize = fileSystem.FileLength(lump);
+	const uint8_t *dataend = data + lumpSize;
+
+	// The fixed header is 12 bytes, plus an optional 2 byte kerning value.
+	if (lumpSize < 14)
+	{
+		I_Error ("%s: FON2 font is truncated", FontName.GetChars());
+	}
+
 	FontType = FONT2;
 	FontHeight = data[4] + data[5]*256;
 	FirstChar = data[6];
@@ -262,6 +283,10 @@ void FSingleLumpFont::LoadFON2 (int lump, const uint8_t *data)
 	RescalePalette = data[9] == 0;
 
 	count = LastChar - FirstChar + 1;
+	if (count <= 0)
+	{
+		I_Error ("%s: FON2 font has an invalid character range", FontName.GetChars());
+	}
 	Chars.Resize(count);
 	TArray<int> widths2(count, true);
 	if (data[11] & 1)
@@ -278,6 +303,10 @@ void FSingleLumpFont::LoadFON2 (int lump, const uint8_t *data)
 
 	if (data[8])
 	{ // Font is mono-spaced.
+		if ((const uint8_t *)(widths + 1) > dataend)
+		{
+			I_Error ("%s: FON2 font is truncated", FontName.GetChars());
+		}
 		totalwidth = LittleShort(widths[0]);
 		for (i = 0; i < count; ++i)
 		{
@@ -288,6 +317,10 @@ void FSingleLumpFont::LoadFON2 (int lump, const uint8_t *data)
 	}
 	else
 	{ // Font has varying character widths.
+		if ((const uint8_t *)(widths + count) > dataend)
+		{
+			I_Error ("%s: FON2 font is truncated", FontName.GetChars());
+		}
 		for (i = 0; i < count; ++i)
 		{
 			widths2[i] = LittleShort(widths[i]);
@@ -307,6 +340,12 @@ void FSingleLumpFont::LoadFON2 (int lump, const uint8_t *data)
 	else
 	{
 		SpaceWidth = totalwidth * 2 / (3 * count);
+	}
+
+	// The palette holds ActiveColors entries of 3 bytes each.
+	if (palette + ActiveColors*3 > dataend)
+	{
+		I_Error ("%s: FON2 font is truncated", FontName.GetChars());
 	}
 
 	Palette[0] = 0;
@@ -331,6 +370,11 @@ void FSingleLumpFont::LoadFON2 (int lump, const uint8_t *data)
 			TexMan.AddGameTexture(Chars[i].OriginalPic);
 			do
 			{
+				// Never let a malformed RLE stream run past the end of the lump.
+				if (data_p >= dataend)
+				{
+					I_Error ("%s: FON2 font is truncated", FontName.GetChars());
+				}
 				int8_t code = *data_p++;
 				if (code >= 0)
 				{
@@ -341,6 +385,10 @@ void FSingleLumpFont::LoadFON2 (int lump, const uint8_t *data)
 				{
 					data_p++;
 					destSize -= (-code)+1;
+				}
+				if (data_p > dataend)
+				{
+					I_Error ("%s: FON2 font is truncated", FontName.GetChars());
 				}
 			} while (destSize > 0);
 		}
@@ -368,6 +416,14 @@ void FSingleLumpFont::LoadBMF(int lump, const uint8_t *data)
 	int infolen;
 	int i, chari;
 
+	const uint8_t *dataend = data + fileSystem.FileLength(lump);
+
+	// The fixed header is 17 bytes, followed by the palette and info text.
+	if (data + 17 > dataend)
+	{
+		I_Error("%s: BMF font is truncated", FontName.GetChars());
+	}
+
 	FontType = BMFFONT;
 	FontHeight = data[5];
 	GlobalKerning = (int8_t)data[8];
@@ -376,8 +432,16 @@ void FSingleLumpFont::LoadBMF(int lump, const uint8_t *data)
 	nwidth = -1;
 	RescalePalette = true;
 
+	if (data + 18 + ActiveColors*3 > dataend)
+	{
+		I_Error("%s: BMF font is truncated", FontName.GetChars());
+	}
 	infolen = data[17 + ActiveColors*3];
 	chardata = data + 18 + ActiveColors*3 + infolen;
+	if (chardata + 2 > dataend)
+	{
+		I_Error("%s: BMF font is truncated", FontName.GetChars());
+	}
 	numchars = chardata[0] + 256*chardata[1];
 	chardata += 2;
 
@@ -387,6 +451,12 @@ void FSingleLumpFont::LoadBMF(int lump, const uint8_t *data)
 	totalwidth = 0;
 	for (i = chari = 0; i < numchars; ++i, chari += 6 + chardata[chari+1] * chardata[chari+2])
 	{
+		// Each character record is 6 header bytes plus width*height pixel bytes.
+		if (chardata + chari + 6 > dataend ||
+			chardata + chari + 6 + chardata[chari+1] * chardata[chari+2] > dataend)
+		{
+			I_Error("%s: BMF font is truncated", FontName.GetChars());
+		}
 		if ((chardata[chari+1] == 0 || chardata[chari+2] == 0) && chardata[chari+5] == 0)
 		{ // Don't count empty characters.
 			continue;
@@ -421,6 +491,12 @@ void FSingleLumpFont::LoadBMF(int lump, const uint8_t *data)
 	// Now scan through the characters again, creating glyphs for each one.
 	for (i = chari = 0; i < numchars; ++i, chari += 6 + chardata[chari+1] * chardata[chari+2])
 	{
+		// Same record bounds check as in the counting loop above.
+		if (chardata + chari + 6 > dataend ||
+			chardata + chari + 6 + chardata[chari+1] * chardata[chari+2] > dataend)
+		{
+			I_Error("%s: BMF font is truncated", FontName.GetChars());
+		}
 		assert(chardata[chari] - FirstChar >= 0);
 		assert(chardata[chari] - FirstChar < count);
 		if (chardata[chari] == ' ')
@@ -477,6 +553,7 @@ void FSingleLumpFont::CheckFON1Chars()
 	auto memLump = fileSystem.ReadFile(Lump);
 	auto data = memLump.bytes();
 	const uint8_t* data_p;
+	const uint8_t* dataend = data + memLump.size();
 
 	data_p = data + 8;
 
@@ -494,6 +571,11 @@ void FSingleLumpFont::CheckFON1Chars()
 		// Advance to next char's data and count the used colors.
 		do
 		{
+			// Never let a malformed RLE stream run past the end of the lump.
+			if (data_p >= dataend)
+			{
+				I_Error("%s: FON1 font is truncated", FontName.GetChars());
+			}
 			int8_t code = *data_p++;
 			if (code >= 0)
 			{
@@ -507,6 +589,10 @@ void FSingleLumpFont::CheckFON1Chars()
 			{
 				data_p++;
 				destSize -= 1 - code;
+			}
+			if (data_p > dataend)
+			{
+				I_Error("%s: FON1 font is truncated", FontName.GetChars());
 			}
 		} while (destSize > 0);
 	}

@@ -23,6 +23,7 @@
 #include "hw_bonebuffer.h"
 #include "hw_dynlightdata.h"
 #include "shaderuniforms.h"
+#include "printf.h"
 
 static const int BONE_SIZE = (16*sizeof(float));
 
@@ -78,6 +79,14 @@ int BoneBuffer::UploadBones(const TArray<VSMatrix>& bones)
 	int totalsize = bones.Size();
 	if (totalsize > (int)mMaxUploadSize)
 	{
+		// Large skeletons silently lose their tail bones here (the UBO path
+		// caps one upload at ~1000 bones); warn once so it is diagnosable.
+		static bool warned = false;
+		if (!warned)
+		{
+			DPrintf(DMSG_WARNING, "Bone upload of %d bones exceeds the buffer capacity of %u; truncating\n", totalsize, mMaxUploadSize);
+			warned = true;
+		}
 		totalsize = mMaxUploadSize;
 	}
 

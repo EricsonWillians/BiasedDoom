@@ -295,31 +295,37 @@ bool FZipFile::Open(LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 		uint32_t UncompressedSize =LittleLong(zip_fh->UncompressedSize32);
 		uint32_t CompressedSize = LittleLong(zip_fh->CompressedSize32);
 		uint64_t LocalHeaderOffset = LittleLong(zip_fh->LocalHeaderOffset32);
-		if (zip_fh->ExtraLength > 0)
+		if (extraLen > 0)
 		{
-			uint8_t* rawext = (uint8_t*)zip_fh + sizeof(*zip_fh) + zip_fh->NameLength;
-			uint32_t ExtraLength = LittleLong(zip_fh->ExtraLength);
-			
-			while (ExtraLength > 0)
+			uint8_t* rawext = (uint8_t*)zip_fh + sizeof(*zip_fh) + nameLen;
+			uint32_t ExtraLength = extraLen;
+			bool toolarge = false;
+
+			// Walk the extra fields with a bounded cursor so a bogus block
+			// length can never run past the end of the extra field.
+			while (ExtraLength >= 4)
 			{
 				auto zip_64 = (FZipCentralDirectoryInfo64BitExt*)rawext;
-				uint32_t BlockLength = LittleLong(zip_64->Length);
+				uint32_t BlockLength = LittleShort(zip_64->Length);
+				if (BlockLength + 4 > ExtraLength) break;
 				rawext += BlockLength + 4;
 				ExtraLength -= BlockLength + 4;
-				if (LittleLong(zip_64->Type) == 1 && BlockLength >= 0x18)
+				if (LittleShort(zip_64->Type) == 1 && BlockLength >= 0x18)
 				{
 					if (zip_64->CompressedSize > 0x7fffffff || zip_64->UncompressedSize > 0x7fffffff)
 					{
 						// The file system is limited to 32 bit file sizes;
 						Printf(FSMessageLevel::Warning, "%s: '%s' is too large.\n", FileName, name.c_str());
 						skipped++;
-						continue;
+						toolarge = true;
+						break;
 					}
 					UncompressedSize = (uint32_t)zip_64->UncompressedSize;
 					CompressedSize = (uint32_t)zip_64->CompressedSize;
 					LocalHeaderOffset = zip_64->LocalHeaderOffset;
 				}
 			}
+			if (toolarge) continue;
 		}
 
 		Entry->FileName = NormalizeFileName(name.c_str());
@@ -369,7 +375,9 @@ FCompressedBuffer FZipFile::GetRawData(uint32_t entry)
 	else
 	{
 		auto& e = Entries[entry];
-		cbuf = { e.Length, e.CompressedSize, e.Method, e.CRC32, new char[e.CompressedSize] };
+		// For stored entries the reported size must never exceed the allocated buffer.
+		size_t msize = (e.Method == METHOD_STORED && e.Length > e.CompressedSize) ? e.CompressedSize : e.Length;
+		cbuf = { msize, (size_t)e.CompressedSize, e.Method, e.CRC32, new char[e.CompressedSize] };
 		if (e.Flags & RESFF_NEEDFILESTART) SetEntryAddress(entry);
 		Reader.Seek(e.Position, FileReader::SeekSet);
 		Reader.Read(cbuf.mBuffer, e.CompressedSize);

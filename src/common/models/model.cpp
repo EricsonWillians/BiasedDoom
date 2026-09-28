@@ -196,19 +196,19 @@ unsigned FindModel(const char * path, const char * modelfile, bool silent)
 	{
 		model = new FOBJModel;
 	}
-	else if (!memcmp(buffer, "DMDM", 4))
+	else if (len >= 4 && !memcmp(buffer, "DMDM", 4))
 	{
 		model = new FDMDModel;
 	}
-	else if (!memcmp(buffer, "IDP2", 4))
+	else if (len >= 4 && !memcmp(buffer, "IDP2", 4))
 	{
 		model = new FMD2Model;
 	}
-	else if (!memcmp(buffer, "IDP3", 4))
+	else if (len >= 4 && !memcmp(buffer, "IDP3", 4))
 	{
 		model = new FMD3Model;
 	}
-	else if (!memcmp(buffer, "INTERQUAKEMODEL\0", 16))
+	else if (len >= 16 && !memcmp(buffer, "INTERQUAKEMODEL\0", 16))
 	{
 		model = new IQMModel;
 	}

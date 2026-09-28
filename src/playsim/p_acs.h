@@ -359,8 +359,11 @@ public:
 	const ScriptPtr *FindScript (int number) const;
 	void StartTypedScripts (uint16_t type, AActor *activator, bool always, int arg1, bool runNow);
 	uint32_t PC2Ofs (int *pc) const { return (uint32_t)((uint8_t *)pc - Data); }
-	int *Ofs2PC (uint32_t ofs) const {	return (int *)(Data + ofs); }
-	int *Jump2PC (uint32_t jumpPoint) const { return Ofs2PC(JumpPoints[jumpPoint]); }
+	// Branch targets and jump indices come straight from the (untrusted) module,
+	// so they must be validated here to keep the interpreter inside the behavior lump.
+	bool IsValidPC (const int *pc) const { return (const uint8_t *)pc >= Data && (const uint8_t *)pc < Data + DataSize; }
+	int *Ofs2PC (uint32_t ofs) const { return ofs < (uint32_t)DataSize ? (int *)(Data + ofs) : NULL; }
+	int *Jump2PC (uint32_t jumpPoint) const { return jumpPoint < JumpPoints.Size() ? Ofs2PC(JumpPoints[jumpPoint]) : NULL; }
 	ACSFormat GetFormat() const { return Format; }
 	ScriptFunction *GetFunction (int funcnum, FBehavior *&module) const;
 	int GetArrayVal (int arraynum, int index) const;
@@ -418,6 +421,7 @@ private:
 	void UnencryptStrings ();
 	void UnescapeStringTable(uint8_t *chunkstart, uint8_t *datastart, bool haspadding);
 	int FindStringInChunk (uint32_t *chunk, const char *varname) const;
+	const char *GetChunkString (uint32_t *chunk, uint32_t index) const;
 
 	void SerializeVars (FSerializer &arc);
 	void SerializeVarSet (FSerializer &arc, int32_t *vars, int max);

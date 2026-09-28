@@ -591,9 +591,12 @@ static const char *SetServerVar (char *name, ECVarType type, TArrayView<uint8_t>
 
 	if (singlebit)
 	{
+		// The skipper always consumes the bit-data byte, so it must be read
+		// even when the cvar doesn't resolve or isn't an Int, or the stream
+		// desyncs.
+		const int bitdata = ReadInt8 (stream);
 		if (var != NULL)
 		{
-			int bitdata;
 			int mask;
 
 			value = var->GetFavoriteRep (&type);
@@ -601,7 +604,6 @@ static const char *SetServerVar (char *name, ECVarType type, TArrayView<uint8_t>
 			{
 				return NULL;
 			}
-			bitdata = ReadInt8 (stream);
 			mask = 1 << (bitdata & 31);
 			if (bitdata & 32)
 			{
@@ -725,7 +727,26 @@ void D_DoServerInfoChange (TArrayView<uint8_t>& stream, bool singlebit)
 	type = len >> 6;
 	len &= 0x3f;
 	if (len == 0)
+	{
+		// The skipper consumes a typed value even for an empty name, so the
+		// reader must do the same or the stream desyncs.
+		if (singlebit)
+		{
+			ReadInt8 (stream);
+		}
+		else
+		{
+			switch (type)
+			{
+			case CVAR_Bool:		ReadInt8 (stream);			break;
+			case CVAR_Int:		ReadInt32 (stream);			break;
+			case CVAR_Float:	ReadFloat (stream);			break;
+			case CVAR_String:	ReadStringConst (stream);	break;
+			default: break;	// Silence GCC
+			}
+		}
 		return;
+	}
 	auto dst = TArrayView((uint8_t*)name, len);
 	ReadBytes(dst, stream);
 	name[len] = 0;
@@ -813,18 +834,34 @@ FString D_GetUserInfoStrings(int pnum, bool compact)
 
 void D_ReadUserInfoStrings (int pnum, TArrayView<uint8_t>& stream, bool update)
 {
+	// The player index comes from network or demo data, so validate it
+	// before touching players[].
+	if (pnum < 0 || (size_t)pnum >= MAXPLAYERS)
+	{
+		stream = TArrayView<uint8_t>(stream.Data() + stream.Size(), 0);
+		return;
+	}
 	userinfo_t *info = &players[pnum].userinfo;
 	TArray<FName> compact_names(info->CountUsed());
 	FBaseCVar **cvar_ptr;
 	const char *ptr = (const char *)stream.Data();
 	const char *breakpt;
+	// All scans below must terminate inside the buffer: find the string's
+	// terminating NUL first and treat anything unterminated as malformed.
+	const char *nul;
 	FString value;
 	bool compact;
 	FName keyname = NAME_None;
 	unsigned int infotype = 0;
 
-	if (*ptr++ != '\\')
+	if (stream.Size() < 1 || *ptr != '\\' ||
+		(nul = (const char *)memchr(ptr, '\0', stream.Size())) == NULL)
+	{ // Malformed or unterminated data: consume the rest of the stream so
+	  // the caller's walk terminates.
+		stream = TArrayView<uint8_t>(stream.Data() + stream.Size(), 0);
 		return;
+	}
+	++ptr;
 
 	compact = (*ptr == '\\') ? ptr++, true : false;
 
@@ -938,6 +975,8 @@ void D_ReadUserInfoStrings (int pnum, TArrayView<uint8_t>& stream, bool update)
 			}
 		}
 	}
+	// The string is NUL-terminated within the buffer (checked above), so
+	// this advance stays inside the view.
 	AdvanceStream(stream, strlen((char*)stream.Data()) + 1);
 }
 

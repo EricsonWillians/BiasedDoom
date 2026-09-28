@@ -163,6 +163,11 @@ private:
 	void PurgeStoppedSources();
 	static FSoundChan *FindLowestChannel();
 
+	// Builds the attribute list used both for the initial context creation
+	// and for alcReopenDeviceSOFT, so device recovery keeps the configured
+	// sample rate, source counts, HRTF and output limiter settings.
+	TArray<ALCint> GetContextAttribs();
+
     std::thread StreamThread;
     std::mutex StreamLock;
     std::condition_variable StreamWake;

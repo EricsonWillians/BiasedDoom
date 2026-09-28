@@ -67,8 +67,14 @@ class PresetSearchField : OptionMenuItemTextField
 		}
 		if (mkey == Menu.MKEY_Input)
 		{
-			mText = mEnter.GetText();
-			mMenu.Search();
+			// MKEY_Input can arrive without a pending editor (e.g. after Search()
+			// rebuilt the item list), so only read the text back when an editor
+			// is actually open.
+			if (mEnter != null)
+			{
+				mText = mEnter.GetText();
+				mMenu.Search();
+			}
 			return true;
 		}
 		if (mkey == Menu.MKEY_Abort)

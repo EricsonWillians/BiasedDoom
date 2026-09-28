@@ -187,8 +187,9 @@ PalettedPixels FPatchTexture::CreatePalettedPixels(int conversion, int frame)
 
 	auto lump =  fileSystem.ReadFile (SourceLump);
 	const patch_t *patch = (const patch_t *)lump.data();
+	const uint8_t *lumpend = (const uint8_t *)patch + fileSystem.FileLength (SourceLump);
 
-	maxcol = (const column_t *)((const uint8_t *)patch + fileSystem.FileLength (SourceLump) - 3);
+	maxcol = (const column_t *)(lumpend - 3);
 
 	remap = ImageHelpers::GetRemap(conversion == luminance, isalpha);
 	// Special case for skies
@@ -211,7 +212,8 @@ PalettedPixels FPatchTexture::CreatePalettedPixels(int conversion, int frame)
 
 			for (int y = Height; y > 0; --y)
 			{
-				*out = remap[*in];
+				// A truncated column may not hold a full column of pixels.
+				*out = in < lumpend ? remap[*in] : 0;
 				out++, in++;
 			}
 		}
@@ -257,6 +259,11 @@ PalettedPixels FPatchTexture::CreatePalettedPixels(int conversion, int frame)
 					numspans++;
 
 					const uint8_t *in = (const uint8_t *)column + 3;
+					// A truncated post may claim more pixels than the lump holds.
+					if (len > lumpend - in)
+					{
+						len = int(lumpend - in);
+					}
 					for (int i = 0; i < len; ++i)
 					{
 						out[i] = remap[in[i]];
@@ -297,6 +304,7 @@ void FPatchTexture::DetectBadPatches ()
 	// one post, where each post has a supposed length of 0.
 	auto lump =  fileSystem.ReadFile (SourceLump);
 	const patch_t *realpatch = (patch_t *)lump.data();
+	const uint8_t *lumpend = (const uint8_t *)realpatch + fileSystem.FileLength(SourceLump);
 	const uint32_t *cofs = realpatch->columnofs;
 	int x, x2 = LittleShort(realpatch->width);
 
@@ -305,6 +313,11 @@ void FPatchTexture::DetectBadPatches ()
 		for (x = 0; x < x2; ++x)
 		{
 			const column_t *col = (column_t*)((uint8_t*)realpatch+LittleLong(cofs[x]));
+			// The post header, its 256 data bytes and the terminator must all be inside the lump.
+			if ((const uint8_t*)col + 261 > lumpend)
+			{
+				return;
+			}
 			if (col->topdelta != 0 || col->length != 0)
 			{
 				return;	// It's not bad!

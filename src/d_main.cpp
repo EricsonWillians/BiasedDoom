@@ -33,6 +33,7 @@
 #include "i_soundinternal.h"
 #ifdef _WIN32
 #include <direct.h>
+#include <io.h>
 #endif
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -4097,8 +4098,18 @@ void SignalHandler(int signal)
 {
 	if (gameloop_abort)
 	{
-		Printf("Received signal %d, exiting\n", signal);
-		exit(0);
+		// This is the second signal: the game loop already had its chance
+		// to shut down cleanly, so only async-signal-safe calls may be used
+		// here. In particular, do not run buffered Printf output and use
+		// _exit() instead of exit() so no atexit handlers run again.
+		static const char msg[] = "Received another signal, aborting.\n";
+#ifdef _WIN32
+		_write(2, msg, (unsigned)sizeof(msg) - 1);
+		_exit(1);
+#else
+		write(2, msg, sizeof(msg) - 1);
+		_exit(1);
+#endif
 	}
 	else
 	{

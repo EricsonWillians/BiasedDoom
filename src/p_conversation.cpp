@@ -389,7 +389,15 @@ void P_StartConversation (AActor *npc, AActor *pc, bool facetalker, bool saveang
 		if (jump && CurNode->ItemCheckNode > 0)
 		{
 			int root = pc->player->ConversationNPC->ConversationRoot;
-			CurNode = Level->StrifeDialogues[root + CurNode->ItemCheckNode - 1];
+			const unsigned next = (unsigned)(root + CurNode->ItemCheckNode - 1);
+			if (next < Level->StrifeDialogues.Size())
+			{
+				CurNode = Level->StrifeDialogues[next];
+			}
+			else
+			{
+				break;
+			}
 		}
 		else
 		{

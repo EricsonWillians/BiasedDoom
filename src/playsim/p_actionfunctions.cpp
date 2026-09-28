@@ -6386,7 +6386,10 @@ FModel * FindFModel(AActor * self)
 	}
 	else
 	{
-		return Models[BaseSpriteModelFrames[smf_class].modelIDs[0]];
+		// A missing model file only prints a warning in ParseModelDefLump and
+		// leaves modelIDs[0] at -1; indexing Models with it is out of bounds.
+		int modelID = BaseSpriteModelFrames[smf_class].modelIDs[0];
+		return (modelID >= 0 && modelID < Models.SSize()) ? Models[modelID] : nullptr;
 	}
 }
 
@@ -6430,6 +6433,11 @@ bool SetAnimationInternal(AActor * self, FName animName, double framerate, int s
 	}
 
 	FModel * animation = FindFModel(self);
+
+	if(!animation)
+	{
+		ThrowAbortException(X_OTHER, "Model for actor class could not be found");
+	}
 
 	int animStart = animation->FindFirstFrame(animName);
 

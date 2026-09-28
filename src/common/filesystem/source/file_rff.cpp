@@ -100,10 +100,18 @@ static bool OpenRFF(FResourceFile* file, LumpFilterInfo*)
 	Reader->Read(&header, sizeof(header));
 
 	uint32_t NumLumps = LittleLong(header.NumLumps);
-	auto Entries = file->AllocateEntries(NumLumps);
 	header.DirOfs = LittleLong(header.DirOfs);
-	lumps = new RFFLump[header.NumLumps];
-	Reader->Seek (LittleLong(header.DirOfs), FileReader::SeekSet);
+
+	// Clamp the lump count to what the file can actually hold at the directory offset.
+	auto avail = Reader->GetLength() - (ptrdiff_t)header.DirOfs;
+	if (avail < 0) return false;
+	if ((uint64_t)NumLumps * sizeof(RFFLump) > (uint64_t)avail)
+	{
+		NumLumps = (uint32_t)(avail / (ptrdiff_t)sizeof(RFFLump));
+	}
+	auto Entries = file->AllocateEntries(NumLumps);
+	lumps = new RFFLump[NumLumps];
+	Reader->Seek (header.DirOfs, FileReader::SeekSet);
 	Reader->Read (lumps, NumLumps * sizeof(RFFLump));
 	BloodCrypt (lumps, LittleLong(header.DirOfs), NumLumps * sizeof(RFFLump));
 

@@ -91,6 +91,8 @@ FImageSource *IMGZImage_TryCreate(FileReader & file, int lumpnum)
 	h = file.ReadUInt16();
 	l = file.ReadInt16();
 	t = file.ReadInt16();
+	// Cap dimensions so corrupt headers cannot cause huge allocations.
+	if (w == 0 || h == 0 || w > 4096 || h > 4096) return NULL;
 	ispalette = checkIMGZPalette(file);
 	return new FIMGZTexture(lumpnum, w, h, l, t, !ispalette);
 }
@@ -121,8 +123,11 @@ FIMGZTexture::FIMGZTexture (int lumpnum, uint16_t w, uint16_t h, int16_t l, int1
 PalettedPixels FIMGZTexture::CreatePalettedPixels(int conversion, int frame)
 {
 	auto lump =  fileSystem.ReadFile (SourceLump);
+	if (lump.size() < (int)sizeof(ImageHeader)) return PalettedPixels(0);
 	auto imgz = (const ImageHeader *)lump.data();
 	const uint8_t *data = (const uint8_t *)&imgz[1];
+	const uint8_t *dataend = (const uint8_t *)lump.data() + lump.size();
+	bool truncated = false;
 
 	uint8_t *dest_p;
 	int dest_adv = Height;
@@ -136,6 +141,11 @@ PalettedPixels FIMGZTexture::CreatePalettedPixels(int conversion, int frame)
 	// Convert the source image from row-major to column-major format and remap it
 	if (!imgz->Compression)
 	{
+		// The uncompressed image must be fully present in the lump.
+		if ((size_t)Width * Height > (size_t)(dataend - data))
+		{
+			return PalettedPixels(0);
+		}
 		for (int y = Height; y != 0; --y)
 		{
 			for (int x = Width; x != 0; --x)
@@ -153,12 +163,13 @@ PalettedPixels FIMGZTexture::CreatePalettedPixels(int conversion, int frame)
 		int runlen = 0, setlen = 0;
 		uint8_t setval = 0;  // Shut up, GCC
 
-		for (int y = Height; y != 0; --y)
+		for (int y = Height; y != 0 && !truncated; --y)
 		{
 			for (int x = Width; x != 0; )
 			{
 				if (runlen != 0)
 				{
+					if (data >= dataend) { truncated = true; break; }
 					*dest_p = remap[*data];
 					dest_p += dest_adv;
 					data++;
@@ -174,6 +185,7 @@ PalettedPixels FIMGZTexture::CreatePalettedPixels(int conversion, int frame)
 				}
 				else
 				{
+					if (data >= dataend) { truncated = true; break; }
 					int8_t code = *data++;
 					if (code >= 0)
 					{
@@ -181,6 +193,7 @@ PalettedPixels FIMGZTexture::CreatePalettedPixels(int conversion, int frame)
 					}
 					else if (code != -128)
 					{
+						if (data >= dataend) { truncated = true; break; }
 						setlen = (-code) + 1;
 						setval = remap[*data++];
 					}

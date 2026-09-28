@@ -579,51 +579,61 @@ static void GetPacket(sockaddr_in* const from = nullptr)
 	}
 	else if (msgSize > 0)
 	{
-		const uint8_t* dataStart = &TransmitBuffer[4];
-		if (client == -1 && !(*dataStart & NCMD_SETUP))
+		// A valid datagram holds at least a command byte plus the 4-byte CRC; reject runts
+		// so the msgSize - 4 / msgSize - 5 sizes below can't underflow into huge lengths.
+		if (msgSize < 5)
 		{
-			msgSize = 0;
-		}
-		else if (client == -1 && bGameStarted)
-		{
-			NetBuffer[0] = NCMD_SETUP;
-			NetBuffer[1] = PRE_IN_PROGRESS;
-			NetBufferLength = 2u;
-			SendPacket(fromAddress);
+			client = -1;
 			msgSize = 0;
 		}
 		else
 		{
-			const uint32_t check = (*dataStart & NCMD_SETUP) ? CalcCRC32(dataStart, msgSize - 4) : AddCRC32(CalcCRC32(dataStart, msgSize - 4), GameID, std::extent_v<decltype(GameID)>);
-			const uint32_t crc = (TransmitBuffer[0] << 24) | (TransmitBuffer[1] << 16) | (TransmitBuffer[2] << 8) | TransmitBuffer[3];
-			if (check != crc)
+			const uint8_t* dataStart = &TransmitBuffer[4];
+			if (client == -1 && !(*dataStart & NCMD_SETUP))
 			{
-				DPrintf(DMSG_NOTIFY, "Checksum on packet failed: expected %u, got %u", check, crc);
-				client = -1;
+				msgSize = 0;
+			}
+			else if (client == -1 && bGameStarted)
+			{
+				NetBuffer[0] = NCMD_SETUP;
+				NetBuffer[1] = PRE_IN_PROGRESS;
+				NetBufferLength = 2u;
+				SendPacket(fromAddress);
 				msgSize = 0;
 			}
 			else
 			{
-				NetBuffer[0] = (*dataStart & ~NCMD_COMPRESSED);
-				if (*dataStart & NCMD_COMPRESSED)
+				const uint32_t check = (*dataStart & NCMD_SETUP) ? CalcCRC32(dataStart, msgSize - 4) : AddCRC32(CalcCRC32(dataStart, msgSize - 4), GameID, std::extent_v<decltype(GameID)>);
+				const uint32_t crc = (TransmitBuffer[0] << 24) | (TransmitBuffer[1] << 16) | (TransmitBuffer[2] << 8) | TransmitBuffer[3];
+				if (check != crc)
 				{
-					uLongf size = MAX_MSGLEN - 1;
-					int err = uncompress(NetBuffer + 1, &size, dataStart + 1, msgSize - 5);
-					if (err != Z_OK)
-					{
-						Printf("Net decompression failed (zlib error %s)\n", M_ZLibError(err).GetChars());
-						client = -1;
-						msgSize = 0;
-					}
-					else
-					{
-						msgSize = size + 1;
-					}
+					DPrintf(DMSG_NOTIFY, "Checksum on packet failed: expected %u, got %u", check, crc);
+					client = -1;
+					msgSize = 0;
 				}
 				else
 				{
-					msgSize -= 4;
-					memcpy(NetBuffer + 1, dataStart + 1, msgSize - 1);
+					NetBuffer[0] = (*dataStart & ~NCMD_COMPRESSED);
+					if (*dataStart & NCMD_COMPRESSED)
+					{
+						uLongf size = MAX_MSGLEN - 1;
+						int err = uncompress(NetBuffer + 1, &size, dataStart + 1, msgSize - 5);
+						if (err != Z_OK)
+						{
+							Printf("Net decompression failed (zlib error %s)\n", M_ZLibError(err).GetChars());
+							client = -1;
+							msgSize = 0;
+						}
+						else
+						{
+							msgSize = size + 1;
+						}
+					}
+					else
+					{
+						msgSize -= 4;
+						memcpy(NetBuffer + 1, dataStart + 1, msgSize - 1);
+					}
 				}
 			}
 		}
@@ -824,7 +834,8 @@ static bool Host_CheckForConnections(void* connected)
 			{
 				RejectConnection(from, PRE_IN_PROGRESS);
 			}
-			else if (hasPassword && strcmp(net_password, (const char*)&NetBuffer[5]))
+			// Truncated packets carry no password bytes, and the compare must stay inside the datagram.
+			else if (hasPassword && (NetBufferLength < 6u || strncmp(net_password, (const char*)&NetBuffer[5], NetBufferLength - 5u)))
 			{
 				RejectConnection(from, PRE_WRONG_PASSWORD);
 			}
@@ -842,11 +853,19 @@ static bool Host_CheckForConnections(void* connected)
 				I_NetUpdatePlayers(*connectedPlayers, MaxClients);
 			}
 		}
+		else if (RemoteClient < 0)
+		{
+			// The remaining setup commands index Connected[] with RemoteClient; ignore unknown senders.
+			continue;
+		}
 		else if (NetBuffer[1] == PRE_USER_INFO)
 		{
 			if (Connected[RemoteClient].Status == CSTAT_CONNECTING)
 			{
-				TArrayView<uint8_t> stream = TArrayView(&NetBuffer[2], MAX_MSGLEN-2);
+				if (NetBufferLength < 2u)
+					continue; // Truncated packet; there is no user info to parse.
+				// Size the stream to the actual datagram so the parser can't consume stale bytes.
+				TArrayView<uint8_t> stream = TArrayView(&NetBuffer[2], NetBufferLength - 2u);
 				Net_ReadUserInfo(RemoteClient, stream);
 				Connected[RemoteClient].Status = CSTAT_WAITING;
 				I_NetClientConnected(RemoteClient, 16u);
@@ -854,6 +873,9 @@ static bool Host_CheckForConnections(void* connected)
 		}
 		else if (NetBuffer[1] == PRE_USER_INFO_ACK)
 		{
+			// The ack bit index goes into a 64-bit mask; reject out-of-range values.
+			if (NetBuffer[2] >= MAXPLAYERS)
+				continue;
 			SetClientAck(RemoteClient, NetBuffer[2], true);
 		}
 		else if (NetBuffer[1] == PRE_GAME_INFO_ACK)
@@ -1066,11 +1088,14 @@ static bool Guest_ContactHost(void* unused)
 
 		if (NetBuffer[1] == PRE_HEARTBEAT)
 		{
-			MaxClients = NetBuffer[3];
+			// Keep the host-supplied client count within the Connected[] array.
+			MaxClients = clamp<int>(NetBuffer[3], 1, MAXPLAYERS);
 			I_NetUpdatePlayers(NetBuffer[2], MaxClients);
 		}
 		else if (NetBuffer[1] == PRE_DISCONNECT)
 		{
+			if (NetBuffer[2] >= MAXPLAYERS)
+				continue; // Host sent an out-of-range client index; ignore the packet.
 			I_ClearClient(NetBuffer[2]);
 			NetworkClients -= NetBuffer[2];
 			SetClientAck(consoleplayer, NetBuffer[2], false);
@@ -1108,6 +1133,8 @@ static bool Guest_ContactHost(void* unused)
 		{
 			if (consoleplayer == -1)
 			{
+				if (NetBuffer[2] >= MAXPLAYERS)
+					continue; // Host assigned an out-of-range client index; ignore the packet.
 				NetworkClients += 0;
 				Connected[0].Status = CSTAT_WAITING;
 				I_NetClientUpdated(0);
@@ -1117,7 +1144,8 @@ static bool Guest_ContactHost(void* unused)
 				Connected[consoleplayer].Status = CSTAT_CONNECTING;
 				Net_SetupUserInfo();
 
-				MaxClients = NetBuffer[4];
+				// Keep the host-supplied client count within the Connected[] array.
+				MaxClients = clamp<int>(NetBuffer[4], 1, MAXPLAYERS);
 				I_NetMessage("Sending game information");
 				I_NetUpdatePlayers(NetBuffer[3], MaxClients);
 				I_NetClientConnected(consoleplayer, 16u);
@@ -1142,11 +1170,14 @@ static bool Guest_ContactHost(void* unused)
 		}
 		else if (NetBuffer[1] == PRE_GAME_INFO)
 		{
+			if (NetBufferLength < 11u)
+				continue; // Truncated game info; ignore instead of reading past the datagram.
 			if (!Connected[consoleplayer].bHasGameInfo)
 			{
 				TicDup = clamp<int>(NetBuffer[2], 1, MAXTICDUP);
 				memcpy(GameID, &NetBuffer[3], 8);
-				TArrayView<uint8_t> stream = TArrayView(&NetBuffer[11], MAX_MSGLEN - 11);
+				// Size the stream to the actual datagram so the parser can't consume stale bytes.
+				TArrayView<uint8_t> stream = TArrayView(&NetBuffer[11], NetBufferLength - 11u);
 				Net_ReadGameInfo(stream);
 				Connected[consoleplayer].bHasGameInfo = true;
 			}
@@ -1159,21 +1190,25 @@ static bool Guest_ContactHost(void* unused)
 		else if (NetBuffer[1] == PRE_USER_INFO)
 		{
 			const int c = NetBuffer[2];
+			if ((size_t)c >= MAXPLAYERS)
+				continue; // Out-of-range client index; Connected[] and the ack bitmask can't hold it.
 			if (!ClientGotAck(consoleplayer, c))
 			{
+				const size_t byte = 3u + (c > 0 ? addrSize : 0u);
+				if (NetBufferLength < byte)
+					continue; // Truncated packet; ignore instead of reading past the datagram.
 				NetworkClients += c;
-				size_t byte = 3u;
 				if (c > 0)
 				{
 					Connected[c].Status = CSTAT_WAITING;
-					memcpy(&Connected[c].Address, &NetBuffer[byte], addrSize);
-					byte += addrSize;
+					memcpy(&Connected[c].Address, &NetBuffer[3u], addrSize);
 				}
 				else
 				{
 					Connected[c].Status = CSTAT_READY;
 				}
-				TArrayView<uint8_t> stream = TArrayView(&NetBuffer[byte], MAX_MSGLEN - byte);
+				// Size the stream to the actual datagram so the parser can't consume stale bytes.
+				TArrayView<uint8_t> stream = TArrayView(&NetBuffer[byte], NetBufferLength - byte);
 				Net_ReadUserInfo(c, stream);
 				SetClientAck(consoleplayer, c, true);
 

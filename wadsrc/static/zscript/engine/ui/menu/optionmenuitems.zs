@@ -1199,8 +1199,13 @@ class OptionMenuItemTextField : OptionMenuFieldBase
 		}
 		else if (mkey == Menu.MKEY_Input)
 		{
-			SetString(0, mEnter.GetText());
-			mEnter = null;
+			// MKEY_Input can arrive without a pending editor (e.g. after the
+			// menu was rebuilt), so only commit the text when one is open.
+			if (mEnter != null)
+			{
+				SetString(0, mEnter.GetText());
+				mEnter = null;
+			}
 			return true;
 		}
 		else if (mkey == Menu.MKEY_Abort)

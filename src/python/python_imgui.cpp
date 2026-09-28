@@ -33,6 +33,7 @@
 #include "r_data/sprites.h"
 
 #include <cfloat>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 #include <string>
@@ -149,6 +150,12 @@ PyObject* ImSetNextWindowSize(PyObject*, PyObject* args, PyObject* kwargs)
 	int cond = 0;
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "ff|i:set_next_window_size", const_cast<char**>(keywords),
 		&w, &h, &cond)) return nullptr;
+	// Non-finite sizes would poison ImGui's window layout and clip rects.
+	if (!std::isfinite(w) || !std::isfinite(h))
+	{
+		PyErr_SetString(PyExc_ValueError, "set_next_window_size values must be finite");
+		return nullptr;
+	}
 	if (!BeginImGuiCall()) return nullptr;
 	ImGui::SetNextWindowSize(ImVec2(w, h), cond);
 	Py_RETURN_NONE;
@@ -1130,6 +1137,12 @@ PyObject* ImSetWindowFontScale(PyObject*, PyObject* args)
 {
 	float scale = 1.0f;
 	if (!PyArg_ParseTuple(args, "f:set_window_font_scale", &scale)) return nullptr;
+	// A NaN/Inf scale would corrupt every subsequent text draw in the window.
+	if (!std::isfinite(scale))
+	{
+		PyErr_SetString(PyExc_ValueError, "set_window_font_scale value must be finite");
+		return nullptr;
+	}
 	if (!BeginImGuiCall()) return nullptr;
 	ImGui::SetWindowFontScale(scale);
 	Py_RETURN_NONE;
@@ -1289,6 +1302,11 @@ PyObject* ImSetStyleVar(PyObject*, PyObject* args, PyObject* kwargs)
 		case ImGuiStyleVar_SelectableTextAlign:	style.SelectableTextAlign = value; break;
 		case ImGuiStyleVar_SeparatorTextAlign:	style.SeparatorTextAlign = value; break;
 		case ImGuiStyleVar_SeparatorTextPadding: style.SeparatorTextPadding = value; break;
+		default:
+			// Mirror the getter: an in-range but unenumerated index must not be
+			// silently ignored.
+			PyErr_Format(PyExc_ValueError, "style var index %d has no accessor", idx);
+			return nullptr;
 		}
 		Py_RETURN_NONE;
 	}
@@ -1330,6 +1348,11 @@ PyObject* ImSetStyleVar(PyObject*, PyObject* args, PyObject* kwargs)
 	case ImGuiStyleVar_SeparatorSize:			style.SeparatorSize = x; break;
 	case ImGuiStyleVar_SeparatorTextBorderSize:	style.SeparatorTextBorderSize = x; break;
 	case ImGuiStyleVar_DockingSeparatorSize:	style.DockingSeparatorSize = x; break;
+	default:
+		// Mirror the getter: an in-range but unenumerated index must not be
+		// silently ignored.
+		PyErr_Format(PyExc_ValueError, "style var index %d has no accessor", idx);
+		return nullptr;
 	}
 	Py_RETURN_NONE;
 }

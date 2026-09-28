@@ -1198,6 +1198,17 @@ bool FGLTFModel::ReadAccessorTyped<FQuaternion>(int accessorIndex,
   return false;
 }
 bool FGLTFModel::ProcessNodes() {
+  // Cap the total node count at load time. The bone builder (buildBone in
+  // CalculateBones) and the debug node dump recurse along node chains, and
+  // chain depth is bounded by the node count; a crafted asset with a
+  // ~100k-node chain would otherwise overflow the stack at render time.
+  static const size_t maxNodeCount = 4096;
+  if (asset->nodes.size() > maxNodeCount) {
+    DPrintf(DMSG_ERROR, "glTF model node count (%zu) exceeds limit (%zu)\n",
+            asset->nodes.size(), maxNodeCount);
+    return false;
+  }
+
   scene.nodes.Resize(asset->nodes.size());
 
   // First pass: load basic node data

@@ -378,7 +378,7 @@ void FLevelLocals::RecalculateDrawnSubsectors()
 FSerializer &FLevelLocals::SerializeSubsectors(FSerializer &arc, const char *key)
 {
 	uint8_t by;
-	const char *str;
+	const char *str = nullptr;
 
 	auto numsubsectors = subsectors.Size();
 	if (arc.isWriting())
@@ -424,7 +424,8 @@ FSerializer &FLevelLocals::SerializeSubsectors(FSerializer &arc, const char *key
 				.StringPtr(nullptr, str)
 				.EndArray();
 
-			if (num_verts == (int)vertexes.Size() && num_subs == (int)numsubsectors)
+			// The string may be missing or null in a corrupt save; without it the flags cannot be restored.
+			if (num_verts == (int)vertexes.Size() && num_subs == (int)numsubsectors && str != nullptr)
 			{
 				success = true;
 				int sub = 0;
@@ -642,6 +643,14 @@ void FLevelLocals::SerializePlayers(FSerializer &arc, bool skipload)
 	{
 		arc("numplayers", numPlayers);
 
+		// A hostile save can claim any player count; anything outside
+		// [0, MAXPLAYERS] is corrupt and must be rejected before it is
+		// used to size the temporary player array.
+		if (numPlayers < 0 || numPlayers > MAXPLAYERS)
+		{
+			I_Error("Invalid player count in savegame");
+		}
+
 		if (arc.BeginArray("players"))
 		{
 			// If there is only one player in the game, they go to the
@@ -703,6 +712,8 @@ void FLevelLocals::ReadOnePlayer(FSerializer &arc, bool fromHub)
 			// rendering. The real pitch limits will be set by P_SerializePlayers()
 			// via a net command, but that won't be processed in time for a screen
 			// wipe, so we need something here.
+			if (temp.mo == nullptr)
+				I_Error("Failed to load savegame: player pawn is missing");
 			temp.MaxPitch = temp.MinPitch = temp.mo->Angles.Pitch;
 			CopyPlayer(Players[i], &temp, name.GetChars());
 		}
@@ -810,7 +821,7 @@ void FLevelLocals::ReadMultiplePlayers(FSerializer &arc, int numPlayers, bool fr
 	// less players in the game than there were in the save
 	for (auto& p : tempPlayers)
 	{
-		if (!p.bUsed)
+		if (!p.bUsed && p.Info.mo != nullptr)
 			p.Info.mo->Destroy();
 	}
 }
@@ -857,6 +868,8 @@ void FLevelLocals::CopyPlayer(player_t *dst, player_t *src, const char *name)
 	{
 		dst->userinfo.TransferFrom(uibackup);
 		// The player class must come from the save, so that the menu reflects the currently playing one.
+		if (src->mo == nullptr)
+			I_Error("Failed to load savegame: player pawn is missing");
 		dst->userinfo.PlayerClassChanged(src->mo->GetInfo()->DisplayName.GetChars());
 	}
 

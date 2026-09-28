@@ -41,7 +41,9 @@
 #include "i_input.h"
 #include "d_eventbase.h"
 #include "c_bind.h"
+#include "c_console.h"
 #include "i_mainwindow.h"
+#include "menu.h"
 
 
 // MACROS ------------------------------------------------------------------
@@ -91,6 +93,19 @@ protected:
 
 extern LPDIRECTINPUT8 g_pdi;
 extern bool GUICapture;
+
+// The screenshot bypass in PostKeyEvent is only appropriate while no text
+// field owns the keyboard: with the console input line, chat, or a menu
+// text field active, a printable screenshot key must stay a GUI event or it
+// would fire a screenshot and swallow the typed character.
+static bool ScreenshotKeyMayBypassGUICapture()
+{
+	if (ConsoleState == c_down || ConsoleState == c_falling || chatmodeon)
+		return false;
+	if (CurrentMenu != nullptr && CurrentMenu->IsKindOf("TextEnterMenu"))
+		return false;
+	return true;
+}
 
 // PRIVATE DATA DEFINITIONS ------------------------------------------------
 
@@ -260,10 +275,12 @@ void FKeyboard::PostKeyEvent(int key, INTBOOL down, bool foreground)
 	// Generate the event, if appropriate.
 	if (down)
 	{
-		if (!foreground || (GUICapture && !C_IsScreenshotKey(key)))
+		if (!foreground || (GUICapture && !(C_IsScreenshotKey(key) && ScreenshotKeyMayBypassGUICapture())))
 		{ // Do not generate key down events if we are in the background
 		  // or in "GUI Capture" mode. Keys bound to the screenshot command
-		  // are exempt so screenshots also work while a menu is open.
+		  // are exempt so screenshots also work while a menu is open, except
+		  // while a text field owns the keyboard (console, chat, menu text
+		  // entry) so typing is not swallowed by a screenshot.
 			return;
 		}
 		ev.type = EV_KeyDown;

@@ -133,7 +133,7 @@ static int BuildPaletteTranslation(int lump)
 //
 //===========================================================================
 
-void AddTiles(const FString& pathprefix, const void* tiles, FRemapTable *remap)
+void AddTiles(const FString& pathprefix, const void* tiles, size_t len, FRemapTable *remap)
 {
 
 	//	int numtiles = LittleLong(((uint32_t *)tiles)[1]);	// This value is not reliable
@@ -143,6 +143,7 @@ void AddTiles(const FString& pathprefix, const void* tiles, FRemapTable *remap)
 	const uint16_t* tilesizy = &tilesizx[tileend - tilestart + 1];
 	const uint32_t* picanm = (const uint32_t*)&tilesizy[tileend - tilestart + 1];
 	const uint8_t* tiledata = (const uint8_t*)&picanm[tileend - tilestart + 1];
+	const uint8_t* tilesend = (const uint8_t*)tiles + len;
 
 	for (int i = tilestart; i <= tileend; ++i)
 	{
@@ -152,10 +153,16 @@ void AddTiles(const FString& pathprefix, const void* tiles, FRemapTable *remap)
 		uint32_t anm = LittleLong(picanm[pic]);
 		int xoffs = (int8_t)((anm >> 8) & 255) + width / 2;
 		int yoffs = (int8_t)((anm >> 16) & 255) + height / 2;
-		int size = width * height;
+		size_t size = (size_t)width * height;
 		FTextureID texnum;
 
 		if (width <= 0 || height <= 0) continue;
+
+		// Each tile consumes width*height bytes of pixel data; do not read past the end of the file.
+		if ((size_t)(tilesend - tiledata) < size)
+		{
+			break;
+		}
 
 		FStringf name("%sBTIL%04d", pathprefix.GetChars(), i);
 		auto tex = MakeGameTexture(new FImageTexture(new FBuildTexture(pathprefix, i, tiledata, remap, width, height, xoffs, yoffs)), name.GetChars(), ETextureType::Override);
@@ -291,10 +298,16 @@ void InitBuildTiles()
 				artdata.Resize((unsigned int)len);
 				fileSystem.ReadFile(lumpnum, &artdata[0]);
 
-				if ((numtiles = CountTiles(&artdata[0])) > 0)
+				// The 16 byte header plus the tile tables must fit in the file before anything gets dereferenced.
+				if (len >= 16 && (numtiles = CountTiles(&artdata[0])) > 0)
 				{
-					AddTiles(path, &artdata[0], remap);
-					totaltiles += numtiles;
+					int64_t tilestart = LittleLong(((uint32_t*)&artdata[0])[2]);
+					int64_t tileend = LittleLong(((uint32_t*)&artdata[0])[3]);
+					if (tileend >= tilestart && tileend - tilestart + 1 <= (len - 16) / 12)
+					{
+						AddTiles(path, &artdata[0], (size_t)len, remap);
+						totaltiles += numtiles;
+					}
 				}
 			}
 		}

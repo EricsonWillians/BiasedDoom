@@ -213,6 +213,21 @@ bool FOBJModel::Load(const char* fn, int lumpnum, const char* buffer, int length
 	}
 	sc.Close();
 
+	// Validate all vertex references now that every vertex is known. The
+	// vertex index is used unguarded when building the vertex buffer and the
+	// vertex->face map, so reject models with invalid faces up front.
+	for (size_t i = 0; i < faces.Size(); i++)
+	{
+		for (unsigned int j = 0; j < faces[i].sideCount; j++)
+		{
+			if (faces[i].sides[j].vertref < 0 || faces[i].sides[j].vertref >= (int)verts.Size())
+			{
+				Printf("LoadModel: OBJ model '%s' has a face with an invalid vertex reference\n", objName.c_str());
+				return false;
+			}
+		}
+	}
+
 	if (curSurface == nullptr)
 	{ // No valid materials detected
 		FTextureID dummyMtl = LoadSkin("", "-NOFLAT-"); // Built-in to GZDoom

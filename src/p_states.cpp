@@ -809,6 +809,24 @@ FState *FStateDefinitions::ResolveGotoLabel (PClassActor *mytype, char *name)
 
 	if (state != NULL)
 	{
+		// The offset must stay inside the states of whichever ancestor owns
+		// the base state. Walk the hierarchy to find the owner (including the
+		// Actor base class, which VerifyJumpTarget deliberately skips for
+		// runtime jumps, because `goto GenericCrush` resolves to it legally).
+		PClassActor *owner = type;
+		while (owner != nullptr && !owner->OwnsState(state))
+		{
+			if (owner == RUNTIME_CLASS(AActor))
+			{
+				owner = nullptr;
+				break;
+			}
+			owner = static_cast<PClassActor *>(owner->ParentClass);
+		}
+		if (owner == nullptr || !owner->OwnsState(state + v))
+		{
+			I_Error ("Attempt to get state %s with out of range offset %d from actor %s.", label, v, type->TypeName.GetChars());
+		}
 		state += v;
 	}
 	else if (v != 0)

@@ -1033,6 +1033,16 @@ FExecList *C_ParseExecFile(const char *file, FExecList *exec)
 
 	FileReader fr;
 
+	// Guard against recursive execs (an exec file execing itself, directly
+	// or indirectly), which would otherwise recurse until stack exhaustion.
+	static int parseDepth;
+	if (++parseDepth > 32)
+	{
+		Printf ("exec: nesting too deep, skipping \"%s\"\n", file);
+		--parseDepth;
+		return exec;
+	}
+
 	if ( (fr.OpenFile(file)) )
 	{
 		while (fr.Gets(cmd, countof(cmd)-1))
@@ -1076,6 +1086,7 @@ FExecList *C_ParseExecFile(const char *file, FExecList *exec)
 	{
 		Printf ("Could not open \"%s\"\n", file);
 	}
+	--parseDepth;
 	return exec;
 }
 

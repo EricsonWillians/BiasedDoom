@@ -76,6 +76,11 @@ FImageSource *QOIImage_TryCreate(FileReader &file, int lumpnum)
 	{
 		return nullptr;
 	}
+	// Cap dimensions so corrupt headers cannot cause huge allocations.
+	if (header.width > 8192 || header.height > 8192)
+	{
+		return nullptr;
+	}
 
 	return new FQOITexture(lumpnum, header);
 }
@@ -163,18 +168,27 @@ int FQOITexture::CopyPixels(FBitmap *bmp, int conversion, int frame)
 			{
 				int b1 = bytes[p++];
 
+				// The multi-byte opcodes must fit entirely inside the chunk
+				// area; once the stream is exhausted the current pixel color
+				// is simply reused for the remaining pixels.
 				if (b1 == QOI_OP_RGB)
 				{
-					pe.r = bytes[p++];
-					pe.g = bytes[p++];
-					pe.b = bytes[p++];
+					if (p + 3 <= chunks_len)
+					{
+						pe.r = bytes[p++];
+						pe.g = bytes[p++];
+						pe.b = bytes[p++];
+					}
 				}
 				else if (b1 == QOI_OP_RGBA)
 				{
-					pe.r = bytes[p++];
-					pe.g = bytes[p++];
-					pe.b = bytes[p++];
-					pe.a = bytes[p++];
+					if (p + 4 <= chunks_len)
+					{
+						pe.r = bytes[p++];
+						pe.g = bytes[p++];
+						pe.b = bytes[p++];
+						pe.a = bytes[p++];
+					}
 				}
 				else if ((b1 & QOI_MASK_2) == QOI_OP_INDEX)
 				{
@@ -188,11 +202,14 @@ int FQOITexture::CopyPixels(FBitmap *bmp, int conversion, int frame)
 				}
 				else if ((b1 & QOI_MASK_2) == QOI_OP_LUMA)
 				{
-					int b2 = bytes[p++];
-					int vg = (b1 & 0x3f) - 32;
-					pe.r += vg - 8 + ((b2 >> 4) & 0x0f);
-					pe.g += vg;
-					pe.b += vg - 8 + (b2 & 0x0f);
+					if (p < chunks_len)
+					{
+						int b2 = bytes[p++];
+						int vg = (b1 & 0x3f) - 32;
+						pe.r += vg - 8 + ((b2 >> 4) & 0x0f);
+						pe.g += vg;
+						pe.b += vg - 8 + (b2 & 0x0f);
+					}
 				}
 				else if ((b1 & QOI_MASK_2) == QOI_OP_RUN)
 				{

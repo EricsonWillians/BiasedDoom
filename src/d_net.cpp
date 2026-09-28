@@ -787,7 +787,13 @@ static void ClientQuit(int clientNum, int newHost)
 
 	DisconnectClient(clientNum);
 	if (clientNum == Net_Arbitrator)
-		SetArbitrator(newHost >= 0 ? newHost : NetworkClients[0]);
+	{
+		// A corrupt exit packet can name a bogus new host; only honor the
+		// handoff if it points at a client still in the game.
+		if (newHost < 0 || newHost >= MAXPLAYERS || !NetworkClients.InGame(newHost))
+			newHost = NetworkClients[0];
+		SetArbitrator(newHost);
+	}
 
 	if (demorecording)
 		G_CheckDemoStatus();
@@ -971,7 +977,13 @@ static void GetPackets()
 		{
 			int numPlayers = NetBuffer[curByte++];
 			for (int i = 0; i < numPlayers; ++i)
-				DisconnectClient(NetBuffer[curByte++]);
+			{
+				const int quitter = NetBuffer[curByte++];
+				// Ignore out-of-range ids instead of disconnecting an
+				// out-of-bounds "client".
+				if (quitter < MAXPLAYERS && NetworkClients.InGame(quitter))
+					DisconnectClient(quitter);
+			}
 		}
 
 		const int playerCount = NetBuffer[curByte++];
@@ -1001,6 +1013,13 @@ static void GetPackets()
 		for (int p = 0; p < playerCount; ++p)
 		{
 			const int pNum = NetBuffer[curByte++];
+			// A corrupt packet can carry a player number past the end of the
+			// client state array; drop the rest of the packet and resync.
+			if (pNum >= MAXPLAYERS)
+			{
+				clientState.Flags |= CF_MISSING_SEQ;
+				break;
+			}
 			auto& pState = ClientStates[pNum];
 
 			// This gets sent over per-player so latencies are correct in packet server mode.
@@ -1046,19 +1065,30 @@ static void GetPackets()
 			// back together correctly. Normally this wouldn't matter as much but since we need to keep
 			// clients in lock step a misordered packet will instantly cause a desync.
 			TArray<TArrayView<uint8_t>> data = {}; // each contained TArrayView represents a packet.
+			bool packetOK = true;
 			for (int t = 0; t < totalTics; ++t)
 			{
 				// Try and reorder the tics if they're all there but end up out of order.
 				const int ofs = NetBuffer[curByte++];
 
-				TArrayView<uint8_t> skipper = TArrayView(&NetBuffer[curByte], MAX_MSGLEN - curByte);
-				SkipUserCmdMessage(skipper);
+				// Bound the walk view by the actual packet, not the whole message buffer.
+				TArrayView<uint8_t> skipper = TArrayView(&NetBuffer[curByte], NetBufferLength - curByte);
+				if (!SkipUserCmdMessage(skipper))
+				{
+					// Malformed tic stream: the rest of this packet can no longer
+					// be delimited reliably, so drop it and resync.
+					clientState.Flags |= CF_MISSING_SEQ;
+					packetOK = false;
+					break;
+				}
 
 				TArrayView<uint8_t> packet = TArrayView(&NetBuffer[curByte], skipper.Data() - &NetBuffer[curByte]);
 				data.Insert(ofs, packet);
 
 				curByte += skipper.Data() - &NetBuffer[curByte];
 			}
+			if (!packetOK)
+				break;
 
 			// If it's from a previous waiting period, the commands are no longer relevant.
 			if (!validID)
@@ -2796,10 +2826,12 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 		break;
 
 	case DEM_SAVEGAME:
+		// The payload must always be consumed to keep the stream in sync with
+		// the skipper; only the save itself is gated on the gamestate.
+		savegamefile = ReadStringConst(stream);
+		savedescription = ReadStringConst(stream);
 		if (gamestate == GS_LEVEL)
 		{
-			savegamefile = ReadStringConst(stream);
-			savedescription = ReadStringConst(stream);
 			if (player != consoleplayer)
 			{
 				// Paths sent over the network will be valid for the system that sent
@@ -2807,8 +2839,8 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 				FString basename = ExtractFileBase(savegamefile.GetChars(), true);
 				savegamefile = G_BuildSaveName(basename.GetChars());
 			}
+			gameaction = ga_savegame;
 		}
-		gameaction = ga_savegame;
 		break;
 
 	case DEM_CHECKAUTOSAVE:
@@ -2901,6 +2933,8 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 	case DEM_ADDCONTROLLER:
 		{
 			uint8_t playernum = ReadInt8(stream);
+			if (playernum >= MAXPLAYERS)
+				break;
 			players[playernum].settings_controller = true;
 			if (consoleplayer == playernum)
 				Printf("You can now control game settings\n");
@@ -2912,6 +2946,8 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 	case DEM_DELCONTROLLER:
 		{
 			uint8_t playernum = ReadInt8(stream);
+			if (playernum >= MAXPLAYERS)
+				break;
 			players[playernum].settings_controller = false;
 			if (consoleplayer == playernum)
 				Printf("You can no longer control game settings\n");
@@ -2978,13 +3014,18 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 
 			unsigned int slot = ReadInt8(stream);
 			int count = ReadInt8(stream);
-			if (slot < NUM_WEAPON_SLOTS)
+			// A corrupt packet can carry an out-of-range player number; still
+			// drain the payload so the stream stays in sync with the skipper,
+			// but touch no player state.
+			const bool validTarget = pnum >= 0 && pnum < MAXPLAYERS;
+			if (validTarget && slot < NUM_WEAPON_SLOTS)
 				players[pnum].weapons.ClearSlot(slot);
 
 			for (i = 0; i < count; ++i)
 			{
 				PClassActor *wpn = Net_ReadWeapon(stream);
-				players[pnum].weapons.AddSlot(slot, wpn, pnum == consoleplayer);
+				if (validTarget)
+					players[pnum].weapons.AddSlot(slot, wpn, pnum == consoleplayer);
 			}
 		}
 		break;
@@ -3064,6 +3105,9 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 	case DEM_KICK:
 		{
 			const int pNum = ReadInt8(stream);
+			// Only the arbitrator may kick; ignore forged kicks from anyone else.
+			if (player != Net_Arbitrator)
+				break;
 			if (pNum == consoleplayer)
 			{
 				I_Error("You have been kicked from the game");
@@ -3076,6 +3120,18 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 		}
 		break;
 		
+	// Accepted by Net_SkipCommandEx with a zero payload, so they must be
+	// harmless no-ops here instead of falling into the fatal default case.
+	case DEM_STOP:
+	case DEM_ADVANCEINTER:
+		break;
+
+	case DEM_DROPPLAYER:
+		// Not implemented, but the skipper consumes a 1-byte payload for it;
+		// discard the byte here too so reader and skipper stay in sync.
+		ReadInt8(stream);
+		break;
+
 	default:
 		I_Error("Unknown net command: %d", cmd);
 		break;
@@ -3085,10 +3141,8 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 // Used by DEM_RUNSCRIPT, DEM_RUNSCRIPT2, and DEM_RUNNAMEDSCRIPT
 static void RunScript(TArrayView<uint8_t>& stream, AActor *pawn, int snum, int argn, int always)
 {
-	// Scripts can be invoked without a level loaded, e.g. via puke(name) CCMD in fullscreen console
-	if (pawn == nullptr)
-		return;
-
+	// The args must be drained from the stream even when there's no pawn,
+	// otherwise every later command in the same tic desyncs.
 	int arg[4] = {};
 	for (int i = 0; i < argn; ++i)
 	{
@@ -3096,6 +3150,10 @@ static void RunScript(TArrayView<uint8_t>& stream, AActor *pawn, int snum, int a
 		if ((unsigned)i < countof(arg))
 			arg[i] = argval;
 	}
+
+	// Scripts can be invoked without a level loaded, e.g. via puke(name) CCMD in fullscreen console
+	if (pawn == nullptr)
+		return;
 
 	P_StartScript(pawn->Level, pawn, nullptr, snum, primaryLevel->MapName.GetChars(), arg, min<int>(countof(arg), argn), ACS_NET | always);
 }
@@ -3353,6 +3411,29 @@ bool Net_SkipCommandEx(int cmd, TArrayView<uint8_t>& stream)
 
 		case DEM_SETPITCHLIMIT:
 			skip = 2;
+			break;
+
+		// Legitimate commands with no payload: upstream skipped these with a
+		// zero advance, so they must succeed here too. Treating them as
+		// malformed would consume the rest of the stream and desynchronize
+		// every later command in the same packet.
+		case DEM_STOP:
+		case DEM_SUICIDE:
+		case DEM_KILLBOTS:
+		case DEM_INVUSEALL:
+		case DEM_PAUSE:
+		case DEM_CENTERVIEW:
+		case DEM_CROUCH:
+		case DEM_CHECKAUTOSAVE:
+		case DEM_DOAUTOSAVE:
+		case DEM_CONVCLOSE:
+		case DEM_CONVNULL:
+		case DEM_ADVANCEINTER:
+		case DEM_REVERTCAMERA:
+		case DEM_FINISHGAME:
+		case DEM_ENDSCREENJOB:
+		case DEM_READIED:
+			skip = 0;
 			break;
 
 		default: // Unknown command

@@ -125,6 +125,13 @@ void FIWadManager::ParseIWadInfo(const char *fn, const char *data, int datasize,
 					sc.MustGetStringName("=");
 					sc.MustGetString();
 					iwad->Configname = sc.String;
+					// The config name is expanded into fixed-size section buffers,
+					// so clamp hostile/overlong names before they reach the config code.
+					if (iwad->Configname.Len() > 32)
+					{
+						sc.ScriptMessage("Config name too long, truncated to 32 characters");
+						iwad->Configname.Truncate(32);
+					}
 				}
 				else if (sc.Compare("Game"))
 				{

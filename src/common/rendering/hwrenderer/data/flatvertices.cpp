@@ -173,7 +173,7 @@ void FFlatVertexBuffer::Copy(int start, int count)
 	{
 		mVertexBuffer = mVertexBufferPipeline[n];
 		Map();
-		memcpy(GetBuffer(start), &vbo_shadowdata[0], count * sizeof(FFlatVertex));
+		memcpy(GetBuffer(start), &vbo_shadowdata[start], count * sizeof(FFlatVertex));
 		Unmap();
 		mVertexBuffer->Upload(start * sizeof(FFlatVertex), count * sizeof(FFlatVertex));
 	}

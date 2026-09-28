@@ -427,6 +427,9 @@ uint8_t* GetHexChar(int codepoint)
 {
 	assert(hexdata.FirstChar != INT_MAX);
 
+	// UTF-8 decoded code points can exceed the 16 bit glyph table.
+	if (codepoint < 0 || codepoint >= 65536) return nullptr;
+
 	if (hexdata.glyphmap[codepoint] > 0)
 	{
 		auto offset = hexdata.glyphmap[codepoint];

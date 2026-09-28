@@ -348,7 +348,10 @@ double getCurrentFrame(const ModelAnim &anim, double tic, bool *looped) {
     if (looped)
       *looped = true;
     frame = frame - duration;
-    return fmod(frame, anim.lastFrame - anim.loopFrame) + anim.loopFrame;
+    // A zero-length loop span would make fmod() divide by zero.
+    if (anim.lastFrame > anim.loopFrame)
+      return fmod(frame, anim.lastFrame - anim.loopFrame) + anim.loopFrame;
+    return anim.loopFrame;
   } else {
     return min(frame, duration) + anim.startFrame;
   }
@@ -503,16 +506,23 @@ bool CalcModelOverrides(int i, const FSpriteModelFrame *smf,
     }
     if (!is_decoupled) {
       // modelFrame
+      // info.modelsamount can exceed smf->modelframes.Size() when
+      // data->models holds more entries than the MODELDEF, and ChangeModel
+      // accepts arbitrary generator indices, so the generator must also be
+      // validated against the modelframes arrays themselves.
       if (data->modelFrameGenerators.SSize() > i &&
           (unsigned)data->modelFrameGenerators[i] < info.modelsamount &&
+          data->modelFrameGenerators[i] < smf->modelframes.SSize() &&
           smf->modelframes[data->modelFrameGenerators[i]] >= 0) {
         out.modelframe = smf->modelframes[data->modelFrameGenerators[i]];
 
         if (info.smfNext) {
-          if (info.smfNext->modelframes[data->modelFrameGenerators[i]] >= 0) {
+          if (data->modelFrameGenerators[i] <
+                  info.smfNext->modelframes.SSize() &&
+              info.smfNext->modelframes[data->modelFrameGenerators[i]] >= 0) {
             out.modelframenext =
                 info.smfNext->modelframes[data->modelFrameGenerators[i]];
-          } else {
+          } else if (i < info.smfNext->modelframes.SSize()) {
             out.modelframenext = info.smfNext->modelframes[i];
           }
         }
@@ -1047,7 +1057,13 @@ void ParseModelDefLump(int Lump) {
               smf.modelframes[index] = -1;
           } else {
             sc.MustGetNumber();
-            smf.modelframes[index] = sc.Number;
+            // Legacy MODELDEF tolerated negative frame indices; keep that
+            // behavior by treating them as "no frame" (-1). Render-time
+            // guards already reject out-of-range indices.
+            if (sc.Number < 0)
+              smf.modelframes[index] = -1;
+            else
+              smf.modelframes[index] = sc.Number;
           }
 
           for (int i = 0; framechars[i] > 0; i++) {

@@ -36,6 +36,70 @@ All notable changes to this project will be documented in this file.
 - `bd_dialogue` now ends active sessions on `map_unload` (reason
   `"map_change"`), and `NPCManager.begin_talk` recovers from a stale or
   inactive session instead of soft-locking all conversation.
+- Fixed a net-stream desync/crash when a packet carries a legitimate
+  zero-payload command (`DEM_PAUSE`, `DEM_SUICIDE`, `DEM_DOAUTOSAVE`, and
+  the other no-argument commands): the command skipper now advances zero
+  bytes and reports success for them instead of treating them as malformed
+  and consuming the rest of the stream, which corrupted every later command
+  in the same packet and could crash the packet walk.
+- Hardened the legacy model loaders against malformed content: DMD chunk
+  walks validate chunk lengths, require a `DMC_INFO` chunk, and check all
+  counts, frame sizes, and source offsets before allocating; MD2 validates
+  counts, frame size, and offsets and clamps out-of-range vertex-normal
+  indices instead of reading past the normal table; MD3 validates the magic,
+  frame/surface counts, and per-surface offsets and clamps corrupt vertex
+  indices; IQM caps the animation TRS allocation and clamps frame indices;
+  OBJ rejects faces with invalid vertex references; UE1 rejects missing
+  counterpart lumps, invalid counts, and undersized animation data and
+  clamps polygon vertex/surface-skin indices; model-type magic sniffing now
+  respects the available buffer length; voxels no longer take element-0
+  addresses of empty vertex/index arrays; and MODELDEF frame indices and
+  zero-length animation loop spans are rejected instead of dividing by
+  zero.
+- Hardened the PCX, TGA, IMGZ, and QOI texture decoders against truncated
+  or corrupt input: PCX validates the header geometry and bytes-per-scan-
+  line minimum, clamps negative source lengths, and stops at the end of the
+  source and the end of each scan line in all four readers; TGA and IMGZ
+  cap dimensions and reject negative color-map offsets; IMGZ validates the
+  uncompressed image size and RLE stream bounds; QOI caps dimensions and
+  requires multi-byte opcodes to fit inside the chunk area.
+- Custom audio streams are now owned solely by their creators: the OpenAL
+  renderer orphans (rather than deletes) them on teardown, so entry points
+  no-op safely after renderer destruction and owners keep exclusive delete
+  responsibility. Reopening the audio device in place now restarts streams
+  that were still playing and re-runs the channel evict/restore cycle, and
+  passes the same context attributes (sample rate, source counts, HRTF,
+  output limiter) used at context creation instead of resetting them.
+  SNDSEQ `volumerand` clamps a zero-width range so it can no longer divide
+  by zero at run time, and sound start times are guarded against
+  zero-length samples.
+- Hardened save, demo, and config parsing: a corrupted save can no longer
+  carry a zero ticrate into a division; demo FORM/chunk lengths are
+  validated so a mangled demo cannot walk out of or backwards through the
+  buffer, and demo player indices are range-checked; compact cvar and user
+  info strings must be NUL-terminated inside their buffers and malformed
+  data consumes the rest of the stream so walks terminate; `exec` files
+  are limited to 32 levels of nesting to stop recursive self-exec stack
+  exhaustion; statistics parser strings are copied with guaranteed NUL
+  termination; save-slot removal/load/save validate menu-supplied indices;
+  IWADINFO `Config` names are truncated to 32 characters before reaching
+  fixed-size config section buffers; and a second signal during shutdown
+  now uses async-signal-safe output and `_exit` instead of buffered
+  `Printf`/`exit`.
+- Graphics preset auto-pairing is restored after a restart: when the stored
+  lighting/fog selectors exactly match the previous graphics preset's
+  pairing entry, the auto-pair trackers are reseeded on the first
+  application, while explicit user selections stay protected.
+- Keys bound to the screenshot command no longer fire a screenshot and
+  swallow the typed character while the console, chat, or a menu text-entry
+  field owns the keyboard (SDL, Win32, and Cocoa); the preset search text
+  field also guards against an input event arriving without a pending
+  editor.
+- Strife dialogue `ItemCheckNode` jumps are bounds-checked against the
+  loaded dialogue list; the dynamic XLAT parser now uses a heap-grown stack
+  with explicit overflow diagnostics instead of a fixed stack; and ACS
+  diagnostic messages guard against null activators/players when reporting
+  script request failures.
 - Hardened malformed-content handling across the engine: VOC audio lumps,
   PK3 archive entries, and network packets validate sizes before reading;
   the save compressor falls back to stored (uncompressed) output when
@@ -60,6 +124,75 @@ All notable changes to this project will be documented in this file.
   `libzmusic` in sibling `lib`/`lib64` directories.
 - Made the local release AppImage smoke test work in display-less Ubuntu
   22.04 containers.
+- Hardened the network driver and lobby against unauthenticated datagrams:
+  runt packets (< 5 bytes) can no longer underflow the CRC/uncompress/memcpy
+  length arithmetic, unknown senders can no longer index the client table
+  with -1, host-supplied client indices and limits are clamped to
+  `MAXPLAYERS`, the lobby password compare is length-bounded, and lobby
+  stream views are sized by the actual datagram instead of the maximum
+  packet size.
+- Hardened network command execution against crafted packets: per-player
+  numbers, quitter lists, host-handoff targets, controller grants, weapon
+  slot numbers, and kick authority are validated before indexing engine
+  arrays; commands whose executors conditionally consumed fewer bytes than
+  the skipper (`DEM_SINFCHANGED(XOR)`, `DEM_RUNSCRIPT` family with no pawn,
+  `DEM_SAVEGAME` outside a level) now always consume their full payload so
+  the stream cannot desynchronize; `DEM_STOP`, `DEM_DROPPLAYER`, and
+  `DEM_ADVANCEINTER` are inert no-ops instead of fatal unknown commands;
+  and the packet walk is bounded by the actual datagram with failures
+  reported as missing sequences.
+- Hardened savegame deserialization against corrupted saves: player records
+  without a pawn are rejected instead of dereferenced, the player count is
+  clamped before allocation, ACS world/global array indices are bounds-
+  checked (previously an out-of-bounds write), subsector cached geometry
+  requires a valid string, base64 memory fields null-check the decoded
+  value and no longer overrun the destination, stored zip entries cannot
+  claim more data than was allocated, hub snapshot decompression is size-
+  capped and checked, unmorphed travellers require a valid alternative,
+  `SavegameManager.SetFileInfo` validates its slot index, RNG state indices
+  are clamped, save-supplied player class and next-skill indices are
+  clamped to valid ranges, short RapidJSON arrays and parse failures are
+  rejected, and the `load` command no longer accepts save names starting
+  with `..`.
+- Hardened the ACS module loader and interpreter against crafted BEHAVIOR:
+  chunk extents are validated centrally, branch/jump/call targets and
+  script entry addresses are bounds-checked, the instruction pointer is
+  validated each fetch, `CASEGOTOSORTED` and `PUSHBYTES` are bounded,
+  encrypted/escaped string tables validate every offset before writing,
+  map-variable store indices are clamped at all six sites, string-chunk
+  lookups validate their tables, and `goto Label+offset` in DECORATE/
+  ZScript state blocks must land inside the class's states. The DAP
+  debugger no longer aborts the engine on malformed client-supplied
+  variable names.
+- Hardened resource parsers against malformed lumps: FON1/FON2/BMF font
+  loaders bound their RLE and character walks, Build .ART tile ranges and
+  pixel data are validated, TEXTUREx patch records must fit in the lump,
+  GL subsector seg ranges are extent-checked, SSI/GRP/PAK/RFF/MVL
+  container counts are validated before allocation, the ZIP64 extra-field
+  walk is bounded, DDS pitch and dimensions are clamped, Hex font glyph
+  lookups reject out-of-range codepoints, and Doom patch post data is
+  clamped to the lump. Also fixed the Hexen startup NOTCH texture never
+  being written, `$musicvolume`'s dB suffix converting a stale value, and
+  negative sound-sequence types reading before the translation table.
+- Fixed fullscreen blend overlays (damage/item flashes) permanently
+  breaking after the first window resize (the reserved vertex quad was
+  re-copied from the wrong offset), glTF models with only non-indexed
+  primitives never uploading vertex data, MD3/IQM models with more than
+  32 surfaces corrupting the texture precache hitlist, Doom-style GLDEFS
+  skyboxes with unresolvable faces crashing on first view, `FindFModel`
+  indexing `Models[-1]` when a MODELDEF model file is missing, and script-
+  set model generator indices reading past the frame table. glTF node
+  chains are depth-capped at load and UBO bone truncation now logs a
+  one-time warning.
+- Python runtime robustness: gameplay event dispatch is depth-capped so a
+  damage handler that deals damage can no longer exhaust the native stack;
+  world teardown keeps mutations blocked until tasks and handles are fully
+  invalidated, and world references can no longer alias the next map;
+  actor handle deallocation is re-entrancy safe; `-scripttest` disables the
+  wall-clock tick budget so CI autotests are deterministic; `bd.state`
+  serialization is capped at 16 MiB and fails the save cleanly beyond it;
+  ImGui style setters reject unmapped indices and non-finite floats; and
+  actor `tid` assignment rejects values outside 32 bits.
 
 ## [4.15.15] - 2026-09-26
 

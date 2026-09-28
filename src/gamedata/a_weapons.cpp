@@ -614,6 +614,10 @@ CCMD (setslot)
 
 void FWeaponSlots::AddSlot(int slot, PClassActor *type, bool feedback)
 {
+	// Net commands can carry an out-of-range slot index; don't index the
+	// fixed Slots array with it.
+	if ((unsigned)slot >= NUM_WEAPON_SLOTS)
+		return;
 	if (type != nullptr && !Slots[slot].AddWeapon(type) && feedback)
 	{
 		Printf ("Could not add %s to slot %d\n", type->TypeName.GetChars(), slot);

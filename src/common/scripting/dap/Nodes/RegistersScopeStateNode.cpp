@@ -105,7 +105,12 @@ bool RegistersNode::GetChildNode(std::string name, std::shared_ptr<StateNodeBase
 
 	// name is "a2" or "s3" etc
 	std::string prefix = GetPrefix();
-	int index = std::stoi(name.substr(prefix.size()));
+	int index;
+	// The name comes from the client and may not be numeric at all.
+	if (name.size() < prefix.size() || !ParseInt(name.substr(prefix.size()), &index))
+	{
+		return false;
+	}
 	if (index < 0 || index >= GetNumberOfRegisters())
 	{
 		return false;
@@ -194,7 +199,12 @@ PType *ParamsRegistersNode::GetRegisterType(int index) const
 bool PointerRegistersNode::GetChildNode(std::string name, std::shared_ptr<StateNodeBase> &node)
 {
 	std::string prefix = GetPrefix();
-	int index = std::stoi(name.substr(prefix.size()));
+	int index;
+	// The name comes from the client and may not be numeric at all.
+	if (name.size() < prefix.size() || !ParseInt(name.substr(prefix.size()), &index))
+	{
+		return false;
+	}
 	if (index < 0 || index >= GetNumberOfRegisters())
 	{
 		return false;

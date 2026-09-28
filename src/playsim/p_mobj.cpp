@@ -6360,6 +6360,11 @@ void FLevelLocals::PlayerSpawnPickClass (int playernum)
 			if (!deathmatch || !multiplayer)
 			{
 				type = SinglePlayerClass[playernum];
+				// A stale negative choice means "pick a random class", like UpdatePlayerClass does.
+				if (type < 0)
+				{
+					type = pr_multiclasschoice() % PlayerClasses.Size ();
+				}
 			}
 			else
 			{
@@ -6375,6 +6380,8 @@ void FLevelLocals::PlayerSpawnPickClass (int playernum)
 		{
 			p->CurrentPlayerClass = 0;
 		}
+		// A corrupted class choice must not index outside the class list.
+		p->CurrentPlayerClass = clamp(p->CurrentPlayerClass, 0, (int)PlayerClasses.Size() - 1);
 		p->cls = PlayerClasses[p->CurrentPlayerClass].Type;
 	}
 }

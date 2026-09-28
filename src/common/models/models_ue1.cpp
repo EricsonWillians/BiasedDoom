@@ -29,6 +29,7 @@
 #include "model_ue1.h"
 #include "texturemanager.h"
 #include "modelrenderer.h"
+#include "printf.h"
 
 float unpackuvert( uint32_t n, int c )
 {
@@ -64,6 +65,11 @@ bool FUE1Model::Load( const char *filename, int lumpnum, const char *buffer, int
 		mAnivLump = lumpnum;
 		mDataLump = lumpnum2;
 	}
+	if (mDataLump < 0 || mAnivLump < 0)
+	{
+		Printf("LoadModel: Model '%s' is missing its counterpart .3d file\n", filename);
+		return false;
+	}
 	return true;
 }
 
@@ -74,10 +80,40 @@ void FUE1Model::LoadGeometry()
 	buffer = lump.string();
 	auto lump2 =  fileSystem.ReadFile(mAnivLump);
 	buffer2 = lump2.string();
+
+	// Validate both lump headers before mapping any structures onto them.
+	if (lump.size() < sizeof(d3dhead) || lump2.size() < sizeof(a3dhead))
+	{
+		Printf("LoadModel: UE1 model file too short\n");
+		return;
+	}
+
 	// map structures
 	dhead = (const d3dhead*)(buffer);
 	dpolys = (const d3dpoly*)(buffer+sizeof(d3dhead));
 	ahead = (const a3dhead*)(buffer2);
+
+	// set counters and reject zero counts before they are divided by or
+	// used to size the vertex arrays.
+	numVerts = dhead->numverts;
+	numFrames = ahead->numframes;
+	numPolys = dhead->numpolys;
+	if (numVerts <= 0 || numFrames <= 0 || numPolys <= 0)
+	{
+		Printf("LoadModel: UE1 model file has invalid counts\n");
+		return;
+	}
+	if ((size_t)numPolys > (lump.size() - sizeof(d3dhead)) / sizeof(d3dpoly))
+	{
+		Printf("LoadModel: UE1 model file too short\n");
+		return;
+	}
+	if ((size_t)numFrames * ahead->framesize > lump2.size() - sizeof(a3dhead))
+	{
+		Printf("LoadModel: UE1 animation file too short\n");
+		return;
+	}
+
 	// detect deus ex format
 	if ( (ahead->framesize/dhead->numverts) == 8 )
 	{
@@ -86,13 +122,14 @@ void FUE1Model::LoadGeometry()
 	}
 	else
 	{
+		if (ahead->framesize < numVerts * 4)
+		{
+			Printf("LoadModel: UE1 animation file has an invalid frame size\n");
+			return;
+		}
 		averts = (const uint32_t*)(buffer2+sizeof(a3dhead));
 		dxverts = nullptr;
 	}
-	// set counters
-	numVerts = dhead->numverts;
-	numFrames = ahead->numframes;
-	numPolys = dhead->numpolys;
 	numGroups = 0;
 	// populate vertex arrays
 	for ( int i=0; i<numFrames; i++ )
@@ -125,9 +162,11 @@ void FUE1Model::LoadGeometry()
 	for ( int i=0; i<numPolys; i++ )
 	{
 		UE1Poly Poly;
-		// set indices
+		// set indices, clamping references to vertices which do not exist
+		// (the poly index arrays assume one entry per d3dpoly, so the entry
+		// must stay even for a degenerate poly)
 		for ( int j=0; j<3; j++ )
-			Poly.V[j] = dpolys[i].vertices[j];
+			Poly.V[j] = min((int)dpolys[i].vertices[j], numVerts-1);
 		// unpack coords
 		for ( int j=0; j<3; j++ )
 			Poly.C[j] = FVector2(dpolys[i].uv[j][0]/255.f,dpolys[i].uv[j][1]/255.f);
@@ -252,7 +291,7 @@ void FUE1Model::RenderFrame( FModelRenderer *renderer, FGameTexture *skin, int f
 		if ( !sskin )
 		{
 			int ssIndex = groups[i].texNum;
-			if (surfaceskinids && surfaceskinids[ssIndex].isValid())
+			if (surfaceskinids && ssIndex >= 0 && ssIndex < MD3_MAX_SURFACES && surfaceskinids[ssIndex].isValid())
 				sskin = TexMan.GetGameTexture(surfaceskinids[ssIndex], true);
 			if ( !sskin )
 			{
@@ -315,7 +354,7 @@ void FUE1Model::AddSkins( uint8_t *hitlist, const FTextureID* surfaceskinids)
 	for (int i = 0; i < numGroups; i++)
 	{
 		int ssIndex = groups[i].texNum;
-		if (surfaceskinids && surfaceskinids[ssIndex].isValid())
+		if (surfaceskinids && ssIndex >= 0 && ssIndex < MD3_MAX_SURFACES && surfaceskinids[ssIndex].isValid())
 			hitlist[surfaceskinids[ssIndex].GetIndex()] |= FTextureManager::HIT_Flat;
 	}
 }

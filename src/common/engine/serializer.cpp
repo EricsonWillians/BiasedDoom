@@ -146,6 +146,13 @@ bool FSerializer::OpenReader(const char *buffer, size_t length)
 
 	mErrors = 0;
 	r = new FReader(buffer, length);
+	if (r->mFailed)
+	{
+		// Invalid JSON: treat like any other unreadable input.
+		delete r;
+		r = nullptr;
+		return false;
+	}
 	return true;
 }
 
@@ -160,6 +167,14 @@ bool FSerializer::OpenReader(FCompressedBuffer *input)
 	if (input->mSize <= 0 || input->mBuffer == nullptr) return false;
 	if (w != nullptr || r != nullptr) return false;
 
+	// A corrupt or hostile archive can claim a huge uncompressed size,
+	// so cap it before trusting it for an allocation.
+	if (input->mSize > 256 * 1024 * 1024)
+	{
+		Printf(TEXTCOLOR_RED "compressed snapshot claims an implausible size\n");
+		return false;
+	}
+
 	mErrors = 0;
 	if (input->mMethod == METHOD_STORED)
 	{
@@ -168,8 +183,16 @@ bool FSerializer::OpenReader(FCompressedBuffer *input)
 	else
 	{
 		TArray<char> unpacked(input->mSize);
-		input->Decompress(unpacked.Data());
+		// A failed decompression means the snapshot is corrupt.
+		if (!input->Decompress(unpacked.Data()))
+			return false;
 		r = new FReader(unpacked.Data(), input->mSize);
+	}
+	if (r->mFailed)
+	{
+		delete r;
+		r = nullptr;
+		return false;
 	}
 	return true;
 }
@@ -860,9 +883,16 @@ FSerializer &FSerializer::SerializeMemory(const char *key, void* mem, size_t len
 	else
 	{
 		auto cp = GetString(key);
-		if (key)
+		if (cp != nullptr)
 		{
 			base64_decode(mem, length, cp);
+		}
+		else
+		{
+			// A missing or non-string value must not reach the decoder.
+			memset(mem, 0, length);
+			Printf(TEXTCOLOR_RED "string type expected for '%s'\n", key);
+			mErrors++;
 		}
 	}
 	return *this;
@@ -1208,11 +1238,11 @@ FSerializer &Serialize(FSerializer &arc, const char *key, FTextureID &value, FTe
 		{
 			if (val->IsArray())
 			{
-				const rapidjson::Value &nameval = (*val)[0];
-				const rapidjson::Value &typeval = (*val)[1];
-				assert(nameval.IsString() && typeval.IsInt());
-				if (nameval.IsString() && typeval.IsInt())
+				// A truncated array cannot name a texture; check the size before indexing.
+				if (val->Size() >= 2 && (*val)[0].IsString() && (*val)[1].IsInt())
 				{
+					const rapidjson::Value &nameval = (*val)[0];
+					const rapidjson::Value &typeval = (*val)[1];
 					value = TexMan.GetTextureID(UnicodeToString(nameval.GetString()), static_cast<ETextureType>(typeval.GetInt()));
 				}
 				else

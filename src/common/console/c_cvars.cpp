@@ -1336,8 +1336,23 @@ void C_ReadCVars (TArrayView<uint8_t>& demo_p)
 	char *ptr = (char *)demo_p.Data();
 	char *breakpt;
 
-	if (*ptr++ != '\\')
+	// The string must be terminated inside the buffer; otherwise the
+	// strchr() scans below could run past the end of the stream.
+	if (demo_p.Size() < 2 || memchr(ptr, '\0', demo_p.Size()) == NULL)
+	{
+		// Drain the view so the malformed bytes cannot be parsed as
+		// following fields by the caller.
+		AdvanceStream(demo_p, demo_p.Size());
 		return;
+	}
+
+	if (*ptr++ != '\\')
+	{
+		// Drain the view like the other malformed paths so the caller cannot
+		// parse the blob's first byte as the following loadgame flag.
+		AdvanceStream(demo_p, demo_p.Size());
+		return;
+	}
 
 	if (*ptr == '\\')
 	{       // compact mode
@@ -1347,6 +1362,13 @@ void C_ReadCVars (TArrayView<uint8_t>& demo_p)
 
 		ptr++;
 		breakpt = strchr (ptr, '\\');
+		if (breakpt == NULL)
+		{ // Malformed compact string with no filter terminator. Drain the
+		  // view so the caller cannot parse the malformed bytes as following
+		  // fields.
+			AdvanceStream(demo_p, demo_p.Size());
+			return;
+		}
 		*breakpt = 0;
 		filter = strtoul (ptr, NULL, 16);
 		*breakpt = '\\';

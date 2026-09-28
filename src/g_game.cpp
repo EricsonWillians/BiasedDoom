@@ -2223,6 +2223,10 @@ void G_DoLoadGame ()
 		("globalfreeze", globalfreeze)
 		("startpos", startpos)
 		("laststartpos", laststartpos);
+	// A corrupted save could carry a zero ticrate, which would make the
+	// Scale() below divide by zero.
+	if (time[0] < 1)
+		time[0] = 1;
 	// dearchive all the modifications
 	level.time = Scale(time[1], TICRATE, time[0]);
 
@@ -2244,6 +2248,8 @@ void G_DoLoadGame ()
 
 	NextSkill = -1;
 	arc("nextskill", NextSkill);
+	// A corrupted save can carry an out-of-range skill index; DoLoadLevel applies it unchecked.
+	NextSkill = std::clamp(NextSkill, -1, (int)AllSkills.Size() - 1);
 	Net_SetWaiting();
 
 	if (level.info != nullptr)
@@ -2902,6 +2908,11 @@ bool G_ProcessIFFDemo (FString &mapname)
 		playeringame[i] = 0;
 
 	len = ReadInt32 (demo_p);
+	if (len < 0 || size_t(len) + (len & 1) > demo_p.Size())
+	{ // negative or larger than the remaining buffer: mangled FORM length
+		Printf ("Demo is mangled!\n");
+		return true;
+	}
 	zdemformend = demo_p.Data() + len + (len & 1);
 
 	// Check to make sure this is a ZDEM chunk file.
@@ -2920,6 +2931,11 @@ bool G_ProcessIFFDemo (FString &mapname)
 	{
 		id = ReadInt32 (demo_p);
 		len = ReadInt32 (demo_p);
+		if (len < 0 || size_t(len) + (len & 1) > size_t(zdemformend - demo_p.Data()))
+		{ // negative or rewinding chunk length: never walk backwards
+			Printf ("Demo is mangled!\n");
+			return true;
+		}
 		nextchunk = demo_p.Data() + len + (len & 1);
 		if (nextchunk > zdemformend)
 		{
@@ -2959,6 +2975,11 @@ bool G_ProcessIFFDemo (FString &mapname)
 				FRandom::StaticClearRandom ();
 			}
 			consoleplayer = ReadInt8(demo_p);
+			if (consoleplayer >= MAXPLAYERS)
+			{
+				Printf ("Demo is mangled!\n");
+				return true;
+			}
 			break;
 
 		case VARS_ID:
@@ -2967,6 +2988,11 @@ bool G_ProcessIFFDemo (FString &mapname)
 
 		case UINF_ID:
 			i = ReadInt8 (demo_p);
+			if (i >= MAXPLAYERS)
+			{
+				Printf ("Demo is mangled!\n");
+				return true;
+			}
 			if (!playeringame[i])
 			{
 				playeringame[i] = 1;

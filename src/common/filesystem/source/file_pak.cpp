@@ -69,9 +69,16 @@ static bool OpenPak(FResourceFile* file, LumpFilterInfo* filter)
 
 	auto Reader = file->GetContainerReader();
 	Reader->Read(&header, sizeof(header));
+	header.dirofs = LittleLong(header.dirofs);
+	header.dirlen = LittleLong(header.dirlen);
+
+	// The directory must fit inside the file.
+	if ((uint64_t)header.dirofs + header.dirlen > (uint64_t)Reader->GetLength())
+	{
+		return false;
+	}
 	uint32_t NumLumps = header.dirlen / sizeof(dpackfile_t);
 	auto Entries = file->AllocateEntries(NumLumps);
-	header.dirofs = LittleLong(header.dirofs);
 
 	Reader->Seek (header.dirofs, FileReader::SeekSet);
 	auto fd = Reader->Read (NumLumps * sizeof(dpackfile_t));

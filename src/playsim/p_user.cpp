@@ -478,7 +478,9 @@ DEFINE_ACTION_FUNCTION(_PlayerInfo, SetSubtitleNumber)
 
 int player_t::GetSpawnClass()
 {
-	const PClass * type = PlayerClasses[CurrentPlayerClass].Type;
+	// A corrupted class index must not read outside the class list.
+	int clsnum = clamp(CurrentPlayerClass, 0, (int)PlayerClasses.Size() - 1);
+	const PClass * type = PlayerClasses[clsnum].Type;
 	return GetDefaultByType(type)->IntVar(NAME_SpawnMask);
 }
 
@@ -1756,6 +1758,9 @@ void player_t::Serialize(FSerializer &arc)
 
 	if (arc.isReading())
 	{
+		// A corrupted save can null out the player pawn; dereferencing it below would crash.
+		if (mo == nullptr)
+			I_Error("Failed to load savegame: player pawn is missing");
 		userinfo.Reset(mo->Level->PlayerNum(this));
 		ReadUserInfo(arc, userinfo, skinname);
 	}
