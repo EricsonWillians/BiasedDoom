@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.16] - 2026-09-28
+
 ### Added
 
 - New console options, exposed under System > Console in the options menu:
