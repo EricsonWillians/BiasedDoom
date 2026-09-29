@@ -227,6 +227,7 @@ height falloff, turbulence, and directional gradients.
 | 15 | Polar Whiteout | Bright, cold, low-contrast distance loss. |
 | 16 | Cathedral Haze | Luminous vertical shafts with gentle depth. |
 | 17 | Analog Sepia | Murky brown-black found-footage haze. |
+| 18 | Absolution | Doom 64-inspired oppressive blue-violet gloom. |
 
 ### Sky fog (physical horizon matching)
 

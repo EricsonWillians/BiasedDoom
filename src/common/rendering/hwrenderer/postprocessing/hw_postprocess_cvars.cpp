@@ -25,7 +25,7 @@
 static int GApplyingPresetCount = 0;
 static constexpr int MaxGraphicsPreset = 64;
 static constexpr int MaxLightingPreset = 39;
-static constexpr int MaxFogPreset = 17;
+static constexpr int MaxFogPreset = 18;
 static constexpr int MaxSelectableTonemap = 14;
 
 // Each graphics preset pairs with one named lighting preset and one named fog
@@ -743,6 +743,23 @@ static void ApplyFogPreset(int preset)
     bd_fog_turbulence = 0.22f;
     bd_fog_turbulence_scale = 0.009f;
     SetFogGradientPreset(2, 0x120f0d, 0.30f, 1.15f, 12.0f, -6.0f);
+    break;
+  case 18: // Absolution: Doom 64-inspired oppressive blue-violet gloom with
+           // murky indigo depth walls and a near-black gradient floor.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 185.0f;
+    SetFogPresetColor(0x272d4e);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.72f;
+    bd_fog_sky_strength = 0.95f;
+    bd_fog_thick_distance = 430.0f;
+    bd_fog_thick_multiplier = 5.5f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 1.10f;
+    bd_fog_turbulence = 0.18f;
+    bd_fog_turbulence_scale = 0.009f;
+    SetFogGradientPreset(2, 0x0d0f22, 0.38f, 1.20f, 0.0f, -6.0f);
     break;
   default:
     break;
