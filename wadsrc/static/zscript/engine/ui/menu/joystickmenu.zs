@@ -520,7 +520,7 @@ class OptionMenuItemJoyConfigMenu : OptionMenuItemSubmenu
 				opt.mItems.Push(it);
 			}
 
-			it = new("OptionMenuSliderJoySensitivity").Init("$JOYMNU_OVRSENS", 0, 2, 0.1, 3, joy);
+			it = new("OptionMenuSliderJoySensitivity").Init("$JOYMNU_OVRSENS", 0, 4, 0.05, 3, joy);
 			opt.mItems.Push(it);
 
 			if (joy.HasHaptics())
@@ -547,7 +547,7 @@ class OptionMenuItemJoyConfigMenu : OptionMenuItemSubmenu
 
 					it = new("OptionMenuItemStaticText").Init(joy.GetAxisName(i), false);
 					opt.mItems.Push(it);
-					it = new("OptionMenuSliderJoyScale").Init("$JOYMNU_OVRSENS", i, 0, 4, 0.1, 3, joy);
+					it = new("OptionMenuSliderJoyScale").Init("$JOYMNU_OVRSENS", i, 0, 4, 0.05, 3, joy);
 					opt.mItems.Push(it);
 					it = new("OptionMenuItemInverter").Init("$JOYMNU_INVERT", i, false, joy);
 					opt.mItems.Push(it);

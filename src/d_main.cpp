@@ -215,22 +215,31 @@ extern bool insave;
 extern TDeletingArray<FLightDefaults *> LightDefaults;
 extern FName MessageBoxClass;
 
-CUSTOM_CVAR(Float, i_timescale, 1.0f, CVAR_NOINITCALL | CVAR_VIRTUAL)
+// Not CVAR_NOINITCALL: the initial callback replay in FBaseCVar::EnableCallbacks()
+// applies a value planted by +i_timescale before callbacks were enabled.
+CUSTOM_CVAR(Float, i_timescale, 1.0f, 0)
 {
 	if (netgame)
 	{
 		Printf("Time scale cannot be changed in net games.\n");
 		self = 1.0f;
 	}
-	else if (self >= 0.05f)
+	else if (demorecording || demoplayback)
 	{
-		I_FreezeTime(true);
-		TimeScale = self;
-		I_FreezeTime(false);
+		// Demos record per-tic commands; a scaled recording would play back wrong.
+		Printf("Time scale cannot be changed while recording or playing a demo.\n");
+		self = 1.0f;
 	}
 	else
 	{
-		Printf("Time scale must be at least 0.05!\n");
+		if (self < 0.05f)
+		{
+			Printf("Time scale must be at least 0.05!\n");
+			self = 0.05f;
+		}
+		I_FreezeTime(true);
+		TimeScale = self;
+		I_FreezeTime(false);
 	}
 }
 

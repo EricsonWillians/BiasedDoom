@@ -256,7 +256,7 @@ The project contains approximately **1,195 source files** (~596 `.cpp`, ~574 `.h
 | `vcpkg.json` | Dependency manifest |
 | `src/version.h` | Version and build info (`4.15pre`) |
 | `src/doomdef.h` | Core engine definitions and constants |
-| `src/d_main.cpp` | Main entry point and game loop |
+| `src/d_main.cpp` | Main entry point and game loop; owns the `i_timescale` game-speed cvar (stored, not virtual; menu-exposed as "Game speed" in GameplayOptions; session-only; rejected in netgames and during demo record/playback; floor 0.05) |
 | `src/common/models/model.h` | Base model class (`FModel`) |
 | `src/common/models/model_gltf.h` | glTF model class (`FGLTFModel`) |
 | `src/common/rendering/hw_material_pbr.h` | PBR material definitions |

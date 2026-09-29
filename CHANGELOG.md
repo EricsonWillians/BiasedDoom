@@ -18,9 +18,21 @@ All notable changes to this project will be documented in this file.
   default backquote binding for `toggleconsole`, exercises the new console
   cvars, and pixel-compares baseline/open/closed console screenshots
   captured through a Python driver PK3.
+- Game-speed control: the Gameplay options menu now has a "Game speed"
+  slider (0.1x-4x) backed by `i_timescale`, which is no longer a virtual
+  cvar, so the stored value is reported truthfully by console queries,
+  `bd.get_timescale()`, and the FPS counter's scale compensation. The
+  setting stays session-only (not archived) and is now also rejected while
+  recording or playing a demo (demos record per-tic commands and would
+  play back at the wrong pace), alongside the existing netgame guard.
 
 ### Changed
 
+- Mouse and joystick sensitivity sliders gained finer granularity and wider
+  ranges: mouse sensitivity 0.05-16 in 0.01 steps (was 0.1-8 in 0.05),
+  mouse turn/mouselook/forward/strafe speeds and joystick turn/look speeds
+  0-4 in 0.05 steps (was 0-2.5 in 0.1), joystick device sensitivity 0-4
+  in 0.05 steps (was 0-2 in 0.1), and per-axis scale steps of 0.05.
 - The `map_load` Python event now carries `from_hub` (true when the map was
   entered by reopening a hub snapshot) alongside `from_savegame`, so mods and
   frameworks can tell hub restores apart from savegame restores.

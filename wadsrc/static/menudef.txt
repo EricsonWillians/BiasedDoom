@@ -1295,13 +1295,13 @@ OptionMenu "MouseOptions" protected
 	}
 	Option "$MOUSEMNU_CURSOR",			"vid_cursor", "Cursors"
 	StaticText 	""
-	Slider "$MOUSEMNU_SENSITIVITY_X",	"m_sensitivity_x", 0.1, 8, 0.05
-	Slider "$MOUSEMNU_SENSITIVITY_Y",	"m_sensitivity_y", 0.1, 8, 0.05
+	Slider "$MOUSEMNU_SENSITIVITY_X",	"m_sensitivity_x", 0.05, 16, 0.01
+	Slider "$MOUSEMNU_SENSITIVITY_Y",	"m_sensitivity_y", 0.05, 16, 0.01
 	StaticText 	""
-	Slider "$MOUSEMNU_TURNSPEED",		"m_yaw", 0, 2.5, 0.1
-	Slider "$MOUSEMNU_MOUSELOOKSPEED",	"m_pitch", 0, 2.5, 0.1
-	Slider "$MOUSEMNU_FORWBACKSPEED",	"m_forward", 0, 2.5, 0.1
-	Slider "$MOUSEMNU_STRAFESPEED",		"m_side", 0, 2.5, 0.1
+	Slider "$MOUSEMNU_TURNSPEED",		"m_yaw", 0, 4, 0.05
+	Slider "$MOUSEMNU_MOUSELOOKSPEED",	"m_pitch", 0, 4, 0.05
+	Slider "$MOUSEMNU_FORWBACKSPEED",	"m_forward", 0, 4, 0.05
+	Slider "$MOUSEMNU_STRAFESPEED",		"m_side", 0, 4, 0.05
 	StaticText 	""
 	Option "$MOUSEMNU_ALWAYSMOUSELOOK",	"freelook", "OnOff"
 	Option "$MOUSEMNU_INVERTMOUSEX",	"invertmousex", "OnOff"
@@ -1329,8 +1329,8 @@ OptionMenu "JoystickOptionsDefaults" protected
 		Option "$JOYMNU_PS2", "joy_ps2raw", "YesNo"
 	}
 	StaticText ""
-	Slider "$JOYMNU_TURNSPEED",			"cl_analog_sensitivity_yaw", 0, 2.5, 0.1
-	Slider "$JOYMNU_LOOKSPEED",			"cl_analog_sensitivity_pitch", 0, 2.5, 0.1
+	Slider "$JOYMNU_TURNSPEED",			"cl_analog_sensitivity_yaw", 0, 4, 0.05
+	Slider "$JOYMNU_LOOKSPEED",			"cl_analog_sensitivity_pitch", 0, 4, 0.05
 	Option "$JOYMNU_ANALOGSTRAFERUN",	"cl_analog_straferun", "OnOff"
 	StaticText ""
 	Submenu "$OPTMNU_HAPTICS",			"HapticsOptions"
@@ -2386,6 +2386,8 @@ OptionMenu GameplayOptions protected
 	Position -35
 	Title 	"$GMPLYMNU_TITLE"
 	//Indent 222
+	Slider "Game speed",					"i_timescale", 0.1, 4.0, 0.05
+	StaticText " "
 	Submenu "$GMPLYMNU_DEATHMATCH",				"DeathmatchOptions"
 	Submenu "$GMPLYMNU_COOPERATIVE",			"CoopOptions"
 	StaticText " "
