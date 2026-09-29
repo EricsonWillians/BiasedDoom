@@ -115,6 +115,7 @@ TArray<spechit_t> portalhit;
 
 EXTERN_CVAR(Bool, net_limitconversations)
 EXTERN_CVAR(Bool, haptics_do_menus)
+EXTERN_CVAR(Bool, bd_classic_autoaim)
 
 //==========================================================================
 //
@@ -4557,6 +4558,16 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 {
 	double shootz = t1->Center() - t1->Floorclip + t1->AttackOffset();
 
+	// Classic aiming context: monsters always get it, players only when the
+	// level does not allow freelook. Vanilla Doom does not stop its vertical
+	// autoaim at a fixed cone — it keeps widening the slope search on a miss,
+	// so steeply elevated targets stay hittable without any manual aiming.
+	// Without this the fixed 35 degree cone below makes monsters on high
+	// ledges unhittable in the classic no-freelook play style.
+	static const double classicRanges[] = { 35., 50., 65., 80. };
+	const bool classicAim = (vrange == nullAngle) && (t1->player == NULL || !t1->Level->IsFreelookAllowed());
+	int rangeStep = 0;
+
 	// can't shoot outside view angles
 	if (vrange == nullAngle)
 	{
@@ -4565,7 +4576,10 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 			auto weapon = t1->player->ReadyWeapon;
 			bool weaponDisablesAutoaim = weapon != nullptr &&
 				(weapon->IntVar(NAME_WeaponFlags) & WIF_NOAUTOAIM) &&
-				!(flags & ALF_NOWEAPONCHECK);
+				!(flags & ALF_NOWEAPONCHECK) &&
+				// User opt-in for the classic play style: keep autoaim even when a
+				// mod (e.g. Brutal Doom) flags its whole arsenal NOAUTOAIM.
+				!bd_classic_autoaim;
 			bool playerDisablesAutoaim = t1->player->userinfo.GetAimDist() <= 0 &&
 				!(flags & ALF_IGNORENOAUTOAIM);
 			if (target == nullptr && (weaponDisablesAutoaim || playerDisablesAutoaim))
@@ -4578,9 +4592,9 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 			}
 		}
 
-		if (t1->player == NULL || !t1->Level->IsFreelookAllowed())
+		if (classicAim)
 		{
-			vrange = DAngle::fromDeg(35.);
+			vrange = DAngle::fromDeg(classicRanges[0]);
 		}
 		else
 		{
@@ -4590,38 +4604,51 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 		}
 	}
 
-	aim_t aim;
+	AimTarget result;
+	result.Clear();
 
-	aim.flags = flags;
-	aim.shootthing = t1;
-	aim.friender = (friender == NULL) ? t1 : friender;
-	aim.aimdir = aim_t::aim_up | aim_t::aim_down;
-	aim.startpos = t1->Pos();
-	aim.aimtrace = angle.ToVector(distance);
-	aim.limitz = aim.shootz = shootz;
-	aim.toppitch = t1->Angles.Pitch - vrange;
-	aim.bottompitch = t1->Angles.Pitch + vrange;
-	aim.attackrange = distance;
-	aim.aimpitch = t1->Angles.Pitch;
-	aim.lastsector = t1->Sector;
-	aim.startfrac = 0;
-	aim.unlinked = false;
-	aim.aimtarget = target;
+	for (;;)
+	{
+		aim_t aim;
 
-	aim.AimTraverse();
+		aim.flags = flags;
+		aim.shootthing = t1;
+		aim.friender = (friender == NULL) ? t1 : friender;
+		aim.aimdir = aim_t::aim_up | aim_t::aim_down;
+		aim.startpos = t1->Pos();
+		aim.aimtrace = angle.ToVector(distance);
+		aim.limitz = aim.shootz = shootz;
+		aim.toppitch = t1->Angles.Pitch - vrange;
+		aim.bottompitch = t1->Angles.Pitch + vrange;
+		aim.attackrange = distance;
+		aim.aimpitch = t1->Angles.Pitch;
+		aim.lastsector = t1->Sector;
+		aim.startfrac = 0;
+		aim.unlinked = false;
+		aim.aimtarget = target;
 
-	AimTarget *result = aim.Result();
+		aim.AimTraverse();
+
+		result = *aim.Result();
+
+		// On a miss, widen the vertical search like vanilla does.
+		if (result.linetarget != nullptr || !classicAim || rangeStep >= (int)countof(classicRanges) - 1)
+		{
+			break;
+		}
+		vrange = DAngle::fromDeg(classicRanges[++rangeStep]);
+	}
 
 	if (pLineTarget)
 	{
-		*pLineTarget = *result;
+		*pLineTarget = result;
 	}
 
-	DAngle newPitch = P_AimLineAttack_ShadowHandling(t1,target,result->linetarget,shootz);
+	DAngle newPitch = P_AimLineAttack_ShadowHandling(t1,target,result.linetarget,shootz);
 	if (newPitch != nullAngle)
-		result->pitch = newPitch;
+		result.pitch = newPitch;
 
-	return result->linetarget ? result->pitch : t1->Angles.Pitch;
+	return result.linetarget ? result.pitch : t1->Angles.Pitch;
 }
 
 //==========================================================================

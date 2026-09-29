@@ -1328,6 +1328,15 @@ void P_PlayerThink (player_t *player)
 		player->angleOffsetTargets[i] = nullAngle;
 	}
 
+	// When the level does not allow freelook, keep the view pitch pinned to
+	// the horizon. Mod scripts (A_Recoil/A_SetPitch) can otherwise still tilt
+	// the view, which silently defeats the classic no-verticality play style
+	// and drags the autoaim cone off-center with it.
+	if (!primaryLevel->IsFreelookAllowed())
+	{
+		player->mo->Angles.Pitch = nullAngle;
+	}
+
 	if (player->SubtitleCounter > 0)
 	{
 		player->SubtitleCounter--;

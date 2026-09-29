@@ -224,6 +224,15 @@ CVAR (Float, cl_analog_sensitivity_pitch,	0.6f,	CVAR_GLOBALCONFIG|CVAR_ARCHIVE)
 
 CVAR (Bool, cl_analog_straferun, false, CVAR_GLOBALCONFIG|CVAR_ARCHIVE)
 
+// Opt-in escape hatch for the classic no-freelook play style: some mods
+// (e.g. Brutal Doom) mark their entire arsenal NOAUTOAIM, which silently
+// disables all autoaim even when freelook is off and the menu says it is
+// on. When this is set, weapons are treated as autoaim-capable regardless
+// of the mod's flag. Off by default so mod intent is respected; the classic
+// gamepad layout presets enable it (and Modern disables it) so the classic
+// experience keeps working under such mods.
+CVARD (Bool, bd_classic_autoaim, false, CVAR_GLOBALCONFIG|CVAR_ARCHIVE, "treat weapons as autoaim-capable even when a mod marks them NOAUTOAIM")
+
 int 			turnheld;								// for accelerative turning 
 
 EXTERN_CVAR (Bool, invertmouse)
