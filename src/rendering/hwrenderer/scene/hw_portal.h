@@ -8,6 +8,7 @@
 #include "hwrenderer/scene/hw_drawstructs.h"
 #include "hw_renderstate.h"
 #include "hw_material.h"
+#include "hw_skydome.h"
 
 class FSkyBox;
 
@@ -27,8 +28,7 @@ struct HWSkyInfo
 	bool mirrored;
 	bool doublesky;
 	bool sky2;
-	PalEntry fadecolor;
-	uint8_t fogalpha;
+	FSkyFogParams fogParams;
 
 	bool operator==(const HWSkyInfo & inf)
 	{

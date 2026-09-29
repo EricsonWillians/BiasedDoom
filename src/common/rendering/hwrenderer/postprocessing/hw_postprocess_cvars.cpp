@@ -494,14 +494,13 @@ static void ApplyFogPreset(int preset)
     bd_fog_density = 0.0f;
     bd_fog_color_mode = 0;
     bd_fog_color_strength = 0.0f;
-    bd_fog_sky_strength = 0.40f;
+    bd_fog_sky_strength = 0.85f;
     bd_fog_thick_distance = 0.0f;
     bd_fog_thick_multiplier = 1.0f;
     bd_fog_quality = 1;
-    bd_fog_height_falloff = 0.18f;
+    bd_fog_height_falloff = 0.45f;
     bd_fog_turbulence = 0.06f;
     bd_fog_turbulence_scale = 0.010f;
-    bd_fog_sky_horizon = 0.62f;
     SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
     break;
   case 3: // Light, gameplay-friendly natural haze.
@@ -511,14 +510,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0xb7c0ba);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.18f;
-    bd_fog_sky_strength = 0.42f;
+    bd_fog_sky_strength = 0.90f;
     bd_fog_thick_distance = 1150.0f;
     bd_fog_thick_multiplier = 1.7f;
     bd_fog_quality = 1;
-    bd_fog_height_falloff = 0.35f;
+    bd_fog_height_falloff = 0.50f;
     bd_fog_turbulence = 0.10f;
     bd_fog_turbulence_scale = 0.009f;
-    bd_fog_sky_horizon = 0.72f;
     SetFogGradientPreset(1, 0x66706a, 0.10f, 0.65f, 0.0f, 0.0f);
     break;
   case 4: // Layered cinematic atmosphere.
@@ -528,14 +526,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x9da49c);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.48f;
-    bd_fog_sky_strength = 0.62f;
+    bd_fog_sky_strength = 0.95f;
     bd_fog_thick_distance = 590.0f;
     bd_fog_thick_multiplier = 3.8f;
     bd_fog_quality = 2;
-    bd_fog_height_falloff = 0.72f;
+    bd_fog_height_falloff = 1.20f;
     bd_fog_turbulence = 0.22f;
     bd_fog_turbulence_scale = 0.008f;
-    bd_fog_sky_horizon = 0.78f;
     SetFogGradientPreset(1, 0x3d4740, 0.24f, 0.95f, 0.0f, 0.0f);
     break;
   case 5: // Dense readable horror fog.
@@ -545,14 +542,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x747c72);
     bd_fog_color_mode = 1;
     bd_fog_color_strength = 0.76f;
-    bd_fog_sky_strength = 0.84f;
+    bd_fog_sky_strength = 0.95f;
     bd_fog_thick_distance = 340.0f;
     bd_fog_thick_multiplier = 7.5f;
     bd_fog_quality = 2;
-    bd_fog_height_falloff = 1.15f;
+    bd_fog_height_falloff = 1.35f;
     bd_fog_turbulence = 0.30f;
     bd_fog_turbulence_scale = 0.011f;
-    bd_fog_sky_horizon = 0.88f;
     SetFogGradientPreset(2, 0x202820, 0.42f, 1.30f, 0.0f, -8.0f);
     break;
   case 6: // Warm directional haze for large outdoor scenes.
@@ -562,14 +558,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x9b8875);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.55f;
-    bd_fog_sky_strength = 0.68f;
+    bd_fog_sky_strength = 0.95f;
     bd_fog_thick_distance = 520.0f;
     bd_fog_thick_multiplier = 4.5f;
     bd_fog_quality = 2;
-    bd_fog_height_falloff = 0.62f;
+    bd_fog_height_falloff = 1.60f;
     bd_fog_turbulence = 0.18f;
     bd_fog_turbulence_scale = 0.006f;
-    bd_fog_sky_horizon = 0.82f;
     SetFogGradientPreset(2, 0x392719, 0.32f, 1.05f, 28.0f, -5.0f);
     break;
   case 7: // Morning Mist: soft cool white-blue haze, gentle gradient.
@@ -579,14 +574,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0xc9d6de);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.35f;
-    bd_fog_sky_strength = 0.50f;
+    bd_fog_sky_strength = 0.90f;
     bd_fog_thick_distance = 800.0f;
     bd_fog_thick_multiplier = 2.5f;
     bd_fog_quality = 1;
-    bd_fog_height_falloff = 0.50f;
+    bd_fog_height_falloff = 0.85f;
     bd_fog_turbulence = 0.08f;
     bd_fog_turbulence_scale = 0.008f;
-    bd_fog_sky_horizon = 0.70f;
     SetFogGradientPreset(1, 0x8fa5b5, 0.14f, 0.80f, 0.0f, 0.0f);
     break;
   case 8: // Toxic Haze: green-yellow tint, thick mid-distance fog.
@@ -596,14 +590,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x8f9c46);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.60f;
-    bd_fog_sky_strength = 0.60f;
+    bd_fog_sky_strength = 0.95f;
     bd_fog_thick_distance = 450.0f;
     bd_fog_thick_multiplier = 5.0f;
     bd_fog_quality = 2;
-    bd_fog_height_falloff = 0.80f;
+    bd_fog_height_falloff = 1.10f;
     bd_fog_turbulence = 0.25f;
     bd_fog_turbulence_scale = 0.010f;
-    bd_fog_sky_horizon = 0.80f;
     SetFogGradientPreset(1, 0x4a5226, 0.28f, 1.0f, 0.0f, -3.0f);
     break;
   case 9: // Blackout: near-field visibility with a hard oppressive wall.
@@ -613,14 +606,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x050607);
     bd_fog_color_mode = 1;
     bd_fog_color_strength = 0.78f;
-    bd_fog_sky_strength = 0.80f;
+    bd_fog_sky_strength = 1.00f;
     bd_fog_thick_distance = 300.0f;
     bd_fog_thick_multiplier = 8.0f;
     bd_fog_quality = 2;
     bd_fog_height_falloff = 1.20f;
     bd_fog_turbulence = 0.18f;
     bd_fog_turbulence_scale = 0.008f;
-    bd_fog_sky_horizon = 0.90f;
     SetFogGradientPreset(1, 0x000000, 0.45f, 1.25f, 0.0f, 0.0f);
     break;
   case 10: // Green Valley: soft cool vegetation haze.
@@ -630,14 +622,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x9fbf9a);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.38f;
-    bd_fog_sky_strength = 0.52f;
+    bd_fog_sky_strength = 0.90f;
     bd_fog_thick_distance = 820.0f;
     bd_fog_thick_multiplier = 2.6f;
     bd_fog_quality = 1;
-    bd_fog_height_falloff = 0.42f;
+    bd_fog_height_falloff = 0.85f;
     bd_fog_turbulence = 0.12f;
     bd_fog_turbulence_scale = 0.009f;
-    bd_fog_sky_horizon = 0.72f;
     SetFogGradientPreset(1, 0x6f9470, 0.18f, 0.85f, 0.0f, -4.0f);
     break;
   case 11: // Blue Hour: deep blue dusk falloff.
@@ -647,14 +638,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x50688f);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.58f;
-    bd_fog_sky_strength = 0.68f;
+    bd_fog_sky_strength = 0.95f;
     bd_fog_thick_distance = 560.0f;
     bd_fog_thick_multiplier = 4.2f;
     bd_fog_quality = 2;
-    bd_fog_height_falloff = 0.75f;
+    bd_fog_height_falloff = 1.40f;
     bd_fog_turbulence = 0.16f;
     bd_fog_turbulence_scale = 0.007f;
-    bd_fog_sky_horizon = 0.82f;
     SetFogGradientPreset(2, 0x18243c, 0.34f, 1.10f, -20.0f, -8.0f);
     break;
   case 12: // Crimson Eclipse: directional red-brown gloom.
@@ -664,14 +654,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x7a3b32);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.66f;
-    bd_fog_sky_strength = 0.72f;
+    bd_fog_sky_strength = 0.95f;
     bd_fog_thick_distance = 430.0f;
     bd_fog_thick_multiplier = 5.8f;
     bd_fog_quality = 2;
-    bd_fog_height_falloff = 0.88f;
+    bd_fog_height_falloff = 1.50f;
     bd_fog_turbulence = 0.20f;
     bd_fog_turbulence_scale = 0.009f;
-    bd_fog_sky_horizon = 0.84f;
     SetFogGradientPreset(2, 0x2a0f0c, 0.40f, 1.20f, 36.0f, -6.0f);
     break;
   case 13: // Underwater: dense blue-green depth haze.
@@ -681,14 +670,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x2f6f74);
     bd_fog_color_mode = 1;
     bd_fog_color_strength = 0.70f;
-    bd_fog_sky_strength = 0.78f;
+    bd_fog_sky_strength = 1.00f;
     bd_fog_thick_distance = 380.0f;
     bd_fog_thick_multiplier = 6.4f;
     bd_fog_quality = 2;
     bd_fog_height_falloff = 1.05f;
     bd_fog_turbulence = 0.28f;
     bd_fog_turbulence_scale = 0.012f;
-    bd_fog_sky_horizon = 0.88f;
     SetFogGradientPreset(1, 0x143c42, 0.42f, 1.30f, 0.0f, 0.0f);
     break;
   case 14: // Dust Storm: warm dry rolling dust.
@@ -698,14 +686,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0xb08a5f);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.62f;
-    bd_fog_sky_strength = 0.70f;
+    bd_fog_sky_strength = 0.95f;
     bd_fog_thick_distance = 500.0f;
     bd_fog_thick_multiplier = 5.2f;
     bd_fog_quality = 2;
-    bd_fog_height_falloff = 0.55f;
+    bd_fog_height_falloff = 0.85f;
     bd_fog_turbulence = 0.34f;
     bd_fog_turbulence_scale = 0.014f;
-    bd_fog_sky_horizon = 0.80f;
     SetFogGradientPreset(2, 0x5c4028, 0.34f, 1.15f, 18.0f, -4.0f);
     break;
   case 15: // Polar Whiteout: bright, cold, low-contrast distance loss.
@@ -715,14 +702,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0xdce7ec);
     bd_fog_color_mode = 1;
     bd_fog_color_strength = 0.72f;
-    bd_fog_sky_strength = 0.82f;
+    bd_fog_sky_strength = 1.00f;
     bd_fog_thick_distance = 390.0f;
     bd_fog_thick_multiplier = 6.0f;
     bd_fog_quality = 2;
     bd_fog_height_falloff = 0.35f;
     bd_fog_turbulence = 0.14f;
     bd_fog_turbulence_scale = 0.006f;
-    bd_fog_sky_horizon = 0.86f;
     SetFogGradientPreset(1, 0xb8cbd8, 0.38f, 0.90f, 0.0f, 0.0f);
     break;
   case 16: // Cathedral Haze: luminous vertical shafts and gentle depth.
@@ -732,14 +718,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0xbcae91);
     bd_fog_color_mode = 2;
     bd_fog_color_strength = 0.48f;
-    bd_fog_sky_strength = 0.58f;
+    bd_fog_sky_strength = 0.90f;
     bd_fog_thick_distance = 680.0f;
     bd_fog_thick_multiplier = 3.2f;
     bd_fog_quality = 2;
     bd_fog_height_falloff = 1.35f;
     bd_fog_turbulence = 0.10f;
     bd_fog_turbulence_scale = 0.007f;
-    bd_fog_sky_horizon = 0.76f;
     SetFogGradientPreset(1, 0x766a54, 0.30f, 1.45f, 0.0f, 8.0f);
     break;
   case 17: // Analog Sepia: murky brown-black haze for found-footage horror;
@@ -750,14 +735,13 @@ static void ApplyFogPreset(int preset)
     SetFogPresetColor(0x4b443e);
     bd_fog_color_mode = 1;
     bd_fog_color_strength = 0.62f;
-    bd_fog_sky_strength = 0.58f;
+    bd_fog_sky_strength = 0.95f;
     bd_fog_thick_distance = 420.0f;
     bd_fog_thick_multiplier = 6.0f;
     bd_fog_quality = 2;
-    bd_fog_height_falloff = 0.85f;
+    bd_fog_height_falloff = 1.00f;
     bd_fog_turbulence = 0.22f;
     bd_fog_turbulence_scale = 0.009f;
-    bd_fog_sky_horizon = 0.82f;
     SetFogGradientPreset(2, 0x120f0d, 0.30f, 1.15f, 12.0f, -6.0f);
     break;
   default:
@@ -4444,6 +4428,10 @@ CUSTOM_CVAR(Float, bd_fog_turbulence_scale, 0.008f,
   OnFogFeatureChanged(self);
 }
 
+// DEPRECATED: no longer used by the renderer. The sky veil now derives its
+// elevation curve analytically from the same fog model as the level geometry
+// (see FSkyFogParams), so the hand-tuned horizon weight is obsolete. The cvar
+// stays registered because fog presets and user INIs still assign it.
 CUSTOM_CVAR(Float, bd_fog_sky_horizon, 0.78f,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0.0f)

@@ -38,40 +38,80 @@
 
 CVAR(Bool,gl_noskyboxes, false, 0)
 
-static int CalcBiasedSkyFogAlpha(HWDrawInfo *di, sector_t *sec, PalEntry fadecolor)
+static void CalcSkyFogParams(HWDrawInfo *di, sector_t *sec, PalEntry fadecolor, FSkyFogParams &params)
 {
-	int mapalpha = (di->Level->skyfog > 0 && (fadecolor.d & 0xffffff) != 0) ? clamp<int>(di->Level->skyfog, 0, 255) : 0;
-	if (bd_fog_sky_strength <= 0.0f || bd_fog_mode == 0)
+	// Resolved fog color: biased override/blend when biased fog is active, else
+	// the map's own fade color.
+	PalEntry fogcolor = GetBiasedFogColor(fadecolor, IsBiasedGlobalFogActive() && (fadecolor.d & 0xffffff) == 0);
+	fogcolor.a = 0;
+	params.fogColor = fogcolor;
+
+	// The map-authored 'skyfog' flat veil stays as a floor on the final alpha.
+	params.flatAlpha = (di->Level->skyfog > 0 && (fogcolor.d & 0xffffff) != 0) ? (uint8_t)clamp<int>(di->Level->skyfog, 0, 255) : 0;
+
+	params.strength = 0.0f;
+	// Black fog is distance-based light diminishing, not atmosphere: never veil
+	// the sky for it, or every map would gain a dark horizon band from gl_distfog.
+	if (bd_fog_sky_strength > 0.0f && sec != nullptr && (fogcolor.d & 0xffffff) != 0)
 	{
-		return mapalpha;
+		// One code path for every fog source: GetFogDensity already encodes the
+		// biased global floor (mode 1), the sector boost (mode 2), plain
+		// MAPINFO/sector fog (mode 0) and the huge-map visibility autoscale, so
+		// the sky veil always matches the fog actually applied to geometry.
+		float density = GetFogDensity(di->Level, di->lightmode, sec->lightlevel, fadecolor, sec->Colormap.FogDensity, sec->Colormap.BlendFactor);
+		if (density > 0.0f)
+		{
+			// The sky lies beyond any thick-fog wall, so the wall's extra density
+			// shapes the sky too. Only fold in a fraction of it, though: the
+			// horizon match is density-independent (transmittance hits 0 there
+			// regardless), and the full multiplier (up to 8x) would saturate the
+			// sky all the way to the zenith and erase its texture. 0.35 keeps the
+			// wall present in the sky while leaving a visible zenith gradient.
+			// Mirror the MAPINFO-vs-biased selection used for the shader uniforms.
+			float thickDistance = di->Level->thickfogdistance;
+			float thickMultiplier = di->Level->thickfogmultiplier;
+			if ((IsBiasedGlobalFogActive() || bd_fog_mode == 2) && bd_fog_thick_distance > 0.0f)
+			{
+				thickDistance = bd_fog_thick_distance * BiasedVisibilityScale(di->Level);
+				thickMultiplier = bd_fog_thick_multiplier;
+			}
+			if (thickDistance > 0.0f && thickMultiplier > 0.0f)
+			{
+				density *= 1.0f + thickMultiplier * 0.35f;
+			}
+
+			// Same unit conversion as FRenderState::SetFog: d * (-LOG2E / 64000).
+			params.sigma = density * (-1.4426950408889634f / 64000.0f);
+			params.heightK = clamp<float>(bd_fog_height_falloff, 0.0f, 4.0f) * (1.0f / 256.0f);
+			params.minVisibility = clamp<float>(bd_fog_min_visibility, 0.0f, 1.0f);
+			params.strength = clamp<float>(bd_fog_sky_strength, 0.0f, 1.0f);
+		}
 	}
 
-	float density = 0.0f;
-	if (IsBiasedGlobalFogActive())
+	// Snapshot the spatial gradient so the veil tint can mirror getFogColor().
+	// Same gating as SetBiasedFogGradientUniforms: disabled with biased fog off.
+	params.gradientMode = 0.0f;
+	int gmode = bd_fog_gradient_mode;
+	const float gstrength = clamp<float>(bd_fog_gradient_strength, 0.0f, 1.0f);
+	const float gscale = clamp<float>(bd_fog_gradient_scale, 0.0f, 8.0f);
+	if (bd_fog_mode != 0 && gmode > 0 && gstrength > 0.0f && gscale > 0.0f)
 	{
-		density = max(0.0f, (float)bd_fog_density) * max(0.0f, (float)bd_sector_fog_scale);
-		// Keep the sky veil consistent with the world fog on very large maps:
-		// without this the fixed-radius fog dome becomes an opaque shell
-		// hovering inside tall sky sectors and hides the sky entirely.
-		density /= BiasedVisibilityScale(di->Level);
+		if (gmode > 2) gmode = 2;
+		params.gradientMode = (float)gmode;
+		params.gradientColor = PalEntry((uint32_t)bd_fog_gradient_color & 0xffffff);
+		params.gradientStrength = gstrength;
+		params.gradientScale = gscale;
+		FVector3 dir(0.0f, 1.0f, 0.0f);
+		if (gmode == 2)
+		{
+			constexpr float degToRad = 3.14159265358979323846f / 180.0f;
+			const float yaw = bd_fog_direction_yaw * degToRad;
+			const float pitch = bd_fog_direction_pitch * degToRad;
+			const float cp = cosf(pitch);
+			dir = FVector3(cosf(yaw) * cp, sinf(pitch), sinf(yaw) * cp);
+		}
+		params.gradientDir = dir;
 	}
-	else if (bd_fog_mode == 2 && sec != nullptr)
-	{
-		density = GetFogDensity(di->Level, di->lightmode, sec->lightlevel, fadecolor, sec->Colormap.FogDensity, sec->Colormap.BlendFactor);
-	}
-
-	if (density <= 0.0f)
-	{
-		return mapalpha;
-	}
-
-	// Match the exponential transmittance used by world fog. A virtual sky
-	// distance avoids the old linear clamp, which made medium and dense fog
-	// collapse to almost the same opaque tint.
-	const float opticalDepth = density * 900.0f / 64000.0f;
-	const float opacity = 1.0f - expf(-opticalDepth);
-	int biasedalpha = (int)(255.0f * opacity * clamp<float>(bd_fog_sky_strength, 0.0f, 1.0f) + 0.5f);
-	return max(mapalpha, clamp<int>(biasedalpha, 0, 255));
 }
 
 //===========================================================================
@@ -148,13 +188,7 @@ void HWSkyInfo::init(HWDrawInfo *di, sector_t* sec, int skypos, int sky1, PalEnt
 			x_offset[0] = di->Level->hw_sky1pos;
 		}
 	}
-	fogalpha = CalcBiasedSkyFogAlpha(di, sec, FadeColor);
-	if (fogalpha > 0)
-	{
-		fadecolor = GetBiasedFogColor(FadeColor, IsBiasedGlobalFogActive() && (FadeColor.d & 0xffffff) == 0);
-		fadecolor.a = 0;
-	}
-	else fadecolor = 0;
+	CalcSkyFogParams(di, sec, FadeColor, fogParams);
 
 	texture[2] = TexMan.GetGameTexture(di->Level->skymisttexture, true);
 	x_offset[2] = di->Level->hw_skymistpos;

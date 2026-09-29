@@ -323,10 +323,9 @@ void FSkyVertexBuffer::FogVertexDoom(int r, int c, bool zflip)
 		PalEntry(255, 255, 255, 255));
 	mVertices.Push(vert);
 
-	const float t = clamp(r / (float)mFogRows, 0.0f, 1.0f);
-	const float horizonBlend = t * t * (3.0f - 2.0f * t);
-	const float zenithFalloff = zflip ? 0.45f : 0.82f;
-	mFogAttenuation.Push(zenithFalloff * (1.0f - horizonBlend));
+	// The sine of the vertex elevation is what the analytic sky-fog gradient
+	// needs (signed: the lower hemisphere mirrors the upper one).
+	mFogElevation.Push((zflip ? -1.0f : 1.0f) * height);
 }
 
 //-----------------------------------------------------------------------------
@@ -694,33 +693,81 @@ void FSkyVertexBuffer::RenderDome(FRenderState& state, FGameTexture* tex, float 
 	DoRenderDome(state, tex, mode, false, color);
 }
 
-// Draw atmospheric sky fog on the dome itself. The gradient is carried by the
-// vertex alpha and rendered in one pass, so there are no latitude-sized alpha
-// steps to form rings when the player looks toward the zenith.
-void FSkyVertexBuffer::UpdateFogDomeGradient(float horizonStrength)
+// Draw atmospheric sky fog on the dome itself. The sky is geometry at infinite
+// distance, so the veil alpha per vertex is the limit of the same fog model the
+// level geometry uses: FSkyFogParams::Coverage evaluates the transmittance to
+// infinity through the exponential height fog at the vertex elevation, so the
+// horizon coverage matches fully saturated far walls by construction and the
+// falloff toward the zenith tracks bd_fog_height_falloff exactly. The gradient
+// is carried by the vertex color and rendered in one pass, so there are no
+// latitude-sized steps to form rings when the player looks toward the zenith.
+void FSkyVertexBuffer::UpdateFogDomeGradient(const FSkyFogParams &params)
 {
-	const float horizon = clamp(horizonStrength, 0.0f, 1.0f);
-	if (fabsf(horizon - mFogHorizonStrength) < 0.0001f)
+	if (mFogParamsValid && mFogParams == params)
 	{
 		return;
 	}
 
-	for (unsigned int i = 0; i < mFogAttenuation.Size(); ++i)
+	for (unsigned int i = 0; i < mFogElevation.Size(); ++i)
 	{
-		const float opacity = clamp(1.0f - horizon * mFogAttenuation[i], 0.0f, 1.0f);
-		const uint8_t alpha = (uint8_t)clamp<int>((int)(opacity * 255.0f + 0.5f), 0, 255);
-		mVertices[mFogVertexStart + i].color = PalEntry(alpha, 255, 255, 255);
+		const float sinElev = mFogElevation[i];
+		const float transmittance = params.Transmittance(sinElev);
+		const float fogfactor = params.minVisibility + (1.0f - params.minVisibility) * transmittance;
+		const float coverage = (1.0f - fogfactor) * params.strength;
+		const int rounded = (int)(coverage * 255.0f + 0.5f);
+		const int clamped = rounded < 0 ? 0 : (rounded > 255 ? 255 : rounded);
+		const int alpha = params.flatAlpha > clamped ? params.flatAlpha : clamped;
+
+		// Mirror getFogColor(): the spatial gradient fades out as fog saturates,
+		// so weight it by the same spatialWeight the shader uses. The sky pass
+		// renders the dome around the viewpoint, so the vertex position doubles
+		// as the world offset from the camera.
+		float tintR = params.fogColor.r / 255.0f;
+		float tintG = params.fogColor.g / 255.0f;
+		float tintB = params.fogColor.b / 255.0f;
+		float gStrength = clamp<float>(params.gradientStrength, 0.0f, 1.0f) * clamp(fogfactor * 2.0f, 0.0f, 1.0f);
+		if (params.gradientMode > 0.5f && gStrength > 0.0f && params.gradientScale > 0.0001f)
+		{
+			const FSkyVertex &v = mVertices[mFogVertexStart + i];
+			float coord;
+			if (params.gradientMode < 1.5f)
+			{
+				coord = v.y;
+			}
+			else
+			{
+				coord = v.x * params.gradientDir.X + v.y * params.gradientDir.Y + v.z * params.gradientDir.Z;
+			}
+			const float gradient = clamp(coord * params.gradientScale / 1024.0f + 0.5f, 0.0f, 1.0f);
+			const float w = gradient * gStrength;
+			tintR += (params.gradientColor.r / 255.0f - tintR) * w;
+			tintG += (params.gradientColor.g / 255.0f - tintG) * w;
+			tintB += (params.gradientColor.b / 255.0f - tintB) * w;
+		}
+
+		// PalEntry stores b,g,r,a in memory, but the VFmt_Byte4 vertex
+		// attribute feeds the shader r,g,b,a, so the channels must be swapped
+		// here (same as the cap gradient) or the veil comes out with red and
+		// blue inverted. Alpha already sits in the right byte either way.
+		mVertices[mFogVertexStart + i].color = PalEntry((uint8_t)alpha,
+			(uint8_t)clamp<int>((int)(tintB * 255.0f + 0.5f), 0, 255),
+			(uint8_t)clamp<int>((int)(tintG * 255.0f + 0.5f), 0, 255),
+			(uint8_t)clamp<int>((int)(tintR * 255.0f + 0.5f), 0, 255));
 	}
 	mVertexBuffer->SetSubData(mFogVertexStart * sizeof(FSkyVertex),
-		mFogAttenuation.Size() * sizeof(FSkyVertex), &mVertices[mFogVertexStart]);
-	mFogHorizonStrength = horizon;
+		mFogElevation.Size() * sizeof(FSkyVertex), &mVertices[mFogVertexStart]);
+	mFogParams = params;
+	mFogParamsValid = true;
 }
 
-void FSkyVertexBuffer::RenderFogDome(FRenderState& state, PalEntry color, float horizonStrength)
+void FSkyVertexBuffer::RenderFogDome(FRenderState& state, const FSkyFogParams &params)
 {
-	UpdateFogDomeGradient(horizonStrength);
+	UpdateFogDomeGradient(params);
 	const int rc = mFogRows;
-	state.SetObjectColor(color);
+	// The vertex colors carry both the tinted fog color and the analytic
+	// per-elevation alpha, so the pass modulates with a plain white object
+	// color (final fragment = uObjectColor * vColor).
+	state.SetObjectColor(0xffffffff);
 	RenderRow(state, DT_TriangleFan, 0, mPrimStartFog, true);
 	RenderRow(state, DT_TriangleFan, rc, mPrimStartFog, true);
 	for (int i = 1; i < mFogRows; ++i)

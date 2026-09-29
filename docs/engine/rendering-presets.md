@@ -228,6 +228,48 @@ height falloff, turbulence, and directional gradients.
 | 16 | Cathedral Haze | Luminous vertical shafts with gentle depth. |
 | 17 | Analog Sepia | Murky brown-black found-footage haze. |
 
+### Sky fog (physical horizon matching)
+
+The sky is geometry at infinite distance, so its fog is derived from the same
+atmospheric model as the level geometry instead of a hand-tuned overlay. For
+each fog-dome vertex the engine evaluates the transmittance to *infinity*
+through the exponential height fog used by the fragment shader
+(`T(e) = exp2(sigma / (k * ln2 * sin e))` at elevation `e`), floors it with the
+same `bd_fog_min_visibility` term, and tints it with the same
+`bd_fog_gradient_*` spatial gradient evaluation as `getFogColor()`.
+
+Consequences:
+
+- **No horizon seam on open maps** (e.g. Doom2 MAP13): as elevation approaches
+  the horizon, coverage approaches `1 - bd_fog_min_visibility`, which is exactly
+  the saturation coverage of far walls, so sky and geometry meet in the same
+  color by construction.
+- The elevation profile tracks `bd_fog_height_falloff` and the effective
+  density automatically, for every preset.
+- The veil follows **any** fog that is actually applied to geometry — biased
+  global fog (`bd_fog_mode 1`), sector boost (`2`), *and* plain map-authored
+  fog (MAPINFO `fogdensity` / sector colormaps with `bd_fog_mode 0`). Black
+  fog (distance light-diminishing) never veils the sky, and MAPINFO `skyfog`
+  remains as a flat alpha floor.
+
+`bd_fog_sky_strength` is the horizon-match dial (0 disables the sky veil, 1 is
+the physically exact match), while `bd_fog_height_falloff` is the zenith dial:
+it controls how quickly the sky clears with elevation — the same curve that
+makes geometry fog lie low in valleys. Fog presets are tuned around this
+pairing: scenic presets (Natural Haze, Morning Mist, Green Valley, Cathedral
+Haze) keep zenith coverage near 0.5 so the sky texture stays in the
+composition, atmospheric ones (Cinematic Layers, Directional Dusk, Blue Hour,
+Crimson Eclipse) sit near 0.65–0.8, and oppressive ones (Dense Horror, Toxic
+Haze, Blackout, Underwater, Dust Storm, Polar Whiteout, Analog Sepia) let the
+sky become the fog. Thick-fog walls feed the sky only a fraction (0.35) of
+their density multiplier: the horizon match is density-independent, and the
+full multiplier would saturate the sky to the zenith and erase its texture.
+`bd_fog_sky_horizon` is deprecated and no longer read: the physical curve
+replaces the hand-tuned one; the CVar stays registered so old presets and INI
+files keep working. Verified by `tools/test-sky-fog.sh` and
+`tools/test-fog-presets.sh`, which measure the horizon junction on a generated
+open map for explicit settings and for every fog preset.
+
 ## Combining presets by hand
 
 Auto-pairings are starting points, not rules. Because explicit choices win,
