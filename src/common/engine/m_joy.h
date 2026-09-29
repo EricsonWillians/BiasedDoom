@@ -102,6 +102,11 @@ void Joy_GenerateButtonEvent(bool down, EKeyCodes which);
 void Joy_GenerateButtonEvents(int oldbuttons, int newbuttons, int numbuttons, int base);
 void Joy_GenerateButtonEvents(int oldbuttons, int newbuttons, int numbuttons, const int *keys);
 
+// Gyro look accumulator: controller backends feed integrated yaw/pitch
+// degrees here and G_BuildTiccmd consumes them once per tic.
+void Joy_AddGyroDelta(float yawdegrees, float pitchdegrees);
+void Joy_GetGyroDelta(float *yawdegrees, float *pitchdegrees);
+
 double Joy_ApplyResponseCurveBezier(const CubicBezier &curve, double input);
 double Joy_ManageSingleAxis(double axisval, double deadzone, double threshold, const CubicBezier &curve, uint8_t *buttons);
 int Joy_XYAxesToButtons(double x, double y);

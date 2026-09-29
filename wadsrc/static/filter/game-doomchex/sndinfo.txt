@@ -175,27 +175,37 @@ $rumble	weapons/sawfull				W_SAW_FULL
 $rumble	weapons/sawhit				W_SAW_FULL
 $rumble	weapons/pistol				W_BULLET
 $rumble	weapons/shotgf				W_SHELL
-$rumble	weapons/shotgr				W_RELOAD	// is this ever used?
-$rumble	weapons/sshotf				W_SHELL
+$rumble	weapons/shotgr				W_RELOAD
+$rumble	weapons/sshotf				W_SSG
 $rumble	weapons/sshoto				W_RELOAD
 $rumble	weapons/sshotc				W_RELOAD
 $rumble	weapons/sshotl				W_RELOAD
-$rumble	weapons/chngun				W_BULLET
+$rumble	weapons/chngun				W_CHAINGUN
 $rumble	weapons/rocklx				NONE
 $rumble	weapons/rocklf				W_ROCKET
 $rumble	weapons/plasmaf				W_ENERGY
 $rumble	weapons/plasmax				NONE
 $rumble	weapons/bfgf				W_BFG
 $rumble	weapons/bfgx				NONE
+$rumble	weapons/railgf				W_RAIL
+$rumble	weapons/grbnce				LIGHT
+$rumble	weapons/grenlf				W_ROCKET
+$rumble	weapons/grenlx				NONE
 
-$rumbledef	W_SAW_IDLE	1	0	.6	0	0
-$rumbledef	W_SAW_FULL	4	.6	.6	.6	.6
-$rumbledef	W_BULLET	3	.6	.6	.6	.6
-$rumbledef	W_SHELL		6	.6	.6	.6	.6
-$rumbledef	W_RELOAD	1	.3	.6	0	0
-$rumbledef	W_ROCKET	6	.6	.6	.6	.6
-$rumbledef	W_ENERGY	2	.6	.6	.6	.6
-$rumbledef	W_BFG		35	.6	.6	.6	.6
+// Curated per-weapon feel: each weapon class mixes the low/high frequency
+// motors and the trigger motors differently so the arsenal is distinct in
+// the hand. $rumbledef <id> <tics> <low> <high> <l_trig> <r_trig>
+$rumbledef	W_SAW_IDLE	2	.3	0	0	0		// idling teeth, low purr
+$rumbledef	W_SAW_FULL	4	.7	.2	0	0		// grinding low growl
+$rumbledef	W_BULLET	2	.2	.5	0	.35		// pistol: snappy crack + trigger tick
+$rumbledef	W_CHAINGUN	2	.15	.45	0	.25	// per-shot chatter, lighter than pistol
+$rumbledef	W_SHELL		5	.85	.5	0	.8	// shotgun: deep pump thump
+$rumbledef	W_SSG		7	1	.6	0	1		// super shotgun: full-body double boom
+$rumbledef	W_RELOAD	1	.2	.3	0	0		// mechanism click
+$rumbledef	W_ROCKET	6	.9	.3	0	.6	// launcher whoosh, low and long
+$rumbledef	W_ENERGY	2	.2	.7	0	.3	// plasma: high crackle
+$rumbledef	W_RAIL		8	.9	.5	0	.9	// railgun: heavy single slug
+$rumbledef	W_BFG		35	1	.4	0	.8	// BFG: long heavy energy sweep
 
 // Problem: weapons/rocklx needs to be unlimited but
 // is also used for the MAP30 brain explosion.

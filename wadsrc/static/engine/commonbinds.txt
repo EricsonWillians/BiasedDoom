@@ -50,28 +50,31 @@ pgdn +lookup
 del +lookdown
 end centerview
 
-// Xbox 360 / PS2 controllers
-pad_a +use
-pad_y +jump
-rtrigger +attack
-ltrigger +altattack
-lshoulder weapprev
-rshoulder weapnext
-dpadleft invprev
-dpadright invnext
-dpaddown invuse
-dpadup togglemap
-pad_start menu_main
-pad_back pause
-lthumb crouch
+// Gamepads. Classic layout: aiming stays on the horizontal plane (no
+// verticality), fire on the right trigger, use on the left trigger, weapon
+// cycling on the shoulders. For other layouts (classic with right-stick
+// movement, or modern freelook) use the "Gamepad Layout" option or the
+// `gamepadlayout` console command.
 lstickleft +moveleft
 lstickright +moveright
 lstickup +forward
 lstickdown +back
 rstickleft +left
 rstickright +right
-rstickup +lookup
-rstickdown +lookdown
+rtrigger +attack
+ltrigger +use
+lshoulder weapprev
+rshoulder weapnext
+pad_a +use
+pad_b +speed
+pad_start menu_main
+pad_back pause
+lthumb crouch
+rthumb +centerview
+dpadup togglemap
+dpaddown invuse
+dpadleft invprev
+dpadright invnext
 
 /* Default automap bindings */
 mapbind f am_togglefollow

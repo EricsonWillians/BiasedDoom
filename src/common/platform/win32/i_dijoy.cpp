@@ -158,7 +158,7 @@ public:
 class FDInputJoystick : public FInputDevice, IJoystickConfig
 {
 public:
-	FDInputJoystick(const GUID *instance, FString &name);
+	FDInputJoystick(const GUID *instance, FString &name, uint32_t vidpid);
 	~FDInputJoystick();
 
 	bool GetDevice();
@@ -240,6 +240,11 @@ protected:
 	TArray<ButtonInfo> Buttons;
 	TArray<ButtonInfo> POVs;
 
+	// Known controllers with a fixed HID layout that bypasses the heuristics.
+	// Detected from the DirectInput product id (MAKELONG(vendor, product)).
+	enum EKnownPad { PAD_GENERIC, PAD_DUALSHOCK4, PAD_DUALSENSE };
+	EKnownPad KnownPad;
+
 	DIOBJECTDATAFORMAT *Objects;
 	DIDATAFORMAT DataFormat;
 
@@ -248,6 +253,10 @@ protected:
 	static BOOL CALLBACK EnumObjectsCallback(LPCDIDEVICEOBJECTINSTANCE lpddoi, LPVOID pvRef);
 	void OrderAxes();
 	bool ReorderAxisPair(const GUID &x, const GUID &y, int pos);
+	void OrderSonyAxes();
+	void ProcessSonyInput(const uint8_t *state);
+	void ProcessPadThumbstick(AxisInfo *info_x, AxisInfo *info_y, int base, const uint8_t *state);
+	void ProcessPadTrigger(AxisInfo *info, int key, const uint8_t *state);
 	HRESULT SetDataFormat();
 
 	friend class FDInputJoystickManager;
@@ -270,6 +279,7 @@ protected:
 	{
 		GUID Instance;
 		FString Name;
+		uint32_t VidPid;
 	};
 	struct EnumData
 	{
@@ -316,7 +326,7 @@ static const uint8_t POVButtons[9] = { 0x01, 0x03, 0x02, 0x06, 0x04, 0x0C, 0x08,
 //
 //===========================================================================
 
-FDInputJoystick::FDInputJoystick(const GUID *instance, FString &name)
+FDInputJoystick::FDInputJoystick(const GUID *instance, FString &name, uint32_t vidpid)
 {
 	Device = NULL;
 	DataFormat.rgodf = NULL;
@@ -324,6 +334,22 @@ FDInputJoystick::FDInputJoystick(const GUID *instance, FString &name)
 	Name = name;
 	Marked = false;
 	Enabled = true;
+	KnownPad = PAD_GENERIC;
+
+	// Sony's controllers have a stable, publicly documented DirectInput HID
+	// layout, unlike the generic mess the heuristics have to guess at.
+	const uint16_t vendor = LOWORD(vidpid), product = HIWORD(vidpid);
+	if (vendor == 0x054C)
+	{
+		if (product == 0x05C4 || product == 0x09CC)
+		{
+			KnownPad = PAD_DUALSHOCK4;
+		}
+		else if (product == 0x0CE6 || product == 0x0DF2)
+		{
+			KnownPad = PAD_DUALSENSE;
+		}
+	}
 }
 
 //===========================================================================
@@ -347,7 +373,22 @@ FDInputJoystick::~FDInputJoystick()
 		delete[] DataFormat.rgodf;
 	}
 	// Send key ups before destroying this.
-	if (Axes.Size() == 1)
+	if (KnownPad != PAD_GENERIC && Axes.Size() >= 6)
+	{
+		static const int dpadkeys[] = {
+			KEY_PAD_DPAD_UP, KEY_PAD_DPAD_RIGHT, KEY_PAD_DPAD_DOWN, KEY_PAD_DPAD_LEFT
+		};
+		Joy_GenerateButtonEvents(Axes[0].ButtonValue, 0, 4, KEY_PAD_LTHUMB_RIGHT);
+		Joy_GenerateButtonEvents(Axes[2].ButtonValue, 0, 4, KEY_PAD_RTHUMB_RIGHT);
+		Joy_GenerateButtonEvents(Axes[4].ButtonValue, 0, 1, KEY_PAD_LTRIGGER);
+		Joy_GenerateButtonEvents(Axes[5].ButtonValue, 0, 1, KEY_PAD_RTRIGGER);
+		for (i = 0; i < POVs.Size(); ++i)
+		{
+			Joy_GenerateButtonEvents(POVs[i].Value, 0, 4, dpadkeys);
+		}
+		POVs.Clear();
+	}
+	else if (Axes.Size() == 1)
 	{
 		Joy_GenerateButtonEvents(Axes[0].ButtonValue, 0, 2, KEY_JOYAXIS1PLUS);
 	}
@@ -394,6 +435,10 @@ bool FDInputJoystick::GetDevice()
 	}
 	hr = Device->EnumObjects(EnumObjectsCallback, this, DIDFT_ABSAXIS | DIDFT_BUTTON | DIDFT_POV);
 	OrderAxes();
+	if (KnownPad != PAD_GENERIC)
+	{
+		OrderSonyAxes();
+	}
 	hr = SetDataFormat();
 	if (FAILED(hr))
 	{
@@ -454,6 +499,13 @@ void FDInputJoystick::ProcessInput()
 	if (Warmup > 0)
 	{
 		Warmup--;
+		return;
+	}
+
+	// Known-layout controllers (DualShock 4, DualSense) bypass the heuristics.
+	if (KnownPad != PAD_GENERIC)
+	{
+		ProcessSonyInput(state);
 		return;
 	}
 
@@ -561,6 +613,38 @@ void FDInputJoystick::ProcessInput()
 
 void FDInputJoystick::AddAxes(float axes[NUM_AXIS_CODES])
 {
+	// Known-layout controllers report the standard pad axis codes, matching
+	// the SDL GameController and XInput backends.
+	if (KnownPad != PAD_GENERIC)
+	{
+		static const EAxisCodes codemap[6][2] = {
+			{ AXIS_CODE_PAD_LTHUMB_RIGHT, AXIS_CODE_PAD_LTHUMB_LEFT },
+			{ AXIS_CODE_PAD_LTHUMB_DOWN, AXIS_CODE_PAD_LTHUMB_UP },
+			{ AXIS_CODE_PAD_RTHUMB_RIGHT, AXIS_CODE_PAD_RTHUMB_LEFT },
+			{ AXIS_CODE_PAD_RTHUMB_DOWN, AXIS_CODE_PAD_RTHUMB_UP },
+			{ AXIS_CODE_PAD_LTRIGGER, AXIS_CODE_NULL },
+			{ AXIS_CODE_PAD_RTRIGGER, AXIS_CODE_NULL },
+		};
+		for (unsigned i = 0; i < Axes.Size() && i < 6; ++i)
+		{
+			float axis_value = float(Axes[i].Value * Multiplier * Axes[i].Multiplier);
+			int code = AXIS_CODE_NULL;
+			if (axis_value > 0.0f)
+			{
+				code = codemap[i][0];
+			}
+			else if (axis_value < 0.0f)
+			{
+				code = codemap[i][1];
+			}
+			if (code != AXIS_CODE_NULL)
+			{
+				axes[code] += fabs(axis_value);
+			}
+		}
+		return;
+	}
+
 	for (unsigned i = 0; i < Axes.Size(); ++i)
 	{
 		// Add to the game axis.
@@ -734,6 +818,165 @@ bool FDInputJoystick::ReorderAxisPair(const GUID &xid, const GUID &yid, int pos)
 
 //===========================================================================
 //
+// FDInputJoystick :: OrderSonyAxes
+//
+// DualShock 4 and DualSense expose a fixed DirectInput layout (verified
+// against the community controller database): X = left stick X, Y = left
+// stick Y, Z = right stick X, Rz = right stick Y, Rx = left trigger,
+// Ry = right trigger. Reorder the axis list into sticks-then-triggers so
+// the pad processing below can rely on positions.
+//
+//===========================================================================
+
+void FDInputJoystick::OrderSonyAxes()
+{
+	static const struct { GUID Guid; const char *Name; } wanted[6] = {
+		{ GUID_XAxis, "Left Stick X" }, { GUID_YAxis, "Left Stick Y" },
+		{ GUID_ZAxis, "Right Stick X" }, { GUID_RzAxis, "Right Stick Y" },
+		{ GUID_RxAxis, "Left Trigger" }, { GUID_RyAxis, "Right Trigger" },
+	};
+	TArray<AxisInfo> ordered;
+	for (int i = 0; i < 6; ++i)
+	{
+		for (unsigned j = 0; j < Axes.Size(); ++j)
+		{
+			if (Axes[j].Guid == wanted[i].Guid)
+			{
+				Axes[j].Name = wanted[i].Name;
+				ordered.Push(Axes[j]);
+				break;
+			}
+		}
+	}
+	if (ordered.Size() == 6)
+	{
+		Axes = ordered;
+	}
+	else
+	{
+		// Unexpected object set for a Sony device: fall back to heuristics.
+		KnownPad = PAD_GENERIC;
+	}
+}
+
+//===========================================================================
+//
+// FDInputJoystick :: ProcessPadThumbstick / ProcessPadTrigger
+//
+// Sony pad axis processing, mirroring the SDL GameController and XInput
+// backends so a DualShock 4 / DualSense behaves identically everywhere.
+//
+//===========================================================================
+
+void FDInputJoystick::ProcessPadThumbstick(AxisInfo *info_x, AxisInfo *info_y, int base, const uint8_t *state)
+{
+	LONG value_x = *(LONG *)(state + info_x->Ofs);
+	LONG value_y = *(LONG *)(state + info_y->Ofs);
+	double axisval_x = (value_x - info_x->Min) * 2.0 / (info_x->Max - info_x->Min) - 1.0;
+	double axisval_y = (value_y - info_y->Min) * 2.0 / (info_y->Max - info_y->Min) - 1.0;
+	uint8_t buttonstate;
+
+	Joy_ManageThumbstick(
+		&axisval_x, &axisval_y,
+		info_x->DeadZone, info_y->DeadZone,
+		info_x->DigitalThreshold, info_y->DigitalThreshold,
+		info_x->ResponseCurve, info_y->ResponseCurve,
+		&buttonstate
+	);
+
+	info_x->Value = float(axisval_x);
+	info_y->Value = float(axisval_y);
+	// All four buttons live in the first axis, the second is ignored.
+	Joy_GenerateButtonEvents(info_x->ButtonValue, buttonstate, 4, base);
+	info_x->ButtonValue = buttonstate;
+}
+
+void FDInputJoystick::ProcessPadTrigger(AxisInfo *info, int key, const uint8_t *state)
+{
+	LONG value = *(LONG *)(state + info->Ofs);
+	double axisval = double(value - info->Min) / (info->Max - info->Min); // [0,1]
+	uint8_t buttonstate;
+
+	axisval = Joy_ManageSingleAxis(
+		axisval,
+		info->DeadZone, info->DigitalThreshold, info->ResponseCurve,
+		&buttonstate
+	);
+
+	info->Value = float(axisval);
+	Joy_GenerateButtonEvents(info->ButtonValue, buttonstate, 1, key);
+	info->ButtonValue = buttonstate;
+}
+
+//===========================================================================
+//
+// FDInputJoystick :: ProcessSonyInput
+//
+//===========================================================================
+
+void FDInputJoystick::ProcessSonyInput(const uint8_t *state)
+{
+	// Axes are ordered by OrderSonyAxes: LS X/Y, RS X/Y, L2, R2.
+	ProcessPadThumbstick(&Axes[0], &Axes[1], KEY_PAD_LTHUMB_RIGHT, state);
+	ProcessPadThumbstick(&Axes[2], &Axes[3], KEY_PAD_RTHUMB_RIGHT, state);
+	ProcessPadTrigger(&Axes[4], KEY_PAD_LTRIGGER, state);
+	ProcessPadTrigger(&Axes[5], KEY_PAD_RTRIGGER, state);
+
+	// Standard button order shared by the DS4 and the DualSense. Indices 6
+	// and 7 are the digital clicks of the analog triggers and are skipped so
+	// they cannot fight the axis-driven trigger state.
+	static const int sonykeys[] = {
+		KEY_PAD_X,          // 0: square
+		KEY_PAD_A,          // 1: cross
+		KEY_PAD_B,          // 2: circle
+		KEY_PAD_Y,          // 3: triangle
+		KEY_PAD_LSHOULDER,  // 4: L1
+		KEY_PAD_RSHOULDER,  // 5: R1
+		-1, -1,             // 6/7: L2/R2 digital (handled as axes)
+		KEY_PAD_BACK,       // 8: share/create
+		KEY_PAD_START,      // 9: options
+		KEY_PAD_LTHUMB,     // 10: L3
+		KEY_PAD_RTHUMB,     // 11: R3
+		KEY_PAD_GUIDE,      // 12: PS
+		KEY_PAD_TOUCHPAD,   // 13: touchpad click
+		KEY_PAD_MISC1,      // 14: mic mute (DualSense)
+	};
+	event_t ev;
+	memset(&ev, 0, sizeof(ev));
+	for (unsigned i = 0; i < Buttons.Size() && i < countof(sonykeys); ++i)
+	{
+		if (sonykeys[i] < 0)
+		{
+			continue;
+		}
+		ButtonInfo *info = &Buttons[i];
+		uint8_t newstate = *(uint8_t *)(state + info->Ofs) & 0x80;
+		if (newstate != info->Value)
+		{
+			info->Value = newstate;
+			ev.data1 = sonykeys[i];
+			ev.type = (newstate != 0) ? EV_KeyDown : EV_KeyUp;
+			D_PostEvent(&ev);
+		}
+	}
+
+	// The hat is the d-pad.
+	static const int dpadkeys[] = {
+		KEY_PAD_DPAD_UP, KEY_PAD_DPAD_RIGHT, KEY_PAD_DPAD_DOWN, KEY_PAD_DPAD_LEFT
+	};
+	for (unsigned i = 0; i < POVs.Size(); ++i)
+	{
+		ButtonInfo *info = &POVs[i];
+		DWORD povangle = *(DWORD *)(state + info->Ofs);
+		int pov = (LOWORD(povangle) == 0xFFFF) ? 8 : ((povangle + 2250) % 36000) / 4500;
+		pov = POVButtons[pov];
+		Joy_GenerateButtonEvents(info->Value, pov, 4, dpadkeys);
+		info->Value = pov;
+	}
+}
+
+//===========================================================================
+//
 // FDInputJoystick :: SetDataFormat
 //
 // Using the objects we previously enumerated, construct a data format
@@ -833,6 +1076,18 @@ void FDInputJoystick::SetDefaultConfig()
 		Axes[i].DigitalThreshold = JOYTHRESH_DEFAULT;
 		Axes[i].ResponseCurvePreset = JOYCURVE_DEFAULT;
 		Axes[i].ResponseCurve = JOYCURVE[JOYCURVE_DEFAULT];
+	}
+	// Known-layout pads: stick thresholds on the sticks, trigger thresholds
+	// and a smaller deadzone on the analog triggers.
+	if (KnownPad != PAD_GENERIC && Axes.Size() >= 6)
+	{
+		for (i = 0; i < 4; ++i)
+		{
+			Axes[i].DigitalThreshold = (i & 1) ? JOYTHRESH_STICK_Y : JOYTHRESH_STICK_X;
+		}
+		Axes[4].DeadZone = Axes[5].DeadZone = 30 / 256.f;
+		Axes[4].DigitalThreshold = Axes[5].DigitalThreshold = JOYTHRESH_TRIGGER;
+		return;
 	}
 	// Triggers on a 360 controller have a much smaller deadzone.
 	if (Axes.Size() == 5 && Axes[4].Guid == GUID_ZAxis)
@@ -1344,6 +1599,7 @@ BOOL CALLBACK FDInputJoystickManager::EnumCallback(LPCDIDEVICEINSTANCE lpddi, LP
 
 		thisone.Instance = lpddi->guidInstance;
 		thisone.Name = lpddi->tszInstanceName;
+		thisone.VidPid = lpddi->guidProduct.Data1;
 		data->All->Push(thisone);
 	}
 	return DIENUM_CONTINUE;
@@ -1503,7 +1759,7 @@ FDInputJoystick *FDInputJoystickManager::EnumDevices()
 		}
 		if (j == Devices.Size())
 		{ // Not found. Add it.
-			FDInputJoystick *device = new FDInputJoystick(lookfor, controllers[i].Name);
+			FDInputJoystick *device = new FDInputJoystick(lookfor, controllers[i].Name, controllers[i].VidPid);
 			if (!device->GetDevice())
 			{
 				delete device;

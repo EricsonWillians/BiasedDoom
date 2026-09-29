@@ -121,6 +121,14 @@ OptionValue "BDFogModes"
 	2, "Sector Boost"
 }
 
+OptionValue "BDGamepadLayouts"
+{
+	0, "Custom"
+	1, "Classic"
+	2, "Classic + Move"
+	3, "Modern"
+}
+
 OptionValue "BDFogPresets"
 {
 	0, "Custom"
@@ -1322,6 +1330,7 @@ OptionMenu "JoystickOptionsDefaults" protected
 	Title "$JOYMNU_OPTIONS"
 	Option "$JOYMNU_ENABLE", "use_joystick", "YesNo"
 	Option "$JOYMNU_NOMENU", "m_blockcontrollers", "YesNo"
+	Option "Gamepad Layout", "joy_padlayout", "BDGamepadLayouts"
 	IfOption(Windows)
 	{
 		Option "$JOYMNU_DINPUT", "joy_dinput", "YesNo"
@@ -1332,6 +1341,12 @@ OptionMenu "JoystickOptionsDefaults" protected
 	Slider "$JOYMNU_TURNSPEED",			"cl_analog_sensitivity_yaw", 0, 4, 0.05
 	Slider "$JOYMNU_LOOKSPEED",			"cl_analog_sensitivity_pitch", 0, 4, 0.05
 	Option "$JOYMNU_ANALOGSTRAFERUN",	"cl_analog_straferun", "OnOff"
+	StaticText ""
+	Option "Gyro Look", "joy_gyro_look", "OnOff"
+	Slider "Gyro Turn Speed",			"joy_gyro_sensitivity_yaw", 0, 4, 0.05
+	Slider "Gyro Look Speed",			"joy_gyro_sensitivity_pitch", 0, 4, 0.05
+	Option "Invert Gyro Turn",			"joy_gyro_invert_yaw", "OnOff"
+	Option "Invert Gyro Look",			"joy_gyro_invert_pitch", "OnOff"
 	StaticText ""
 	Submenu "$OPTMNU_HAPTICS",			"HapticsOptions"
 	StaticText ""

@@ -40,6 +40,7 @@
 
 #include <math.h>
 
+#include "c_bind.h"
 #include "c_cvars.h"
 #include "c_dispatch.h"
 #include "cmdlib.h"
@@ -96,6 +97,151 @@ CUSTOM_CVARD(Bool, use_joystick, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINI
 	joy_dinput->Callback();
 	joy_xinput->Callback();
 #endif
+}
+
+// Gyro look (DualSense/DualShock 4 via SDL; no-op on controllers without a
+// gyroscope). Defaults to off so the classic experience is untouched.
+CVARD(Bool, joy_gyro_look, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "use the controller gyroscope for looking, on controllers that have one");
+CVARD(Float, joy_gyro_sensitivity_yaw, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "gyro look yaw sensitivity");
+CVARD(Float, joy_gyro_sensitivity_pitch, 0.6f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "gyro look pitch sensitivity");
+CVARD(Bool, joy_gyro_invert_yaw, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "invert gyro look yaw");
+CVARD(Bool, joy_gyro_invert_pitch, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "invert gyro look pitch");
+
+static float GyroYawAccum, GyroPitchAccum;
+
+void Joy_AddGyroDelta(float yawdegrees, float pitchdegrees)
+{
+	GyroYawAccum += yawdegrees;
+	GyroPitchAccum += pitchdegrees;
+}
+
+void Joy_GetGyroDelta(float *yawdegrees, float *pitchdegrees)
+{
+	*yawdegrees = GyroYawAccum;
+	*pitchdegrees = GyroPitchAccum;
+	GyroYawAccum = 0.0f;
+	GyroPitchAccum = 0.0f;
+}
+
+//==========================================================================
+//
+// Gamepad layout presets
+//
+// Applying a preset rewrites only the bindings it manages (listed below),
+// preserving keyboard/mouse bindings and anything else the user bound.
+// The preset cvar is CVAR_NOINITCALL: it records the last choice, while the
+// bindings themselves persist in the INI like any other.
+//
+//==========================================================================
+
+static const char * const GPadManagedKeys[] = {
+	"lstickup", "lstickdown", "lstickleft", "lstickright",
+	"rstickup", "rstickdown", "rstickleft", "rstickright",
+	"ltrigger", "rtrigger", "lshoulder", "rshoulder",
+	"pad_a", "pad_b", "pad_y",
+	"dpadup", "dpaddown", "dpadleft", "dpadright",
+	"pad_start", "pad_back", "lthumb", "rthumb",
+};
+
+// Classic: aiming stays on the horizontal plane (no verticality), fire on
+// the right trigger, use on the left trigger, weapons on the shoulders.
+static const char * const GPadLayoutClassic[][2] = {
+	{ "lstickup", "+forward" }, { "lstickdown", "+back" },
+	{ "lstickleft", "+moveleft" }, { "lstickright", "+moveright" },
+	{ "rstickleft", "+left" }, { "rstickright", "+right" },
+	{ "rtrigger", "+attack" }, { "ltrigger", "+use" },
+	{ "lshoulder", "weapprev" }, { "rshoulder", "weapnext" },
+	{ "pad_a", "+use" }, { "pad_b", "+speed" },
+	{ "dpadup", "togglemap" }, { "dpaddown", "invuse" },
+	{ "dpadleft", "invprev" }, { "dpadright", "invnext" },
+	{ "pad_start", "menu_main" }, { "pad_back", "pause" },
+	{ "lthumb", "crouch" }, { "rthumb", "+centerview" },
+};
+
+// Classic + right-stick movement (Doom 64 style dual movement, still no
+// vertical aiming).
+static const char * const GPadLayoutClassicMove[][2] = {
+	{ "rstickup", "+forward" }, { "rstickdown", "+back" },
+};
+
+// Modern: full freelook on the right stick plus jump on the face button.
+static const char * const GPadLayoutModern[][2] = {
+	{ "rstickup", "+lookup" }, { "rstickdown", "+lookdown" },
+	{ "pad_y", "+jump" },
+};
+
+static void Joy_ApplyPadLayout(int layout)
+{
+	// Wipe the managed keys first so bindings from a previous preset or the
+	// defaults do not linger.
+	for (auto key : GPadManagedKeys)
+	{
+		Bindings.UnbindKey(key);
+	}
+	auto apply = [](const char * const table[][2], size_t count)
+	{
+		for (size_t i = 0; i < count; ++i)
+		{
+			Bindings.DoBind(table[i][0], table[i][1]);
+		}
+	};
+	apply(GPadLayoutClassic, countof(GPadLayoutClassic));
+	if (layout == 2)
+	{
+		apply(GPadLayoutClassicMove, countof(GPadLayoutClassicMove));
+	}
+	else if (layout == 3)
+	{
+		apply(GPadLayoutModern, countof(GPadLayoutModern));
+	}
+
+	// Keep the aiming model coherent with the layout. Classic layouts are
+	// played without vertical aiming, so lock freelook off: the view stays
+	// on the horizon and the engine restores vanilla vertical autoaim, so
+	// shots snap to taller or elevated targets on their own. Modern restores
+	// freelook. Goes through cvar_set because the sv_freelook mask cvar has
+	// no direct assignment operator; values are 0 = map default, 1 = off,
+	// 2 = on. This is a one-shot apply: manually changing freelook
+	// afterwards is respected until the next preset change.
+	// bd_classic_autoaim joins in so mods that flag their whole arsenal
+	// NOAUTOAIM (e.g. Brutal Doom) cannot silently defeat the classic setup.
+	if (layout == 3)
+	{
+		cvar_set("freelook", "true");
+		cvar_set("sv_freelook", "2");
+		cvar_set("bd_classic_autoaim", "false");
+	}
+	else
+	{
+		cvar_set("freelook", "false");
+		cvar_set("sv_freelook", "1");
+		cvar_set("bd_classic_autoaim", "true");
+	}
+}
+
+CUSTOM_CVARD(Int, joy_padlayout, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL, "gamepad layout preset (0 = custom, 1 = classic, 2 = classic + right-stick move, 3 = modern)")
+{
+	if (self < 0) self = 0;
+	if (self > 3) self = 3;
+	if (self > 0)
+	{
+		Joy_ApplyPadLayout(self);
+	}
+}
+
+CCMD (gamepadlayout)
+{
+	if (argv.argc() < 2)
+	{
+		Printf("usage: gamepadlayout <0|1|2|3> (0 = custom, 1 = classic, 2 = classic + right-stick move, 3 = modern)\n");
+		return;
+	}
+	int layout = atoi(argv[1]);
+	if (layout < 0 || layout > 3)
+	{
+		return;
+	}
+	joy_padlayout = layout;
 }
 
 // PRIVATE DATA DEFINITIONS ------------------------------------------------

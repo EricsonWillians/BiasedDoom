@@ -62,6 +62,7 @@
 #include "events.h"
 #include "actorinlines.h"
 #include "d_main.h"
+#include "m_haptics.h"
 #include "python/python_runtime.h"
 
 static FRandom pr_botrespawn ("BotRespawn");
@@ -74,6 +75,7 @@ static FRandom pr_switcher ("SwitchTarget");
 CVAR (Bool, cl_showsprees, true, CVAR_ARCHIVE)
 CVAR (Bool, cl_showmultikills, true, CVAR_ARCHIVE)
 EXTERN_CVAR (Bool, show_obituaries)
+EXTERN_CVAR (Bool, haptics_do_damage)
 
 CVAR (Float, sv_damagefactormobj, 1.0, CVAR_SERVERINFO|CVAR_CHEAT)
 CVAR (Float, sv_damagefactorfriendly, 1.0, CVAR_SERVERINFO|CVAR_CHEAT)
@@ -1887,6 +1889,17 @@ void P_PoisonDamage (player_t *player, AActor *source, int damage, bool playPain
 		player->health = 0;
 	}
 	player->attacker = source;
+
+	// Proportional damage feedback: chip damage taps lightly, heavy hits jolt.
+	// Death itself rumbles separately through PlayerDiedMakeRumble.
+	if (target->player->mo == players[consoleplayer].mo && haptics_do_damage)
+	{
+		Joy_Rumble("player/damage",
+			clamp(2 + damage / 8, 2, 14),
+			clamp(0.15 + damage * 0.005, 0.15, 0.7),
+			clamp(0.25 + damage * 0.008, 0.25, 1.0),
+			0.0, 0.0, 0.0);
+	}
 
 	//
 	// do the damage

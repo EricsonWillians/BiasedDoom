@@ -801,6 +801,21 @@ void G_BuildTiccmd (usercmd_t *cmd)
 
 	mousex = mousey = 0;
 
+	// Handle gyro look (DualSense/DualShock gyroscope; inert unless
+	// joy_gyro_look is enabled on a controller that has one). The deltas are
+	// degrees; G_AddViewAngle/G_AddViewPitch take view-cmd units << 16 with
+	// 65536 view-cmd units per full circle (see PlayerPawn::MovePlayer).
+	float gyroyaw, gyropitch;
+	Joy_GetGyroDelta(&gyroyaw, &gyropitch);
+	if (gyroyaw != 0.0f)
+	{
+		G_AddViewAngle(joyint(gyroyaw * (65536.0f / 360.0f) * 65536.0f), true);
+	}
+	if (gyropitch != 0.0f && (buttonMap.ButtonDown(Button_Mlook) || freelook))
+	{
+		G_AddViewPitch(joyint(gyropitch * (65536.0f / 360.0f) * 65536.0f), true);
+	}
+
 	// Build command.
 	if (forward > MAXPLMOVE)
 		forward = MAXPLMOVE;

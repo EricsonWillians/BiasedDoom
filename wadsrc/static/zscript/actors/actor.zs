@@ -1853,9 +1853,10 @@ class Actor : Thinker native
 
 	virtual void PlayerHurtMakeRumble(actor source)
 	{
-		if (!CVar.GetCVar("haptics_do_damage").GetBool()) return;
-
-		Haptics.Rumble("*pain");
+		// Damage feedback now rumbles natively in P_DamageMobj, scaled by the
+		// actual damage amount and gated by haptics_do_damage, so the base
+		// implementation is intentionally empty. This stays as an override
+		// point for mods that want custom damage rumble.
 	}
 
 	virtual void PlayerDiedMakeRumble(actor source)

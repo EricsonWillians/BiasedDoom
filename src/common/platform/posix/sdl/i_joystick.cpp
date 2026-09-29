@@ -45,7 +45,14 @@
 #include "cmdlib.h"
 #include "d_eventbase.h"
 #include "i_input.h"
+#include "i_time.h"
 #include "m_joy.h"
+
+EXTERN_CVAR(Bool, joy_gyro_look)
+EXTERN_CVAR(Float, joy_gyro_sensitivity_yaw)
+EXTERN_CVAR(Float, joy_gyro_sensitivity_pitch)
+EXTERN_CVAR(Bool, joy_gyro_invert_yaw)
+EXTERN_CVAR(Bool, joy_gyro_invert_pitch)
 
 static const EAxisCodes ControllerAxisCodes[][2] =
 {
@@ -536,12 +543,52 @@ public:
 		}
 	}
 
+	void ProcessGyro()
+	{
+		// Gyro look (DualSense/DualShock 4): integrate angular rates into view
+		// deltas once per tic. The cvar can change at any time, so the sensor
+		// state is renegotiated every call; without a gyro this is a no-op.
+		const bool want = joy_gyro_look && SDL_GameControllerHasSensor(Mapping, SDL_SENSOR_GYRO);
+		if (want != GyroActive)
+		{
+			SDL_GameControllerSetSensorEnabled(Mapping, SDL_SENSOR_GYRO, want ? SDL_TRUE : SDL_FALSE);
+			GyroActive = want;
+			GyroLastTic = I_GetTime();
+			return;
+		}
+		if (!GyroActive)
+		{
+			return;
+		}
+
+		const int now = I_GetTime();
+		const float dt = (now - GyroLastTic) / 35.0f;
+		GyroLastTic = now;
+		if (dt <= 0.0f || dt > 0.25f)
+		{
+			return; // ignore hits after pauses/hitches
+		}
+
+		float data[3];
+		if (SDL_GameControllerGetSensorData(Mapping, SDL_SENSOR_GYRO, data, 3) != 0)
+		{
+			return;
+		}
+		// SDL gyro rates are rad/s: X = pitch, Y = yaw, Z = roll. Negate to
+		// match the "point the controller where you want to look" convention.
+		constexpr float radToDeg = 57.29577951308232f;
+		const float yaw = -data[1] * radToDeg * dt * joy_gyro_sensitivity_yaw * (joy_gyro_invert_yaw ? -1.0f : 1.0f);
+		const float pitch = -data[0] * radToDeg * dt * joy_gyro_sensitivity_pitch * (joy_gyro_invert_pitch ? -1.0f : 1.0f);
+		Joy_AddGyroDelta(yaw, pitch);
+	}
+
 	void ProcessInput()
 	{
 		if (Mapping)
 		{
 			// GameController API available
 			ProcessGameControllerAxes();
+			ProcessGyro();
 		}
 		else
 		{
@@ -587,6 +634,8 @@ protected:
 	int					Haptics;
 	float				HapticsStrength;
 	bool 				SettingsChanged;
+	bool				GyroActive = false;
+	int					GyroLastTic = 0;
 
 	friend class SDLInputJoystickManager;
 };
