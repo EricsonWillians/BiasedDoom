@@ -112,6 +112,7 @@ OptionValue "BDLightingPresetModes"
 	37, "Arctic Facility"
 	38, "Soft Dawn"
 	39, "Analog Fluorescent"
+	40, "Absolution"
 }
 
 OptionValue "BDFogModes"
@@ -240,6 +241,7 @@ OptionValue "PostfxPresetModes"
 	62, "Violet Dusk"
 	63, "Soft Focus"
 	64, "Arcade Neon"
+	65, "Absolution (Doom 64)"
 }
 
 OptionValue "PostfxQualityModes"

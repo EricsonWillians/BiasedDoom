@@ -138,6 +138,7 @@ override a few settings, so their look tracks the base preset.
 | 48 | Muted Pastels *(extends 35)* | Reinhard | Soft Natural → Morning Mist | The archive look softened into pastel tones. |
 | 41 | Divine Radiance | Lottes Filmic (exp 1.30) | Cathedral Bloom → Cathedral Haze | Strong god rays through luminous cathedral haze. |
 | 56 | Overexposed *(extends 41)* | Reinhard (exp 1.80) | Surgical White → Disabled | Deliberately blown-out, high-key brightness. |
+| 65 | Absolution (Doom 64) | None (exp 1.30) | Absolution → Absolution | The notorious lights-off Doom 64 gloom: darkness lives in the lighting and fog layers because tonemaps, the low postfx quality path, and lowered exposure all lift the dark sky veil to grey. |
 | 44 | Dreamlike | Moonlit (exp 1.10) | Soft Dawn → Morning Mist | Wide soft bloom and god rays; a waking dream. |
 | 55 | Watercolor Dream *(extends 44)* | Moonlit (exp 1.10) | Soft Dawn → Morning Mist | Dream-decay grade, no sharpen: painted edges. |
 | 63 | Soft Focus *(extends 44)* | Reinhard (exp 1.10) | Soft Natural → Morning Mist | Gentle bloom knee, no sharpen: a soft lens. |
@@ -200,6 +201,7 @@ summarizes the intent.
 | 37 | Arctic Facility | The coldest temperature, desaturated, sharp specular. |
 | 38 | Soft Dawn | Warm-soft rose dawn with gentle aerial fade. |
 | 39 | Analog Fluorescent | Cold, desaturated, buzzing flicker: found-footage institutions. |
+| 40 | Absolution | Pitch-black Doom 64 gloom: strong light diminishing, saturated colored light pools, no GI ambient (its sector-bleed feed washes the sky veil on outdoor levels). |
 
 ## Fog preset reference
 

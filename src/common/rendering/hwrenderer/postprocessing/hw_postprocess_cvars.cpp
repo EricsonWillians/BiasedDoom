@@ -23,8 +23,8 @@
 #include "v_video.h"
 
 static int GApplyingPresetCount = 0;
-static constexpr int MaxGraphicsPreset = 64;
-static constexpr int MaxLightingPreset = 39;
+static constexpr int MaxGraphicsPreset = 65;
+static constexpr int MaxLightingPreset = 40;
 static constexpr int MaxFogPreset = 18;
 static constexpr int MaxSelectableTonemap = 14;
 
@@ -105,6 +105,7 @@ static const FPresetPairing GGraphicsPresetPairing[] = {
   {26, 11},  // 62 Violet Dusk
   {8, 7},    // 63 Soft Focus
   {5, 1},    // 64 Arcade Neon
+  {40, 18},  // 65 Absolution (Doom 64)
 };
 static_assert(sizeof(GGraphicsPresetPairing) / sizeof(GGraphicsPresetPairing[0]) == MaxGraphicsPreset + 1,
               "every graphics preset needs a lighting/fog pairing");
@@ -460,6 +461,16 @@ static void ApplyLightingPreset(int preset)
                       1.0f, 1.0f, 0.0f, 3.0f, 0.0f, 0x8899bb,
                       0.40f, 0.25f, 1800.0f);
     return;
+  case 40: // Absolution (Doom 64): pitch-black ambient floor, strong light
+           // diminishing, and saturated colored dynamic lights for the hazy
+           // colored-veneer look of Doom 64. Muted, cold, claustrophobic.
+           // GI ambient is deliberately off: its sector-bleed feed washes
+           // the sky veil out to grey on outdoor levels.
+    SetLightingValues(2, 2.90f, 0.95f, 0.85f, -0.15f, 0.0f, 0.80f, 0.10f, false, 0.0f, true,
+                      1.10f, 0.15f, 0.05f, 0.05f, 1.00f,
+                      1.10f, 1.10f, 0.20f, 3.2f, 0.0f, 0x3a4a6e,
+                      0.0f, 0.0f, 1400.0f, 0x8090b0);
+    return;
   default:
     return;
   }
@@ -756,7 +767,7 @@ static void ApplyFogPreset(int preset)
     bd_fog_thick_distance = 430.0f;
     bd_fog_thick_multiplier = 5.5f;
     bd_fog_quality = 2;
-    bd_fog_height_falloff = 1.10f;
+    bd_fog_height_falloff = 0.55f;
     bd_fog_turbulence = 0.18f;
     bd_fog_turbulence_scale = 0.009f;
     SetFogGradientPreset(2, 0x0d0f22, 0.38f, 1.20f, 0.0f, -6.0f);
@@ -3104,6 +3115,27 @@ static void ApplyGraphicsPreset(int preset) {
     bd_bloom_radius = 1.5f;
     bd_bloom_threshold = 0.70f;
     bd_bloom_intensity = 1.10f;
+    return;
+  case 65: // Absolution (Doom 64): the notorious lights-off Doom 64 look.
+           // Darkness and color come from the paired lighting and fog
+           // presets; the image pipeline must not lift them — every tonemap
+           // mode, the low postfx quality path, and lowered exposure all
+           // wash the dark sky veil out to grey, so they are pinned to the
+           // dark-safe values and only a soft glow on the colored lights
+           // and a gentle vignette are added. Auto-pairs the Absolution
+           // lighting and fog presets.
+    ApplyGraphicsPreset(1);
+    bd_postfx_quality = 3;
+    gl_exposure_scale = 1.3f;
+    gl_tonemap = 0;
+    bd_colorgrade_mode = 0;
+    bd_colorgrade_strength = 0.0f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 1.10f;
+    bd_bloom_radius = 1.5f;
+    bd_bloom_threshold = 0.78f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.10f;
     return;
   default:
     return;

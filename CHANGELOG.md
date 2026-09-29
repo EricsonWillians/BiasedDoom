@@ -6,9 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- New fog preset 18, "Absolution": a Doom 64-inspired oppressive blue-violet
-  gloom with murky indigo depth walls and a near-black gradient floor
-  (suggested by Brett Saltzer).
+- The Doom 64-inspired "Absolution" preset family (suggested by Brett
+  Saltzer), a full three-layer recreation of the notorious lights-off Doom
+  64 look: fog preset 18 "Absolution" (deep indigo override fog with murky
+  thick-fog depth walls and a near-black gradient floor), lighting preset 40
+  "Absolution" (pitch-black ambient floor, strong light diminishing,
+  saturated colored light pools, GI ambient deliberately off because its
+  sector-bleed feed washes the sky veil out to grey on outdoor levels), and
+  graphics preset 65 "Absolution (Doom 64)" (auto-pairs the two and adds
+  only soft bloom and a gentle vignette — every tonemap mode, the low
+  postfx-quality path, and lowered exposure were measured to lift the dark
+  sky veil toward grey, so the darkness lives entirely in the lighting and
+  fog layers).
 - `CONTRIBUTORS.md`: recognizes community members who shape the project
   through feedback and insights rather than direct commits or pull
   requests; first entry credits Brett Saltzer.
