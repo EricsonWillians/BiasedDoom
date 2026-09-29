@@ -29,6 +29,7 @@ or assets they describe.
 | Build a trusted Python mod | [Focused example suite](../examples/python/) | [Complete Python guide](scripting/python.md) |
 | Find installed Doom IWADs | [IWAD discovery](engine/iwad-discovery.md) | [Engine features](engine/README.md) |
 | Tune rendering presets and bloom | [Rendering presets and light bleed](engine/rendering-presets.md) | Root [changelog](../CHANGELOG.md) |
+| Set up a gamepad (or fix mod autoaim) | [Gamepad support](engine/gamepad.md) | Root [changelog](../CHANGELOG.md) |
 | Generate a mod skeleton | [glTF tools](gltf/tools.md) | [Script robustness notes](development/create-gltf-replacement-script-improvements.md) |
 | Understand the implementation | [glTF implementation](development/gltf-implementation.md) | [Implementation status](development/gltf-implementation-status.md) |
 | Debug glTF build issues | [Compilation fixes](development/gltf-compilation-fixes.md) | [Robustness notes](development/gltf-robustness-improvements.md) |

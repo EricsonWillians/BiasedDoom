@@ -4,6 +4,70 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Gamepad layout presets: Options > Joystick Options > "Gamepad Layout" (or
+  the `gamepadlayout` CCMD / `joy_padlayout` cvar) switches between Classic
+  (no vertical aiming, the new classic-first default bindings: fire on RT,
+  use on LT, run on pad B, center view on R3, right-stick Y unbound),
+  Classic + Move (right-stick Y walks, Doom 64 style), Modern (right-stick
+  freelook + jump), and Custom. Presets rewrite only the bindings they
+  manage and one-shot couple the aiming model: classic presets lock
+  freelook off (`freelook false`, `sv_freelook 1`) and enable
+  `bd_classic_autoaim`; Modern restores freelook (`freelook true`,
+  `sv_freelook 2`) and disables it.
+- `bd_classic_autoaim` cvar (default false): when set, weapon
+  `+WEAPON.NOAUTOAIM` flags no longer disable autoaim. Mods such as Brutal
+  Doom flag their entire arsenal NOAUTOAIM to force manual aiming, which
+  silently breaks the classic no-freelook play style; this opt-in restores
+  vanilla autoaim under such mods without per-mod code. Set automatically
+  by the gamepad layout presets; documented in
+  [docs/engine/gamepad.md](docs/engine/gamepad.md).
+- Gyro look for controllers that expose a gyroscope through SDL
+  (DualSense/DualShock 4 on Linux and macOS SDL builds), off by default,
+  with `joy_gyro_look`, `joy_gyro_sensitivity_yaw/_pitch`, and
+  `joy_gyro_invert_yaw/_pitch` cvars; pitch follows the usual freelook
+  rules so the classic experience is untouched.
+- Curated sound-driven weapon haptics for Doom (per-class rumble feels:
+  pistol trigger tick, shotgun thump, super-shotgun full-motor boom,
+  chaingun chatter, rocket whoosh, plasma crackle, BFG long sweep,
+  chainsaw grind), plus damage feedback in `P_DamageMobj` that scales rumble
+  intensity and duration with the actual damage taken; the ZScript
+  `PlayerHurtMakeRumble` hook remains as an override point.
+- DirectInput backend (Windows) detects Sony DualShock 4 and DualSense pads
+  by VID/PID and applies a standard gamepad mapping (named axes/buttons,
+  trigger axes, d-pad) instead of a raw generic layout.
+- `docs/engine/gamepad.md`: full gamepad guide — platform matrix, default
+  layout, presets and aiming-model coupling, the NOAUTOAIM-mod section,
+  gyro, haptics, and per-device tuning.
+- `tools/test-gamepad.sh` and `tools/test-vertical-autoaim.sh`: headless
+  engine tests for the gamepad configuration (defaults, presets, coupling,
+  haptics content) and for classic vertical autoaim, the latter with a
+  `--mod` mode that proves the `bd_classic_autoaim` override under Brutal
+  Doom's NOAUTOAIM arsenal (and an `AIM_NO_OVERRIDE=1` sensitivity mode).
+- `tools/test-sky-fog.sh`, `tools/test-fog-presets.sh`, and
+  `tools/analyze_sky_fog.py`: headless tests asserting sky-fog horizon
+  continuity and per-preset sky/geometry seam coherence.
+
+### Changed
+
+- The sky fog veil is now the analytic limit of the geometry fog model
+  (`FSkyFogParams`, transmittance `T(e)=exp2(σ/(k·ln2·sin e))`), computed
+  from `GetFogDensity` for all fog sources, with per-vertex alpha and tint
+  on the fog dome mirroring the `getFogColor()` gradient; all 17 fog
+  presets were retuned around strength (horizon match) and height falloff
+  (zenith clearing), and `bd_fog_sky_horizon` is deprecated (kept
+  registered for config compatibility).
+- Classic vertical autoaim is vanilla-faithful again: with freelook
+  disallowed (or for monster shooters), `P_AimLineAttack` no longer stops
+  at a fixed 35° cone — a miss widens the slope search (35° → 50° → 65° →
+  80°) the way vanilla Doom keeps reaching higher and lower targets, so
+  ledges and flying monsters stay hittable without manual aiming.
+- With freelook disallowed, the view pitch is pinned to the horizon every
+  tic in `P_PlayerThink` (vanilla Doom has no vertical looking), so mod
+  scripts that tilt the view for recoil can no longer leave the camera
+  stuck off-level and drag the autoaim cone off-center.
+
 ## [4.15.16] - 2026-09-28
 
 ### Added
