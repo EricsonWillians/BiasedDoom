@@ -2800,7 +2800,7 @@ PY
             exit 1
         fi
         required_menu_patterns=(
-            'TextItem "PROCEDURAL GAME", "p", "ProceduralMapMenu"'
+            'TextItem "$PGMNU_TITLE", "p", "ProceduralMapMenu"'
             'OptionMenu "ProceduralMapMenu"'
             'TextField "Seed", "procgen_seed"'
             '"procmap_randomize_seed"'
@@ -2809,7 +2809,7 @@ PY
 			'"gothic", "Gothic"'
 			'"corrupted", "Corrupted Tech"'
 			'"procgen_difficulty", "ProcGenDifficulties"'
-			'Slider "Map Size", "procgen_size", 1, 80, 1, 0'
+			'Slider "Map Size", "procgen_size", 1, 160, 1, 0'
 			'"procgen_layout", "ProcGenLayouts"'
 			'"procgen_verticality", "ProcGenVerticality"'
 			'"procgen_detail", "ProcGenDetail"'

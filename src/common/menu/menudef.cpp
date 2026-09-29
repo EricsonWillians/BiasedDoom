@@ -1787,7 +1787,7 @@ static bool EnsureProceduralMenuEntry(FName menuName)
 				item->OffsetPositionY((int)spacing);
 		}
 
-		auto item = CreateListMenuItemText(xpos, ypos, (int)spacing, 'p', "PROCEDURAL GAME",
+		auto item = CreateListMenuItemText(xpos, ypos, (int)spacing, 'p', GStrings.GetString("PGMNU_TITLE"),
 			list->mFont, list->mFontColor, list->mFontColor2, action, 0);
 		list->mItems.Insert(insertIndex, item);
 		if (list->mSelectedItem >= insertIndex)
@@ -1800,7 +1800,7 @@ static bool EnsureProceduralMenuEntry(FName menuName)
 	if (menu->IsKindOf(RUNTIME_CLASS(DOptionMenuDescriptor)))
 	{
 		auto options = static_cast<DOptionMenuDescriptor *>(menu);
-		auto item = CreateOptionMenuItemSubmenu("PROCEDURAL GAME", action, 0);
+		auto item = CreateOptionMenuItemSubmenu(GStrings.GetString("PGMNU_TITLE"), action, 0);
 		options->mItems.Insert(min<unsigned>(1, options->mItems.Size()), item);
 		GC::WriteBarrier(options, item);
 		return true;

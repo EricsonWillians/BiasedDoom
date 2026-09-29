@@ -149,6 +149,7 @@ OptionValue "BDFogPresets"
 	15, "Polar Whiteout"
 	16, "Cathedral Haze"
 	17, "Analog Sepia"
+	18, "Absolution"
 }
 
 OptionValue "BDFogQualityModes"
@@ -365,7 +366,7 @@ LISTMENU "MainMenu"
 		PatchItem "M_NGAME", "n", "PlayerclassMenu"
 		IfGame(Doom)
 		{
-			TextItem "PROCEDURAL GAME", "p", "ProceduralMapMenu"
+			TextItem "$PGMNU_TITLE", "p", "ProceduralMapMenu"
 		}
 		ifOption(SwapMenu)
 		{
@@ -422,7 +423,7 @@ LISTMENU "MainMenuTextOnly"
 	TextItem "$MNU_NEWGAME", "n", "PlayerclassMenu"
 	IfGame(Doom)
 	{
-		TextItem "PROCEDURAL GAME", "p", "ProceduralMapMenu"
+		TextItem "$PGMNU_TITLE", "p", "ProceduralMapMenu"
 	}
 	TextItem "$MNU_OPTIONS", "o", "OptionsMenu"
 	TextItem "$MNU_LOADGAME", "l", "LoadGameMenu"
@@ -684,7 +685,7 @@ DefaultOptionMenu
 
 OptionMenu "ProceduralMapMenu"
 {
-	Title "PROCEDURAL GAME"
+	Title "$PGMNU_TITLE"
 	StaticText "Same settings always rebuild the same map.", 1
 	StaticText " "
 	TextField "Seed", "procgen_seed"
