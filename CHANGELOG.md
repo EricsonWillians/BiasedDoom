@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New fog preset 18, "Absolution": a Doom 64-inspired oppressive blue-violet
+  gloom with murky indigo depth walls and a near-black gradient floor
+  (suggested by Brett Saltzer).
+- `CONTRIBUTORS.md`: recognizes community members who shape the project
+  through feedback and insights rather than direct commits or pull
+  requests; first entry credits Brett Saltzer.
 - Gamepad layout presets: Options > Joystick Options > "Gamepad Layout" (or
   the `gamepadlayout` CCMD / `joy_padlayout` cvar) switches between Classic
   (no vertical aiming, the new classic-first default bindings: fire on RT,
@@ -67,6 +73,10 @@ All notable changes to this project will be documented in this file.
   tic in `P_PlayerThink` (vanilla Doom has no vertical looking), so mod
   scripts that tilt the view for recoil can no longer leave the camera
   stuck off-level and drag the autoaim cone off-center.
+- The Procedural Game main-menu entry is now a localized, title-cased
+  string (`$PGMNU_TITLE`) rendered through the exact same text pipeline as
+  its sibling entries, so it matches them under custom color palettes and
+  languages (suggested by Brett Saltzer).
 
 ## [4.15.16] - 2026-09-28
 
