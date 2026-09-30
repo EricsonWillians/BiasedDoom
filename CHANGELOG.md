@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.17] - 2026-09-30
+
 ### Added
 
 - **Rendering Presets** submenu (Postprocess → Rendering Presets): the single
