@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Rendering Presets** submenu (Postprocess → Rendering Presets): the single
+  home for the preset system — graphics/lighting/fog selectors, all three
+  searchable browsers, the layer-linking toggle, and a **Reset to Vanilla
+  Doom** button (`resetrenderpresets` console command) that restores the
+  stock look in one click (Vanilla+ / Classic Balanced / Disabled).
+- The graphics preset browser now shows each preset's paired lighting and
+  fog presets on every row (e.g. `VHS Horror → Horror Contrast / Cinematic
+  Layers`), so the layer relationship is visible while browsing.
+- `tools/test-preset-link.sh`: headless test for the preset layer semantics
+  (linking, diverge-to-Custom, unlinked independence, vanilla reset).
+
 - The Doom 64-inspired "Absolution" preset family (suggested by Brett
   Saltzer), a full three-layer recreation of the notorious lights-off Doom
   64 look: fog preset 18 "Absolution" (deep indigo override fog with murky
@@ -65,6 +76,15 @@ All notable changes to this project will be documented in this file.
   continuity and per-preset sky/geometry seam coherence.
 
 ### Changed
+
+- Preset layering is now governed by one explicit switch, **Link Preset
+  Layers** (`bd_preset_locked`, default **On**, replacing the old hidden
+  explicit-choice heuristic): linked, a graphics preset always drives the
+  lighting and fog selectors to its paired values, and manually picking a
+  lighting/fog preset drops the graphics selector to Custom; unlinked, the
+  three layers are fully independent and graphics presets never touch the
+  other selectors. The `bd_autopaired_*` tracking cvars are no longer
+  consulted (kept registered for config compatibility).
 
 - The sky fog veil is now the analytic limit of the geometry fog model
   (`FSkyFogParams`, transmittance `T(e)=exp2(σ/(k·ln2·sin e))`), computed

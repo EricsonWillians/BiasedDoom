@@ -56,6 +56,14 @@ struct OptionValues native version("2.4")
 	native static String GetTextValue(Name group, int index);
 }
 
+struct RenderingPresets native version("4.15")
+{
+	// Paired lighting/fog preset IDs for a graphics preset (0 = no pairing),
+	// so preset browsers can show how the layers relate.
+	native static int GetGraphicsPresetLighting(int preset);
+	native static int GetGraphicsPresetFog(int preset);
+}
+
 struct JoystickConfig native version("2.4")
 {
 	enum EJoyAxis

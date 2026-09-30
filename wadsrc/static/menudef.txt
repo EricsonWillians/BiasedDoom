@@ -3519,9 +3519,8 @@ OptionMenu "vkoptions"
 OptionMenu "PostProcessMenu" protected
 {
 	Title "$GLMNU_POSTPROCESS"
-	Option "Graphics Preset",						bd_graphics_preset,				"PostfxPresetModes"
-	Submenu "Browse Graphics Presets",			"GraphicsPresetBrowser"
-	Option "Preset Locked",							bd_preset_locked,				"OnOff"
+	Submenu "Rendering Presets",                    "RenderingPresetsMenu"
+	StaticText " "
 	Option "PostFX",								bd_postfx_enable,					"OnOff"
 	Option "PostFX Quality",						bd_postfx_quality,					"PostfxQualityModes"
 	StaticText " "
@@ -3531,6 +3530,27 @@ OptionMenu "PostProcessMenu" protected
 	Submenu "Lighting / Materials",					"PostProcessLightingMenu"
 	Submenu "Retro Display",						"PostProcessRetroMenu"
 	Submenu "Output / Performance",					"PostProcessOutputMenu"
+}
+
+OptionMenu "RenderingPresetsMenu" protected
+{
+	Title "Rendering Presets"
+	StaticText "A graphics preset is a complete look: image effects"
+	StaticText "plus a matching lighting style and fog preset."
+	StaticText " "
+	Option "Graphics Preset",						bd_graphics_preset,				"PostfxPresetModes"
+	Submenu "Browse Graphics Presets",			"GraphicsPresetBrowser"
+	StaticText " "
+	Option "Link Preset Layers",					bd_preset_locked,				"OnOff"
+	StaticText "Linked: the graphics preset also sets lighting and fog."
+	StaticText "Unlinked: mix the three layers yourself."
+	StaticText " "
+	Option "Light Style Preset",					bd_lighting_preset,				"BDLightingPresetModes"
+	Submenu "Browse Lighting Presets",			"LightingPresetBrowser"
+	Option "Fog Preset",							bd_fog_preset,						"BDFogPresets"
+	Submenu "Browse Fog Presets",				"FogPresetBrowser"
+	StaticText " "
+	Command "Reset to Vanilla Doom",			"resetrenderpresets"
 }
 
 OptionMenu "GraphicsPresetBrowser" protected

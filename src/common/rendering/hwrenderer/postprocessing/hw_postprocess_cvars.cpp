@@ -20,6 +20,8 @@
 */
 
 #include "hw_postprocess_cvars.h"
+#include "c_dispatch.h"
+#include "printf.h"
 #include "v_video.h"
 
 static int GApplyingPresetCount = 0;
@@ -112,10 +114,9 @@ static_assert(sizeof(GGraphicsPresetPairing) / sizeof(GGraphicsPresetPairing[0])
 
 // Durable record of the last lighting/fog preset ID installed by graphics
 // preset auto-pairing. These are archived global-config CVARs (not in-memory
-// state) because config load replays every archived selector independently,
-// which would destroy in-memory tracking depending on load order. They are
-// reset to 0 whenever the user changes a selector directly, so explicit
-// choices are always respected.
+// state) for INI compatibility; with preset linking (bd_preset_locked) the
+// graphics preset always drives the selectors, so explicit-choice tracking
+// is no longer consulted.
 EXTERN_CVAR(Int, bd_autopaired_lighting)
 EXTERN_CVAR(Int, bd_autopaired_fog)
 
@@ -3155,24 +3156,56 @@ static void SetGraphicsPreset(FIntCVar &self) {
   if (self <= 0 || C_InInitialCallbackReplay())
     return;
 
-  // Auto-pair the matching named lighting/fog presets by moving the selectors
-  // themselves, so every menu and preset browser reflects the actual look.
-  // A selector the user set explicitly (anything other than Custom or the
-  // last auto-paired value) is left untouched: explicit choice always wins.
+  // Preset linking: when the layers are linked (bd_preset_locked), the
+  // graphics preset is the master look and always drives the lighting/fog
+  // selectors, so every menu and preset browser reflects the actual look.
+  // Unlinked, the layers stay independent and nothing else is touched.
+  if (!bd_preset_locked)
+    return;
+
   const FPresetPairing &pairing = GGraphicsPresetPairing[self];
 
-  if (pairing.lighting > 0 &&
-      (bd_lighting_preset == 0 || bd_lighting_preset == bd_autopaired_lighting)) {
+  if (pairing.lighting > 0) {
     bd_autopaired_lighting = pairing.lighting;
     if (bd_lighting_preset != pairing.lighting)
       bd_lighting_preset = pairing.lighting; // fires ApplyLightingPreset
   }
 
-  if (pairing.fog > 0 &&
-      (bd_fog_preset == 0 || bd_fog_preset == bd_autopaired_fog)) {
+  if (pairing.fog > 0) {
     bd_autopaired_fog = pairing.fog;
     if (bd_fog_preset != pairing.fog)
       bd_fog_preset = pairing.fog; // fires ApplyFogPreset
+  }
+}
+
+//==========================================================================
+//
+// resetrenderpresets: one click back to the stock Doom look. Vanilla+
+// graphics (postfx pipeline on, every effect off), Classic Balanced
+// lighting, fog Disabled. Graphics is applied last so a linked preset state
+// re-pairs coherently; the user's link preference is left untouched.
+//
+//==========================================================================
+
+CCMD(resetrenderpresets)
+{
+  bd_lighting_preset = 1;
+  bd_fog_preset = 1;
+  bd_graphics_preset = 1;
+  Printf("Rendering presets reset to Vanilla (Vanilla+ / Classic Balanced / Disabled).\n");
+}
+
+void BD_GetGraphicsPresetPairing(int preset, int &lighting, int &fog)
+{
+  if (preset >= 0 && preset <= MaxGraphicsPreset)
+  {
+    lighting = GGraphicsPresetPairing[preset].lighting;
+    fog = GGraphicsPresetPairing[preset].fog;
+  }
+  else
+  {
+    lighting = 0;
+    fog = 0;
   }
 }
 
@@ -3388,7 +3421,7 @@ CUSTOM_CVAR(Float, bd_bloom_intensity, 1.0f,
   OnPresetFeatureChanged(self);
 }
 
-CVAR(Bool, bd_preset_locked, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, bd_preset_locked, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CUSTOM_CVAR(Bool, bd_postfx_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   OnPresetFeatureChanged(self);
@@ -4033,10 +4066,14 @@ CUSTOM_CVAR(Int, bd_lighting_preset, 0,
   if (self > MaxLightingPreset)
     self = MaxLightingPreset;
 
-  // A user-driven selection (menu, console, config) is an explicit choice:
-  // drop the auto-pair tracking so graphics presets stop overriding it.
   if (!IsApplyingPreset())
+  {
     bd_autopaired_lighting = 0;
+    // Linked layers: manually picking a lighting preset leaves the curated
+    // graphics look, so the graphics selector visibly drops to Custom.
+    if (bd_preset_locked && bd_graphics_preset != 0)
+      bd_graphics_preset = 0;
+  }
 
   FPresetApplyScope applyScope;
   ApplyLightingPreset(self);
@@ -4292,10 +4329,14 @@ CUSTOM_CVAR(Int, bd_fog_preset, 0,
   if (self > MaxFogPreset)
     self = MaxFogPreset;
 
-  // A user-driven selection (menu, console, config) is an explicit choice:
-  // drop the auto-pair tracking so graphics presets stop overriding it.
   if (!IsApplyingPreset())
+  {
     bd_autopaired_fog = 0;
+    // Linked layers: manually picking a fog preset leaves the curated
+    // graphics look, so the graphics selector visibly drops to Custom.
+    if (bd_preset_locked && bd_graphics_preset != 0)
+      bd_graphics_preset = 0;
+  }
 
   FPresetApplyScope applyScope;
   ApplyFogPreset(self);

@@ -169,3 +169,8 @@ EXTERN_CVAR(Float, gl_crt_scanline_density)
 EXTERN_CVAR(Float, gl_crt_scanline_sharpness)
 EXTERN_CVAR(Float, gl_crt_mask_intensity)
 EXTERN_CVAR(Int, gl_ntsc_mode)
+EXTERN_CVAR(Int, gl_ntsc_mode)
+
+// Paired lighting/fog preset for a graphics preset (0 when the preset has no
+// pairing); used by the preset browser to show layer relationships.
+void BD_GetGraphicsPresetPairing(int preset, int &lighting, int &fog);

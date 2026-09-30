@@ -51,6 +51,7 @@
 #include "printf.h"
 #include "i_interface.h"
 #include "gi.h"
+#include "common/rendering/hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
 
 
@@ -134,6 +135,24 @@ DEFINE_ACTION_FUNCTION(FOptionValues, GetText)
 		}
 	}
 	ACTION_RETURN_STRING(val);
+}
+
+DEFINE_ACTION_FUNCTION(FRenderingPresets, GetGraphicsPresetLighting)
+{
+	PARAM_PROLOGUE;
+	PARAM_INT(preset);
+	int lighting = 0, fog = 0;
+	BD_GetGraphicsPresetPairing(preset, lighting, fog);
+	ACTION_RETURN_INT(lighting);
+}
+
+DEFINE_ACTION_FUNCTION(FRenderingPresets, GetGraphicsPresetFog)
+{
+	PARAM_PROLOGUE;
+	PARAM_INT(preset);
+	int lighting = 0, fog = 0;
+	BD_GetGraphicsPresetPairing(preset, lighting, fog);
+	ACTION_RETURN_INT(fog);
 }
 
 

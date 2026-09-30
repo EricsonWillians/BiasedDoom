@@ -132,6 +132,12 @@ class PresetMenu : OptionMenu
 		return 'PostfxPresetModes';
 	}
 
+	// Hook for subclasses to annotate a row (e.g. layer pairing info).
+	virtual String DecorateLabel(String label, int value)
+	{
+		return label;
+	}
+
 	private void AddSearchField(string query)
 	{
 		mSearchField = new("PresetSearchField").Init("Search presets", self, query);
@@ -156,7 +162,7 @@ class PresetMenu : OptionMenu
 				continue;
 
 			int value = int(OptionValues.GetValue(valuesName, i));
-			let item = new("PresetMenuItem").Init(label, cvarName, value);
+			let item = new("PresetMenuItem").Init(DecorateLabel(label, value), cvarName, value);
 			mDesc.mItems.Push(item);
 			found = true;
 		}
@@ -183,6 +189,38 @@ class GraphicsPresetMenu : PresetMenu
 	override Name GetPresetValuesName()
 	{
 		return 'PostfxPresetModes';
+	}
+
+	// Show which lighting/fog presets each graphics preset is paired with, so
+	// the layer relationship is visible while browsing.
+	override String DecorateLabel(String label, int value)
+	{
+		if (value <= 0)
+			return label;
+		int lighting = RenderingPresets.GetGraphicsPresetLighting(value);
+		int fog = RenderingPresets.GetGraphicsPresetFog(value);
+		if (lighting <= 0 && fog <= 0)
+			return label;
+		String lightingName = PresetLabelFor('BDLightingPresetModes', lighting);
+		String fogName = PresetLabelFor('BDFogPresets', fog);
+		if (lightingName == "" && fogName == "")
+			return label;
+		String pairing = lightingName;
+		if (fogName != lightingName && fogName != "")
+			pairing = pairing .. " / " .. fogName;
+		return String.Format("%s  →  %s", label, pairing);
+	}
+
+	private static String PresetLabelFor(Name group, int value)
+	{
+		if (value <= 0)
+			return "";
+		for (int i = 0; i < OptionValues.GetCount(group); ++i)
+		{
+			if (int(OptionValues.GetValue(group, i)) == value)
+				return StringTable.Localize(OptionValues.GetText(group, i));
+		}
+		return "";
 	}
 }
 

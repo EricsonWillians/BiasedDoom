@@ -9,14 +9,21 @@ renderer backend switching.
 
 The main entry point is:
 
-`Options -> Display Options -> Advanced -> Postprocess`
+`Options -> Display Options -> Advanced -> Postprocess -> Rendering Presets`
+
+This submenu is the single home for the preset system: the **Graphics
+Preset** selector, the **Link Preset Layers** toggle, the **Light Style
+Preset** and **Fog Preset** selectors, all three searchable browsers, and a
+**Reset to Vanilla Doom** button that restores the stock look in one click.
 
 Each preset family keeps its traditional cycling selector, plus a searchable
 browser:
 
-- **Browse Graphics Presets** — 64 complete image/renderer looks.
-- **Browse Lighting Presets** — 39 dynamic-light/material styles.
-- **Browse Fog Presets** — 17 atmosphere/fog treatments.
+- **Browse Graphics Presets** — 65 complete image/renderer looks, each row
+  showing its paired lighting/fog presets (e.g. `VHS Horror → Horror
+  Contrast / Cinematic Layers`).
+- **Browse Lighting Presets** — 40 dynamic-light/material styles.
+- **Browse Fog Presets** — 18 atmosphere/fog treatments.
 
 The browser marks the active preset as `Current`.
 
@@ -32,18 +39,23 @@ The three families are layers with a single owner each:
   `bd_ambient_gradient_*`, `bd_specular_*`).
 - **Fog presets** own every fog/gradient CVar (`bd_fog_*`, `bd_sector_fog_scale`).
 
-Selecting a graphics preset **auto-pairs** its matching lighting and fog
-presets by moving the `bd_lighting_preset` / `bd_fog_preset` selectors
-themselves, so the menus always show which look is actually active.
+How they relate is controlled by one switch, **Link Preset Layers**
+(`bd_preset_locked`, default **On**):
 
-**Explicit choice always wins.** A lighting or fog preset you selected
-yourself is never overridden by graphics presets — switching graphics presets
-then only changes the image pipeline around your chosen lighting/fog.
-Selections made through auto-pairing, on the other hand, are re-paired when
-the next graphics preset is chosen. Changing an individual feature CVar marks
-only its own family as `Custom`; the other selectors remain intact. Set
-`bd_preset_locked` to `true` to keep hand-tuned feature tweaks from dropping
-a selector to `Custom`.
+- **Linked** — the Graphics Preset is the master look: selecting one always
+  moves the `bd_lighting_preset` / `bd_fog_preset` selectors to the paired
+  values, so the menus always show which look is actually active. Picking a
+  lighting or fog preset manually afterwards drops the graphics selector to
+  **Custom** — you have visibly left the curated combination. Individual
+  feature-slider tweaks never reset the selectors.
+- **Unlinked** — the three layers are fully independent: graphics preset
+  changes never touch the other two selectors, so you can mix any image
+  pipeline with any lighting style and any fog.
+
+**Reset to Vanilla Doom** (in the Rendering Presets menu, or the
+`resetrenderpresets` console command) restores the stock look in one action:
+graphics `Vanilla+`, lighting `Classic Balanced`, fog `Disabled` — the
+selectors themselves show exactly what vanilla means.
 
 The same lighting and fog controls remain available from the classic Lighting
 menu and the `Postprocess -> Atmosphere / Fog` submenu.
