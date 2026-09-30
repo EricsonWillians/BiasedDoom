@@ -439,7 +439,15 @@ PNGHandle *M_VerifyPNG (FileReader &filer)
 		// If this is a text chunk, also record its contents.
 		if (data[1] == MAKE_ID('t','E','X','t'))
 		{
-			char *str = new char[chunk.Size + 1];
+			// chunk.Size comes straight from the file. Reject absurd sizes
+			// before allocating: 0xFFFFFFFF would wrap the +1 into a zero-byte
+			// allocation that Read then overflows with the remaining file bytes.
+			const FileReader::Size remaining = png->File.GetLength() - png->File.Tell();
+			if (remaining < 0 || (uint64_t)chunk.Size > (uint64_t)remaining || chunk.Size > 16 * 1024 * 1024)
+			{
+				break;
+			}
+			char *str = new char[(size_t)chunk.Size + 1];
 
 			if (png->File.Read (str, chunk.Size) != chunk.Size)
 			{

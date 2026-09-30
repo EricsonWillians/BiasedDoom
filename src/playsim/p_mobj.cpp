@@ -2008,8 +2008,9 @@ FSerializer &Serialize(FSerializer &arc, const char *key, ModelAnimFrame &ao, Mo
 			}
 			else if(type.Compare("precalcIQM") == 0)
 			{
-				//TODO, unreachable
-				ao = nullptr;
+				ModelAnimFramePrecalculatedIQM tmp;
+				arc("bones", tmp.precalcBones);
+				ao = std::move(tmp);
 			}
 		}
 	}
@@ -2030,9 +2031,9 @@ FSerializer &Serialize(FSerializer &arc, const char *key, ModelAnimFrame &ao, Mo
 		}
 		else if(std::holds_alternative<ModelAnimFramePrecalculatedIQM>(ao))
 		{
-			//TODO
-			FString type = "nullptr";
+			FString type = "precalcIQM";
 			arc("type", type);
+			arc("bones", std::get<ModelAnimFramePrecalculatedIQM>(ao).precalcBones);
 		}
 	}
 	arc.EndObject();

@@ -2868,8 +2868,6 @@ CUSTOM_CVAR(Bool, vm_debug, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 		Printf("You must restart " GAMENAME " for this change to take effect.\n");
 		Printf("Note that enabling the debug server will disable JIT compilation.\n");
 	}
-	// TODO: save this to the config file?
-
 }
 
 CVAR(Int, vm_debug_port, 19021, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)

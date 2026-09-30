@@ -48,6 +48,8 @@ static bool OpenHog(FResourceFile* rf, LumpFilterInfo* filter)
 {
     auto Reader = rf->GetContainerReader();
     FileReader::Size length = Reader->GetLength();
+    if (length < 0) return false;
+    const size_t fileLength = static_cast<size_t>(length);
 
     std::vector<FResourceEntry> entries;
     // Hogs store their data as a list of file records, each containing a name, length and the actual data.
@@ -70,6 +72,9 @@ static bool OpenHog(FResourceFile* rf, LumpFilterInfo* filter)
         Entry.ResourceID = -1;
         Entry.Method = METHOD_STORED;
         Entry.FileName = rf->NormalizeFileName(name);
+        // Reject entries whose declared length runs past the end of the file
+        // instead of registering a lump that points at garbage.
+        if (Entry.Position > fileLength || elength > fileLength - Entry.Position) break;
         entries.push_back(Entry);
         Reader->Seek(elength, FileReader::SeekCur);
     }

@@ -646,6 +646,13 @@ bool MasterVisible()
 void SetMasterVisible(bool on)
 {
 	py_imgui = on;
+	if (!on && sContext != nullptr)
+	{
+		ImGui::SetCurrentContext(sContext);
+		ImGuiIO& io = ImGui::GetIO();
+		io.ClearInputKeys();
+		io.ClearInputMouse();
+	}
 }
 
 bool NavEnabled()
@@ -740,6 +747,14 @@ void Frame(double deltaSeconds)
 	ImGuiIO& io = ImGui::GetIO();
 	io.DisplaySize = ImVec2((float)twod->GetWidth(), (float)twod->GetHeight());
 	io.DeltaTime = (float)deltaSeconds;
+	if (!MasterVisible())
+	{
+		// py_imgui is a console cvar and may be toggled without going through
+		// SetMasterVisible(). Never preserve a held key or mouse button while
+		// the overlay is disabled.
+		io.ClearInputKeys();
+		io.ClearInputMouse();
+	}
 
 	// NewFrame/Render are always paired to keep the context state sane, even
 	// when the overlay is hidden. Window state persists across hidden frames.

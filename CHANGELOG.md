@@ -16,6 +16,15 @@ All notable changes to this project will be documented in this file.
   Layers`), so the layer relationship is visible while browsing.
 - `tools/test-preset-link.sh`: headless test for the preset layer semantics
   (linking, diverge-to-Custom, unlinked independence, vanilla reset).
+- 35 append-only, playable rendering looks (IDs 66–100), taking the curated
+  collection to **100 graphics**, **75 lighting**, and **53 fog** presets.
+  They include Absolution colour variants plus distinct visual genres such as
+  Chrome Basilica, Phosphor Terminal, Porcelain Citadel, Lantern Festival,
+  Glasshouse Rain, Mercury Mirror, Cinder Opera, Opaline Reef, Ultraviolet
+  Archive, Saffron Sandstorm, and Polar Signal Station. The paired lighting
+  and fog layers are exposed in the same searchable menu, and the existing
+  newer presets now use materially different image pipelines instead of
+  feeling like simple palette swaps.
 
 - The Doom 64-inspired "Absolution" preset family (suggested by Brett
   Saltzer), a full three-layer recreation of the notorious lights-off Doom
@@ -106,6 +115,24 @@ All notable changes to this project will be documented in this file.
   string (`$PGMNU_TITLE`) rendered through the exact same text pipeline as
   its sibling entries, so it matches them under custom color palettes and
   languages (suggested by Brett Saltzer).
+
+### Fixed
+
+- Hardened hostile asset handling throughout the engine: malformed ZIP
+  SHRINK/IMPLODE streams, HOG archives, KVX voxels, PNG chunks, raw page
+  patches, binary `SWITCHES`/`ANIMATED` lumps, and IVF movie frames now fail
+  safely instead of risking out-of-bounds access, oversized allocation, or
+  unbounded parsing.
+- Fixed GLES model normals by reconstructing packed 10:10:10 normals in the
+  shader on platforms that cannot consume the desktop packed attribute type.
+- Precalculated IQM model-animation frames now serialize and restore instead
+  of being discarded from savegames.
+- Hardened embedded Python/ImGui allocation and UTF-8 error paths, clear held
+  ImGui input when the overlay is disabled, and warn Python mods about
+  duplicate actor TIDs.
+- `bd_npcs` now persists restored dead NPC state, preventing a savegame or
+  hub restore from duplicating a corpse; the framework contract suite covers
+  the regression.
 
 ## [4.15.16] - 2026-09-28
 

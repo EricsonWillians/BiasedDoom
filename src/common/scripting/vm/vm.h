@@ -45,6 +45,7 @@
 #include "memarena.h"
 #include "name.h"
 #include "scopebarrier.h"
+#include <assert.h>
 #include <type_traits>
 
 class DObject;
@@ -419,7 +420,7 @@ struct VMValue
 		{
 			return (int)s().ToLong();
 		}
-		// FIXME
+		assert(false && "unexpected VM register type in ToInt");
 		return 0;
 	}
 	double ToDouble(int Type)
@@ -436,7 +437,7 @@ struct VMValue
 		{
 			return s().ToDouble();
 		}
-		// FIXME
+		assert(false && "unexpected VM register type in ToDouble");
 		return 0;
 	}
 };

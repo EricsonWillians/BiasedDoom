@@ -67,26 +67,34 @@ void FTextureAnimator::InitSwitchList ()
 	if (lump != -1)
 	{
 		auto lumpdata = fileSystem.ReadFile (lump);
-		auto alphSwitchList = lumpdata.string();
-		const char *list_p;
 		FSwitchDef *def1, *def2;
 
-		for (list_p = alphSwitchList; list_p[18] || list_p[19]; list_p += 20)
+		// SWITCHES is an array of fixed-size binary records. Do not rely on
+		// either name field having a trailing NUL or on the terminator record
+		// being present in a malformed PWAD.
+		for (size_t offset = 0; offset + 20 <= lumpdata.size(); offset += 20)
 		{
+			const uint8_t *entry = lumpdata.bytes() + offset;
+			if (entry[18] == 0 && entry[19] == 0) break;
+			char onName[10] = {};
+			char offName[10] = {};
+			memcpy(onName, entry, 9);
+			memcpy(offName, entry + 9, 9);
+
 			// [RH] Check for switches that aren't really switches
-			if (stricmp (list_p, list_p+9) == 0)
+			if (stricmp(onName, offName) == 0)
 			{
-				Printf ("Switch %s in SWITCHES has the same 'on' state\n", list_p);
+				Printf ("Switch %s in SWITCHES has the same 'on' state\n", onName);
 				continue;
 			}
 			// [RH] Skip this switch if its textures can't be found.
-			if (TexMan.CheckForTexture (list_p /* .name1 */, ETextureType::Wall, texflags).Exists() &&
-				TexMan.CheckForTexture (list_p + 9 /* .name2 */, ETextureType::Wall, texflags).Exists())
+			if (TexMan.CheckForTexture(onName /* .name1 */, ETextureType::Wall, texflags).Exists() &&
+				TexMan.CheckForTexture(offName /* .name2 */, ETextureType::Wall, texflags).Exists())
 			{
 				def1 = (FSwitchDef *)M_Malloc (sizeof(FSwitchDef));
 				def2 = (FSwitchDef *)M_Malloc (sizeof(FSwitchDef));
-				def1->PreTexture = def2->frames[0].Texture = TexMan.CheckForTexture (list_p /* .name1 */, ETextureType::Wall, texflags);
-				def2->PreTexture = def1->frames[0].Texture = TexMan.CheckForTexture (list_p + 9, ETextureType::Wall, texflags);
+				def1->PreTexture = def2->frames[0].Texture = TexMan.CheckForTexture(onName /* .name1 */, ETextureType::Wall, texflags);
+				def2->PreTexture = def1->frames[0].Texture = TexMan.CheckForTexture(offName, ETextureType::Wall, texflags);
 				def1->Sound = def2->Sound = NO_SOUND;
 				def1->NumFrames = def2->NumFrames = 1;
 				def1->frames[0].TimeMin = def2->frames[0].TimeMin = 0;
@@ -396,4 +404,3 @@ FSwitchDef *FTextureAnimator::FindSwitch (FTextureID texture)
 	}
 	return nullptr;
 }
-

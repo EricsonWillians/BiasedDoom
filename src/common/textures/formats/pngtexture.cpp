@@ -117,6 +117,13 @@ FImageSource *PNGImage_TryCreate(FileReader & data, int lumpnum)
 	uint8_t filter = data.ReadUInt8();
 	uint8_t interlace = data.ReadUInt8();
 
+	// The dimensions come straight from the file; reject values that would
+	// overflow or explode the pixel-buffer allocations downstream.
+	if (width < 1 || height < 1 || width > 16384 || height > 16384)
+	{
+		Printf(TEXTCOLOR_YELLOW"WARNING: failed to load PNG %s: the dimensions (%dx%d) are not supported!\n", fileSystem.GetFileFullName(lumpnum), width, height);
+		return NULL;
+	}
 	if (compression != 0 || filter != 0 || interlace > 1)
 	{
 		Printf(TEXTCOLOR_YELLOW"WARNING: failed to load PNG %s: the compression, filter, or interlace is not supported!\n", fileSystem.GetFileFullName(lumpnum));
@@ -140,9 +147,12 @@ FImageSource *PNGImage_TryCreate(FileReader & data, int lumpnum)
 			int id = data.ReadInt32();
 			while (id != MAKE_ID('I', 'D', 'A', 'T') && id != MAKE_ID('I', 'E', 'N', 'D'))
 			{
+				// A negative chunk length (or a failed seek at the end of the
+				// file) makes no forward progress and would loop forever.
+				if (len < 0) break;
 				if (id != MAKE_ID('g', 'r', 'A', 'b'))
 				{
-					data.Seek(len, FileReader::SeekCur);
+					if (data.Seek(len, FileReader::SeekCur) != 0) break;
 				}
 				else
 				{
@@ -161,7 +171,7 @@ FImageSource *PNGImage_TryCreate(FileReader & data, int lumpnum)
 					tex->SetOffsets(ihotx, ihoty);
 				}
 
-				data.Seek(4, FileReader::SeekCur);		// Skip CRC
+				if (data.Seek(4, FileReader::SeekCur) != 0) break;		// Skip CRC
 				len = data.ReadInt32BE();
 				id = MAKE_ID('I', 'E', 'N', 'D');
 				id = data.ReadInt32();
@@ -716,7 +726,8 @@ FGameTexture *PNGTexture_CreateFromFile(PNGHandle *png, const FString &filename)
 	uint8_t interlace = data.ReadUInt8();
 
 	// Reject anything that cannot be put into a savegame picture by GZDoom itself.
-	if (compression != 0 || filter != 0 || interlace > 0 || bitdepth != 8 || (colortype != 2 && colortype != 3)) return nullptr;
+	if (width < 1 || height < 1 || width > 16384 || height > 16384 ||
+		compression != 0 || filter != 0 || interlace > 0 || bitdepth != 8 || (colortype != 2 && colortype != 3)) return nullptr;
 	else return MakeGameTexture(new FPNGFileTexture (png->File, width, height, colortype), nullptr, ETextureType::Override);
 }
 
@@ -795,4 +806,4 @@ FBitmap FPNGFileTexture::GetBgraBitmap(const PalEntry *remap, int *trans)
 		bmp.CopyPixelDataRGB(0, 0, Pixels.Data(), Width, Height, 3, pixwidth, 0, CF_RGB);
 	}
 	return bmp;
-} 
+}

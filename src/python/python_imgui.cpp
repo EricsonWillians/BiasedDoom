@@ -78,7 +78,17 @@ PyObject* ReturnBool(bool value)
 
 PyObject* ReturnChangedValue(bool changed, PyObject* value)
 {
-	return Py_BuildValue("(NN)", PyBool_FromLong(changed ? 1 : 0), value);
+	if (value == nullptr) return nullptr;
+	PyObject* changedValue = PyBool_FromLong(changed ? 1 : 0);
+	if (changedValue == nullptr)
+	{
+		Py_DECREF(value);
+		return nullptr;
+	}
+	PyObject* result = PyTuple_Pack(2, changedValue, value);
+	Py_DECREF(changedValue);
+	Py_DECREF(value);
+	return result;
 }
 
 //---------------------------------------------------------------------------
@@ -393,7 +403,10 @@ PyObject* ImInputText(PyObject*, PyObject* args, PyObject* kwargs)
 	buffer[bufferSize - 1] = '\0';
 
 	const bool changed = ImGui::InputText(label, buffer, bufferSize, (ImGuiInputTextFlags)flags);
-	return ReturnChangedValue(changed, PyUnicode_FromString(buffer));
+	// A byte-length limit can cut a valid Python string in the middle of a
+	// UTF-8 codepoint. Decode with replacement so that an invalid temporary
+	// buffer reports a normal value instead of failing the imgui_frame handler.
+	return ReturnChangedValue(changed, PyUnicode_DecodeUTF8(buffer, strlen(buffer), "replace"));
 }
 
 PyObject* ImInputInt(PyObject*, PyObject* args, PyObject* kwargs)

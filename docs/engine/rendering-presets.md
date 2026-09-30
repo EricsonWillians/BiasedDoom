@@ -19,11 +19,11 @@ Preset** and **Fog Preset** selectors, all three searchable browsers, and a
 Each preset family keeps its traditional cycling selector, plus a searchable
 browser:
 
-- **Browse Graphics Presets** — 65 complete image/renderer looks, each row
+- **Browse Graphics Presets** — 100 complete image/renderer looks, each row
   showing its paired lighting/fog presets (e.g. `VHS Horror → Horror
   Contrast / Cinematic Layers`).
-- **Browse Lighting Presets** — 40 dynamic-light/material styles.
-- **Browse Fog Presets** — 18 atmosphere/fog treatments.
+- **Browse Lighting Presets** — 75 dynamic-light/material styles.
+- **Browse Fog Presets** — 53 atmosphere/fog treatments.
 
 The browser marks the active preset as `Current`.
 
@@ -151,6 +151,41 @@ override a few settings, so their look tracks the base preset.
 | 41 | Divine Radiance | Lottes Filmic (exp 1.30) | Cathedral Bloom → Cathedral Haze | Strong god rays through luminous cathedral haze. |
 | 56 | Overexposed *(extends 41)* | Reinhard (exp 1.80) | Surgical White → Disabled | Deliberately blown-out, high-key brightness. |
 | 65 | Absolution (Doom 64) | None (exp 1.30) | Absolution → Absolution | The notorious lights-off Doom 64 gloom: darkness lives in the lighting and fog layers because tonemaps, the low postfx quality path, and lowered exposure all lift the dark sky veil to grey. |
+| 66 | Absolution: Ember *(extends 65)* | None (exp 1.30) | Ember Reliquary → Ember Gloom | Doom 64 darkness recolored as furnace-red light pools and smoke. |
+| 67 | Absolution: Verdigris *(extends 65)* | None (exp 1.30) | Verdigris → Verdigris Veil | Oxidized-copper teal and green under the neutral dark-safe pipeline. |
+| 68 | Absolution: Amethyst *(extends 65)* | None (exp 1.30) | Amethyst → Amethyst Veil | Violet crystal light catches a little extra bloom without turning the sky grey. |
+| 69 | Absolution: Cobalt *(extends 65)* | None (exp 1.30) | Cobalt → Cobalt Night | Cold navy darkness and sharply readable blue highlights. |
+| 70 | Gilded Reliquary *(extends 41)* | Lottes Filmic (exp 1.30) | Gilded Reliquary → Incense Gold | A playable gold cathedral: treasure-vault bloom and restrained god rays. |
+| 71 | Jade Sanctuary *(extends 48)* | Reinhard | Jade Sanctuary → Jade Mist | Serene painted jade daylight: low glow, soft color, and clear combat values. |
+| 72 | Ashen Eclipse *(extends 65)* | None (exp 1.30) | Ashen Eclipse → Ashfall | A dark volcanic night, with ash grain and ember accents instead of a crushed black image. |
+| 73 | Pelagic Temple *(extends 45)* | Reinhard (exp 1.20) | Pelagic Temple → Abyssal Teal | Watery teal softness and tiny caustic edges, without Dreamlike shafts. |
+| 74 | Roseglass Chapel *(extends 42)* | Lottes Filmic | Roseglass Chapel → Roseglass Haze | Stained-glass rose and gold rendered as restrained film stock. |
+| 75 | Stormbound Citadel *(extends 53)* | Gothic Noir (exp 0.90) | Stormbound → Thunderhead | Rain-noir blue-grey fortress contrast with a controlled lightning flicker. |
+| 76 | Autumnal Ruins *(extends 42)* | Lottes Filmic | Autumnal Ember → Autumn Mist | Warm woodland ruins with a subtle 35 mm texture and late-afternoon glow. |
+| 77 | Aurora Winter *(extends 61)* | Bleach Bypass (exp 1.10) | Aurora Winter → Aurora Frost | Icy cyan, faint magenta rim, and crystalline facility clarity. |
+| 78 | Solar Flare Bazaar *(extends 50)* | Uncharted2 (exp 1.25) | Solar Flare → Solar Dust | Sharp sun-gold action visibility with modest flare and shafts. |
+| 79 | Bioluminescent Grotto *(extends 46)* | ACES | Bioluminescent Grotto → Luminous Grotto | Electric aqua cave contrast with a safe readable floor. |
+| 80 | Bloodglass Eclipse *(extends 65)* | None (exp 1.30) | Bloodglass Eclipse → Bloodglass Veil | Ruby-magenta darkness using the neutral Absolution image pipeline. |
+| 81 | Clockwork Brass *(extends 57)* | ACES (exp 1.20) | Clockwork Brass → Brass Smog | Polished brass mechanisms under clear PBR-style lens treatment. |
+| 82 | Orchid Nebula *(extends 62)* | Moonlit (exp 1.10) | Orchid Nebula → Orchid Nebula | Violet space-fantasy with a controlled cyberpunk shimmer. |
+| 83 | Neon Lotus *(extends 32)* | ACES | Neon Lotus → Lotus Neon Mist | Hot pink and cyan cyber-fantasy, deliberately below eye-strain intensity. |
+| 84 | Frostfire Citadel *(extends 12)* | Bleach Bypass (exp 1.10) | Frostfire → Frostfire Haze | Bleached blue-steel architecture punctuated by restrained orange embers. |
+| 85 | Mirage Oasis *(extends 20)* | Lottes Filmic (exp 1.05) | Mirage Oasis → Oasis Mirage | Turquoise shade and sunlit sand with long, readable horizons. |
+| 86 | Phantom Carnival *(extends 52)* | None | Phantom Carnival → Carnival Smoke | A playful magenta haunted fairground projected through a gentle CRT. |
+| 87 | Obsidian Monsoon *(extends 65)* | None (exp 1.30) | Obsidian Monsoon → Obsidian Rain | Near-black rain ambience with storm-blue navigation cues. |
+| 88 | Prism Garden *(extends 55)* | Moonlit (exp 1.10) | Prism Garden → Prism Bloom | Bright pastel fantasy as a gentle watercolor painting. |
+| 89 | Mushroom Moon *(extends 63)* | Reinhard (exp 1.10) | Mushroom Moon → Spore Moonlight | Hazy purple-blue spore photography that still reads as a game space. |
+| 90 | Chrome Basilica *(extends 57)* | ACES (exp 1.20) | Chrome Basilica → Silver Haze | Polished sci-fi PBR clarity, restrained bloom, and pearl-cyan metal. |
+| 91 | Phosphor Terminal *(extends 51)* | Palette | Phosphor Terminal → Terminal Bloom | Fine phosphor CRT/pixel texture with emerald and amber terminal light. |
+| 92 | Porcelain Citadel *(extends 54)* | Uncharted2 | Porcelain Citadel → Porcelain Veil | Calm high-key graphic-novel daylight with crisp silhouettes. |
+| 93 | Lantern Festival *(extends 60)* | Lottes Filmic | Lantern Festival → Lantern Smoke | Intimate lantern-lit film stock with gold glow and ink-blue night. |
+| 94 | Glasshouse Rain *(extends 14)* | ACES (exp 1.10) | Glasshouse Rain → Glasshouse Rain | Emerald wet-neon greenhouse rain, tuned below eye-strain intensity. |
+| 95 | Mercury Mirror *(extends 53)* | Gothic Noir (exp 0.90) | Mercury Mirror → Mercury Haze | Cool near-monochrome noir built to preserve reflective material detail. |
+| 96 | Cinder Opera *(extends 47)* | Lottes Filmic | Cinder Opera → Velvet Smoke | Charcoal, oxblood velvet, and theatrical amber footlights. |
+| 97 | Opaline Reef *(extends 55)* | Moonlit (exp 1.10) | Opaline Reef → Pearl Water | Bright pearl-and-coral watercolor exploration without underwater darkness. |
+| 98 | Ultraviolet Archive *(extends 59)* | Moonlit (exp 1.10) | Ultraviolet Archive → Ultraviolet Ink Mist | Fluorescent manuscript fantasy with violet ink and cyan spectral edges. |
+| 99 | Saffron Sandstorm *(extends 5)* | Lottes Filmic (exp 1.15) | Saffron Sandstorm → Saffron Sand | Weather-driven saffron sun and petrol-blue storm haze with a clear near field. |
+| 100 | Polar Signal Station *(extends 52)* | None | Polar Signal Station → Polar Signal | Pale cyan retro projection and gentle radio texture over icy distance. |
 | 44 | Dreamlike | Moonlit (exp 1.10) | Soft Dawn → Morning Mist | Wide soft bloom and god rays; a waking dream. |
 | 55 | Watercolor Dream *(extends 44)* | Moonlit (exp 1.10) | Soft Dawn → Morning Mist | Dream-decay grade, no sharpen: painted edges. |
 | 63 | Soft Focus *(extends 44)* | Reinhard (exp 1.10) | Soft Natural → Morning Mist | Gentle bloom knee, no sharpen: a soft lens. |
@@ -214,6 +249,41 @@ summarizes the intent.
 | 38 | Soft Dawn | Warm-soft rose dawn with gentle aerial fade. |
 | 39 | Analog Fluorescent | Cold, desaturated, buzzing flicker: found-footage institutions. |
 | 40 | Absolution | Pitch-black Doom 64 gloom: strong light diminishing, saturated colored light pools, no GI ambient (its sector-bleed feed washes the sky veil on outdoor levels). |
+| 41 | Ember Reliquary | Absolution darkness with furnace-red light pools and ember-tinted specular. |
+| 42 | Verdigris | Oxidized copper: dark teal-green pools, cool stone, and bright mint highlights. |
+| 43 | Amethyst | Saturated violet crystal pools with a sharp, readable specular response. |
+| 44 | Cobalt | Midnight-blue light pools and cold navy distance contrast. |
+| 45 | Gilded Reliquary | Warm gold shafts, polished brass highlights, and a friendly exploration floor. |
+| 46 | Jade Sanctuary | Soft jade-green ambient fill for serene fantasy exploration. |
+| 47 | Ashen Eclipse | Smoky ash contrast with restrained warm ember accents. |
+| 48 | Pelagic Temple | Clear teal water-light and long submerged depth. |
+| 49 | Roseglass Chapel | Rose-gold glow with stained-glass coloured rim light. |
+| 50 | Stormbound | Blue-grey lightning contrast with a controlled storm flicker. |
+| 51 | Autumnal Ember | Inviting amber light for ruins, foliage, and late-day scenes. |
+| 52 | Aurora Winter | Icy cyan light with a faint magenta spectral rim. |
+| 53 | Solar Flare | Saturated sun-gold action light with a generous ambient floor. |
+| 54 | Bioluminescent Grotto | Aqua cave glow and safe low-light exploration ambience. |
+| 55 | Bloodglass Eclipse | Ruby pools and magenta rims with hard, readable silhouettes. |
+| 56 | Clockwork Brass | Antique bronze warmth and precise mechanical specular highlights. |
+| 57 | Orchid Nebula | Soft purple space-light with pink spectral glints. |
+| 58 | Neon Lotus | High-chroma pink and cyan that keeps the world floor visible. |
+| 59 | Frostfire | Cold blue field with restrained orange fire accents. |
+| 60 | Mirage Oasis | Turquoise shade, sunlit sand, and long desert distance. |
+| 61 | Phantom Carnival | Candy-magenta light with a gentle mischievous flicker. |
+| 62 | Obsidian Monsoon | Charcoal storm contrast and cold silver flashes. |
+| 63 | Prism Garden | Pastel, high-readability colour without neon clipping. |
+| 64 | Mushroom Moon | Magenta bioluminescence in playable twilight darkness. |
+| 65 | Chrome Basilica | Cool pearl stone, precise silver specular, and material-forward cyan reflections. |
+| 66 | Phosphor Terminal | Emerald and amber terminal light with a safe, readable world floor. |
+| 67 | Porcelain Citadel | Pale blue-white daylight with soft graphic shadows and long visibility. |
+| 68 | Lantern Festival | Warm paper-lantern pools set against a deep ink-blue night. |
+| 69 | Glasshouse Rain | Emerald wet-specular glow and cyan reflected shade with gentle rain flicker. |
+| 70 | Mercury Mirror | Restrained silver illumination with high-density reflective material detail. |
+| 71 | Cinder Opera | Theatrical amber footlights, oxblood shadows, and a restrained stage flicker. |
+| 72 | Opaline Reef | Coral-cyan daylight, pearly fill, and bright exploration readability. |
+| 73 | Ultraviolet Archive | Ultraviolet ink pools with crisp cyan manuscript rims. |
+| 74 | Saffron Sandstorm | Hot saffron sun meeting a petrol-blue storm ceiling. |
+| 75 | Polar Signal Station | Cold cyan-violet signal light with a subtle radio flicker. |
 
 ## Fog preset reference
 
@@ -242,6 +312,41 @@ height falloff, turbulence, and directional gradients.
 | 16 | Cathedral Haze | Luminous vertical shafts with gentle depth. |
 | 17 | Analog Sepia | Murky brown-black found-footage haze. |
 | 18 | Absolution | Doom 64-inspired oppressive blue-violet gloom. |
+| 19 | Ember Gloom | Furnace-red smoke and dark ember depth walls for Absolution maps. |
+| 20 | Verdigris Veil | Dark oxidized teal-green fog with navigable lit space. |
+| 21 | Amethyst Veil | Saturated violet depth that keeps silhouettes legible. |
+| 22 | Cobalt Night | Midnight-blue distance for cool, dark outdoor levels. |
+| 23 | Incense Gold | Luminous gold cathedral haze with generous visibility. |
+| 24 | Jade Mist | Soft green sanctuary haze for exploration. |
+| 25 | Ashfall | Volcanic grey-brown fog with ember-coloured air. |
+| 26 | Abyssal Teal | Dense underwater teal with a readable near field. |
+| 27 | Roseglass Haze | Pink-violet chapel air with a gentle vertical lift. |
+| 28 | Thunderhead | Blue-grey storm banks with directional movement. |
+| 29 | Autumn Mist | Honeyed low fog for warm ruins and woodland maps. |
+| 30 | Aurora Frost | Pale cyan fog with an aurora-like high gradient. |
+| 31 | Solar Dust | Bright sun-gold distance for fast outdoor encounters. |
+| 32 | Luminous Grotto | Aqua cave mist with a clear near field. |
+| 33 | Bloodglass Veil | Crimson-magenta depth without Blackout-level visibility loss. |
+| 34 | Brass Smog | Antique bronze haze with soft rolling movement. |
+| 35 | Orchid Nebula | Lavender depth and a subtle star-cloud gradient. |
+| 36 | Lotus Neon Mist | Pink-cyan fog with generous playable distance. |
+| 37 | Frostfire Haze | Cold blue distance with an ember-coloured floor. |
+| 38 | Oasis Mirage | Turquoise air and sun-warm directional distance. |
+| 39 | Carnival Smoke | Sweet purple haze with mild festive motion. |
+| 40 | Obsidian Rain | Storm-black distance with enough blue to navigate. |
+| 41 | Prism Bloom | Pale rainbow-pastel distance with excellent visibility. |
+| 42 | Spore Moonlight | Rich purple-blue mushroom mist, dark but readable. |
+| 43 | Silver Haze | Thin steel distance for polished material-showcase maps. |
+| 44 | Terminal Bloom | Gentle green phosphor air that keeps targets readable. |
+| 45 | Porcelain Veil | Pale blue-white distance with crisp dark silhouettes. |
+| 46 | Lantern Smoke | Warm lantern near-air receding into cool, navigable night. |
+| 47 | Glasshouse Rain | Green-blue rain air with soft greenhouse movement. |
+| 48 | Mercury Haze | Thin steel-grey air that leaves reflective detail intact. |
+| 49 | Velvet Smoke | Burgundy theatre haze with a safe amber middle distance. |
+| 50 | Pearl Water | Clear pale aqua-pink depth for bright coral exploration. |
+| 51 | Ultraviolet Ink Mist | Violet manuscript air edged by cyan spectral distance. |
+| 52 | Saffron Sand | Turbulent gold dust with a deliberately clear near field. |
+| 53 | Polar Signal | Clear icy mist with a cyan directional broadcast veil. |
 
 ### Sky fog (physical horizon matching)
 

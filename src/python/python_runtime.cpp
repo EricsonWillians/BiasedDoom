@@ -1259,15 +1259,26 @@ PyObject* PyBdPlayers(PyObject*, PyObject*)
 {
 	if (!CheckEngineThread()) return nullptr;
 	PyObject* result = PyList_New(0);
+	if (result == nullptr) return nullptr;
 	for (unsigned i = 0; i < MAXPLAYERS; ++i)
 	{
 		if (!playeringame[i]) continue;
 		PyObject* player = PyDict_New();
+		if (player == nullptr)
+		{
+			Py_DECREF(result);
+			return nullptr;
+		}
 		DictSetInt(player, "index", i);
 		DictSetString(player, "name", players[i].userinfo.GetName());
 		DictSetBool(player, "in_game", true);
 		DictSet(player, "actor", ActorSnapshot(players[i].mo));
-		PyList_Append(result, player);
+		if (PyErr_Occurred() || PyList_Append(result, player) < 0)
+		{
+			Py_DECREF(player);
+			Py_DECREF(result);
+			return nullptr;
+		}
 		Py_DECREF(player);
 	}
 	return result;
@@ -1299,6 +1310,7 @@ PyObject* PyBdActors(PyObject*, PyObject* args, PyObject* kwargs)
 	}
 
 	PyObject* result = PyList_New(0);
+	if (result == nullptr) return nullptr;
 	if (primaryLevel == nullptr) return result;
 	if (tid != 0)
 	{
@@ -1308,7 +1320,12 @@ PyObject* PyBdActors(PyObject*, PyObject* args, PyObject* kwargs)
 		{
 			if (classFilter != nullptr && !actor->IsKindOf(classFilter)) continue;
 			PyObject* snapshot = ActorSnapshot(actor);
-			PyList_Append(result, snapshot);
+			if (snapshot == nullptr || PyList_Append(result, snapshot) < 0)
+			{
+				Py_XDECREF(snapshot);
+				Py_DECREF(result);
+				return nullptr;
+			}
 			Py_DECREF(snapshot);
 		}
 	}
@@ -1320,7 +1337,12 @@ PyObject* PyBdActors(PyObject*, PyObject* args, PyObject* kwargs)
 		{
 			if (classFilter != nullptr && !actor->IsKindOf(classFilter)) continue;
 			PyObject* snapshot = ActorSnapshot(actor);
-			PyList_Append(result, snapshot);
+			if (snapshot == nullptr || PyList_Append(result, snapshot) < 0)
+			{
+				Py_XDECREF(snapshot);
+				Py_DECREF(result);
+				return nullptr;
+			}
 			Py_DECREF(snapshot);
 		}
 	}
@@ -3210,14 +3232,19 @@ std::string DumpStateJson()
 	}
 	bool rngMerged = false;
 	PyObject* rngState = CaptureRngState();
-	if (rngState != nullptr)
+	if (rngState == nullptr)
 	{
-		rngMerged = PyDict_SetItemString(stateDictionary, RngStateKey, rngState) == 0;
-		Py_DECREF(rngState);
-	}
-	else
-	{
+		Py_DECREF(json);
 		ReportPythonError("state serialization", "biaseddoom rng state");
+		return {};
+	}
+	rngMerged = PyDict_SetItemString(stateDictionary, RngStateKey, rngState) == 0;
+	Py_DECREF(rngState);
+	if (!rngMerged)
+	{
+		Py_DECREF(json);
+		ReportPythonError("state serialization", "biaseddoom rng state");
+		return {};
 	}
 
 	// allow_nan stays true on purpose: bd.state holding NaN/Infinity must
@@ -3227,12 +3254,23 @@ std::string DumpStateJson()
 	PyObject* kwargs = Py_BuildValue("{s:O,s:O,s:O}",
 		"sort_keys", Py_True, "ensure_ascii", Py_False, "allow_nan", Py_True);
 	PyObject* args = PyTuple_Pack(1, stateDictionary);
+	if (dumps == nullptr || kwargs == nullptr || args == nullptr)
+	{
+		Py_XDECREF(args);
+		Py_XDECREF(kwargs);
+		Py_XDECREF(dumps);
+		if (rngMerged && PyDict_DelItemString(stateDictionary, RngStateKey) != 0) PyErr_Clear();
+		Py_DECREF(json);
+		ReportPythonError("state serialization", "biaseddoom.state");
+		return {};
+	}
 	PyObject* encoded = dumps == nullptr ? nullptr : PyObject_Call(dumps, args, kwargs);
 	std::string result;
 	if (encoded != nullptr)
 	{
 		const char* text = PyUnicode_AsUTF8(encoded);
 		if (text != nullptr) result = text;
+		else ReportPythonError("state serialization", "biaseddoom.state");
 	}
 	else ReportPythonError("state serialization", "biaseddoom.state");
 	// Cap the serialized blob: an unbounded bd.state would otherwise produce

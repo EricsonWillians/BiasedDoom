@@ -178,9 +178,10 @@ public:
 
 	void Reset(int32_t *const memory, const size_t count)
 	{
-		// TODO: pointer sanity check?
-		// TODO: constraints on count?
-
+		if (memory == nullptr && count != 0)
+		{
+			I_Error("Null local-variable storage in ACS VM");
+		}
 		this->memory = memory;
 		this->count = count;
 	}

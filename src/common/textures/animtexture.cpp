@@ -47,8 +47,16 @@
 void AnimTexture::SetFrameSize(int  format, int width, int height)
 {
 	pixelformat = format;
+	const size_t pixelBytes = width > 0 && height > 0
+		? (size_t)width * height * 4 : 0;
+	if (pixelBytes == 0 || pixelBytes > 64 * 1024 * 1024)
+	{
+		FTexture::SetSize(0, 0);
+		Image.Clear();
+		return;
+	}
 	FTexture::SetSize(width, height);
-	Image.Resize(width * height * 4);
+	Image.Resize(pixelBytes);
 	memset(Image.Data(), 0, Image.Size());
 }
 

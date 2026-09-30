@@ -113,7 +113,7 @@ bool CheckIfRaw(FileReader & data, unsigned desiredsize)
 			{
 				// Ensure this column does not extend beyond the end of the patch
 				const uint8_t *foo2 = (const uint8_t *)foo;
-				while (ofs < desiredsize)
+				while (ofs + 1 < desiredsize)
 				{
 					if (foo2[ofs] == 255)
 					{

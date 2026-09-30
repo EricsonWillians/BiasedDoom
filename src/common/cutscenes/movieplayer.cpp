@@ -324,6 +324,7 @@ class VpxPlayer : public MoviePlayer
 	TArray<uint8_t> readBuf;
 	vpx_codec_iface_t *iface;
 	vpx_codec_ctx_t codec{};
+	bool codecInitialized = false;
 	vpx_codec_iter_t iter = nullptr;
 
 	double convrate;
@@ -355,12 +356,12 @@ public:
 
 		if (!ReadIVFHeader(origframedelay))
 		{
-			// We should never get here, because any file failing this has been eliminated before this constructor got called.
 			error.Format("Failed reading IVF header\n");
 			failed = true;
+			return;
 		}
 
-		Pic.Resize(width * height * 4);
+		Pic.Resize((size_t)width * height * 4);
 
 		vpx_codec_dec_cfg_t cfg = { 1, width, height };
 		if (vpx_codec_dec_init(&codec, iface, &cfg, 0))
@@ -368,6 +369,7 @@ public:
 			error.Format("Error initializing VPX codec.\n");
 			failed = true;
 		}
+		else codecInitialized = true;
 	}
 
 	//---------------------------------------------------------------------------
@@ -399,6 +401,10 @@ public:
 
 		width = fr.ReadUInt16();
 		height = fr.ReadUInt16();
+		// Both the decoder configuration and the converted RGBA frame buffer
+		// use these file-supplied dimensions. Keep movie playback within a
+		// practical texture size before either allocation is attempted.
+		if (width == 0 || height == 0 || width > 4096 || height > 4096) return false;
 		uint32_t fpsdenominator = fr.ReadUInt32();
 		uint32_t fpsnumerator = fr.ReadUInt32();
 		numframes = fr.ReadUInt32();
@@ -437,7 +443,7 @@ public:
 		int corrupted = 0;
 		int framesize = fr.ReadInt32();
 		fr.Seek(8, FileReader::SeekCur);
-		if (framesize == 0) return false;
+		if (framesize <= 0 || framesize > 64 * 1024 * 1024) return false;
 
 		readBuf.Resize(framesize);
 		if (fr.Read(readBuf.Data(), framesize) != framesize) return false;
@@ -623,7 +629,7 @@ public:
 			AudioTrack.Finish();
 			ZMusic_Close(MusicStream);
 		}
-		vpx_codec_destroy(&codec);
+		if (codecInitialized) vpx_codec_destroy(&codec);
 		animtex.Clean();
 	}
 

@@ -186,14 +186,12 @@ void FPBRMaterial::SetMaterialTextures(FRenderState &state) {
     // This is hardware renderer specific and would need to integrate
     // with the existing texture binding system
 
-    Printf("TODO: Implement PBR texture binding for hardware renderer\n");
   }
 }
 
 void FPBRMaterial::SetMaterialShader(FRenderState &state) {
   if (IsPBRMaterial()) {
     // Set PBR shader and uniforms
-    Printf("TODO: Implement PBR shader selection and uniform binding\n");
 
     // The implementation would:
     // 1. Select appropriate PBR shader based on available textures and features
@@ -276,7 +274,6 @@ void RegisterPBRShaders() {
   // This function would register PBR shaders with the hardware renderer
   // Implementation depends on the specific renderer (OpenGL/Vulkan)
 
-  Printf("TODO: Implement PBR shader registration\n");
 
   // The implementation would:
   // 1. Load PBR vertex and fragment shaders
@@ -292,6 +289,5 @@ bool IsPBRRenderingSupported() {
   // For now, assume PBR is supported on hardware renderers
   // but not on software renderer
 
-  Printf("TODO: Implement PBR capability detection\n");
   return true; // Placeholder
 }

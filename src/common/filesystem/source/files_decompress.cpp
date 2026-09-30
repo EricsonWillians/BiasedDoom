@@ -931,7 +931,9 @@ bool OpenDecompressor(FileReader& self, FileReader &parent, FileReader::Size len
 		{
 			FileData buffer(nullptr, length);
 			FZipExploder exploder;
-			if (exploder.Explode(buffer.writable(), (unsigned)length, *p, (unsigned)p->GetLength(), method - METHOD_IMPLODE_MIN) == -1)
+			// Any nonzero return is a failure: 1 means a bad Shannon-Fano table,
+			// which would otherwise expose the uninitialized buffer as lump data.
+			if (exploder.Explode(buffer.writable(), (unsigned)length, *p, (unsigned)p->GetLength(), method - METHOD_IMPLODE_MIN) != 0)
 			{
 				if (exceptions)
 				{
@@ -947,7 +949,14 @@ bool OpenDecompressor(FileReader& self, FileReader &parent, FileReader::Size len
 		case METHOD_SHRINK:
 		{
 			FileData buffer(nullptr, length);
-			ShrinkLoop(buffer.writable(), (unsigned)length, *p, (unsigned)p->GetLength()); // this never fails.
+			if (ShrinkLoop(buffer.writable(), (unsigned)length, *p, (unsigned)p->GetLength()) != 0)
+			{
+				if (exceptions)
+				{
+					throw FileSystemException("DecompressShrink failed");
+				}
+				return false;
+			}
 			fr = new MemoryArrayReader(buffer);
 			flags &= ~(DCF_SEEKABLE | DCF_CACHED);
 			break;

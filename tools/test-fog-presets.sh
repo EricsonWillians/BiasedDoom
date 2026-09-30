@@ -4,7 +4,7 @@
 #
 # Runs the engine under xvfb with a generated UDMF open-plain map (sky
 # ceiling, MAPINFO fog) and a Python driver that applies each fog preset
-# 2..18 in turn, capturing one screenshot with the preset active and one
+# 2..53 in turn, capturing one screenshot with the preset active and one
 # control shot with the sky veil disabled (bd_fog_sky_strength 0).
 #
 # Per preset, tools/analyze_sky_fog.py measures the horizon seam (mean color
@@ -125,7 +125,7 @@ EOF
 cat > "${driver_src}/pyscripts/main.py" <<'EOF'
 """Fog preset horizon coherence driver.
 
-Applies each fog preset 2..18 on the open TESTFOG plain, capturing one
+Applies each fog preset 2..53 on the open TESTFOG plain, capturing one
 screenshot per preset with the sky veil as tuned and one control with
 bd_fog_sky_strength 0.
 """
@@ -135,7 +135,7 @@ import os
 import biaseddoom as bd
 
 OUT_DIR = os.environ.get("FOGPRESET_TEST_OUT", "/tmp")
-PRESETS = list(range(2, 19))
+PRESETS = list(range(2, 54))
 
 
 def shot(name):
@@ -331,7 +331,7 @@ fail() {
 [[ "${status}" -eq 0 ]] || fail "engine exited with status ${status}"
 grep -Fq 'PYTEST FOGPRESETS_SHOTS_DONE' "${stdout_file}" || fail "driver did not complete"
 
-for preset in $(seq 2 17); do
+for preset in $(seq 2 53); do
     on_shot=$(printf 'preset_%02d_on.png' "${preset}")
     off_shot=$(printf 'preset_%02d_off.png' "${preset}")
     [[ -f "${test_root}/${on_shot}" ]] || fail "missing screenshot ${on_shot}"
@@ -352,7 +352,7 @@ junction_seam_of() {  # junction_seam_of <image> <control>
 
 printf '%-8s %14s %14s\n' "preset" "junction(veil)" "junction(raw)"
 failures=0
-for preset in $(seq 2 17); do
+for preset in $(seq 2 53); do
     on_shot=$(printf 'preset_%02d_on.png' "${preset}")
     off_shot=$(printf 'preset_%02d_off.png' "${preset}")
     seam_on="$(junction_seam_of "${test_root}/${on_shot}" "${test_root}/${off_shot}")"

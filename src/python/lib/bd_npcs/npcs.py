@@ -18,10 +18,11 @@ One conversation at a time: ``begin_talk`` no-ops while another session
 is active with a live NPC; a stale or inactive session is ended and
 never blocks future talk.
 
-Definitions are never persisted. The manager persists only the
-npc_id -> TID map (via :meth:`NPCManager.arm_persistence`) so a
-savegame load can re-bind actors; starting disposition values are
-written only for NPCs the store has never seen.
+Definitions are never persisted. The manager persists its npc_id -> TID
+map, retired ids, and dead ids (via :meth:`NPCManager.arm_persistence`) so
+a savegame load can re-bind actors without reviving an NPC whose restored
+actor is already a corpse; starting disposition values are written only for
+NPCs the store has never seen.
 """
 
 from __future__ import annotations
@@ -234,6 +235,7 @@ class NPCManager:
         self._handles: Dict[str, Any] = {}
         self._tids: Dict[str, int] = {}
         self._retired: set = set()
+        self._dead: set = set()
         self._persistence_armed: bool = False
 
     # -- registration ------------------------------------------------------------
@@ -273,6 +275,11 @@ class NPCManager:
     def is_retired(self, npc_id: str) -> bool:
         """True when ``npc_id`` has been retired."""
         return str(npc_id) in self._retired
+
+    @property
+    def dead(self) -> Tuple[str, ...]:
+        """NPC ids whose restored actor was found dead, in sorted order."""
+        return tuple(sorted(self._dead))
 
     def retire(self, npc_id: str, destroy_actor: bool = True) -> bool:
         """Take a live NPC off duty: gone from the world, not forgotten.
@@ -334,8 +341,18 @@ class NPCManager:
             if definition.id in self._retired:
                 continue  # off duty (e.g. recruited away): never respawns
             handle = None
-            if from_savegame or from_hub:
+            if definition.id in self._dead:
+                # A mod can deliberately restore or respawn the NPC under
+                # its stable TID. Adopt that live actor and clear the marker;
+                # otherwise dead NPCs behave like retired NPCs and stay gone.
                 handle = self._rebind(definition)
+                if handle is None:
+                    continue
+                self._dead.discard(definition.id)
+            elif from_savegame or from_hub:
+                handle = self._rebind(definition)
+                if handle is None and definition.id in self._dead:
+                    continue  # restored corpse: never replace it with a clone
             if handle is None:
                 handle = self._spawn_one(definition, index, pawn)
             if handle is None:
@@ -374,6 +391,12 @@ class NPCManager:
                 return ref
         except Exception:
             return None
+        try:
+            if ref.valid:
+                self._dead.add(definition.id)
+                self._handles.pop(definition.id, None)
+        except Exception:
+            pass
         return None
 
     def _spawn_one(self, definition: NPCDefinition, index: int,
@@ -679,9 +702,9 @@ class NPCManager:
     def arm_persistence(self) -> None:
         """Register the save/load handlers exactly once per manager.
 
-        The npc_id -> TID map round-trips through
-        ``bd.state[dispositions.state_key]["tids"]`` so a savegame load
-        can re-bind the restored actors (see :meth:`spawn_all`).
+        The npc_id -> TID map plus retired/dead ids round-trip through
+        ``bd.state[dispositions.state_key]`` so a savegame load can re-bind
+        restored actors without respawning corpses (see :meth:`spawn_all`).
         """
         if self._persistence_armed:
             return
@@ -708,6 +731,7 @@ class NPCManager:
                           for npc_id, tid in self._tids.items()
                           if tid}
         bucket["retired"] = sorted(self._retired)
+        bucket["dead"] = sorted(self._dead)
 
     def _load_tids(self) -> None:
         bucket = bd.state.get(self.dispositions.state_key)
@@ -725,6 +749,9 @@ class NPCManager:
         retired = bucket.get("retired") if isinstance(bucket, dict) else None
         if isinstance(retired, (list, tuple)):
             self._retired = {str(npc_id) for npc_id in retired}
+        dead = bucket.get("dead") if isinstance(bucket, dict) else None
+        if isinstance(dead, (list, tuple)):
+            self._dead = {str(npc_id) for npc_id in dead}
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (f"<NPCManager npcs={len(self._defs)} "

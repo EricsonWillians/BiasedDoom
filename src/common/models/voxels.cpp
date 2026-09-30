@@ -192,13 +192,29 @@ FVoxel *R_LoadKVX(int lumpnum)
 		mipl->Pivot.Y = GetInt(rawmip + 16) / 256.;
 		mipl->Pivot.Z = GetInt(rawmip + 20) / 256.;
 
-		// How much space do we have for voxdata?
-		int offsetsize = (mipl->SizeX + 1) * 4 + mipl->SizeX * (mipl->SizeY + 1) * 2;
-		int voxdatasize = numbytes - 24 - offsetsize;
-		if (voxdatasize < 0)
+		// The dimensions come straight from the file; reject negatives before
+		// they poison the size computations below.
+		if (mipl->SizeX < 0 || mipl->SizeY < 0 || mipl->SizeZ < 0)
+		{
+			break;
+		}
+
+		// How much space do we have for voxdata? Compute in 64 bits: with
+		// attacker-controlled dimensions the 32-bit product can wrap negative
+		// and defeat the bounds check entirely.
+		if (numbytes < 24)
+		{
+			break;
+		}
+		const uint64_t sizeX = static_cast<uint64_t>(mipl->SizeX);
+		const uint64_t sizeY = static_cast<uint64_t>(mipl->SizeY);
+		const uint64_t offsetsize64 = (sizeX + 1) * 4 + sizeX * (sizeY + 1) * 2;
+		if (offsetsize64 > static_cast<uint64_t>(numbytes - 24))
 		{ // Clearly, not enough.
 			break;
 		}
+		int offsetsize = (int)offsetsize64;
+		int voxdatasize = numbytes - 24 - offsetsize;
 		if (voxdatasize != 0)
 		{	// This mip level is not empty.
 			// Allocate slab data space.
@@ -487,5 +503,4 @@ FVoxel* VOX_GetVoxel(int lumpnum)
 	}
 	return vox;
 }
-
 

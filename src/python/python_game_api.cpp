@@ -1756,11 +1756,17 @@ PyObject* SectorTags(PyObject* object, void*)
 	sector_t* sector = ResolveSector(reinterpret_cast<PyWorldRef*>(object), false);
 	if (sector == nullptr) return nullptr;
 	PyObject* result = PyList_New(0);
+	if (result == nullptr) return nullptr;
 	const int count = primaryLevel->tagManager.CountSectorTags(sector);
 	for (int index = 0; index < count; ++index)
 	{
 		PyObject* tag = PyLong_FromLong(primaryLevel->tagManager.GetSectorTag(sector, index));
-		PyList_Append(result, tag);
+		if (tag == nullptr || PyList_Append(result, tag) < 0)
+		{
+			Py_XDECREF(tag);
+			Py_DECREF(result);
+			return nullptr;
+		}
 		Py_DECREF(tag);
 	}
 	return result;
@@ -2121,7 +2127,16 @@ PyObject* PySpawnActorRef(PyObject*, PyObject* args, PyObject* kwargs)
 		return nullptr;
 	}
 	actor->Angles.Yaw = DAngle::fromDeg(angle);
-	if (tid != 0) actor->SetTID(tid);
+	if (tid != 0)
+	{
+		auto existing = primaryLevel->GetActorIterator(tid);
+		if (AActor* occupant = existing.Next())
+		{
+			Printf(TEXTCOLOR_YELLOW "WARNING: bd.spawn assigned duplicate TID %d to %s; it is already used by %s.\n",
+				tid, actor->GetClass()->TypeName.GetChars(), occupant->GetClass()->TypeName.GetChars());
+		}
+		actor->SetTID(tid);
+	}
 	return MakeActorRef(actor);
 }
 
@@ -2176,7 +2191,12 @@ PyObject* PySectors(PyObject*, PyObject* args, PyObject* kwargs)
 		for (unsigned index = 0; index < primaryLevel->sectors.Size(); ++index)
 		{
 			PyObject* reference = MakeWorldRef(sectorRefType, static_cast<int>(index));
-			PyList_Append(result, reference);
+			if (reference == nullptr || PyList_Append(result, reference) < 0)
+			{
+				Py_XDECREF(reference);
+				Py_DECREF(result);
+				return nullptr;
+			}
 			Py_DECREF(reference);
 		}
 	}
@@ -2189,7 +2209,12 @@ PyObject* PySectors(PyObject*, PyObject* args, PyObject* kwargs)
 		while ((index = iterator.Next()) >= 0)
 		{
 			PyObject* reference = MakeWorldRef(sectorRefType, index);
-			PyList_Append(result, reference);
+			if (reference == nullptr || PyList_Append(result, reference) < 0)
+			{
+				Py_XDECREF(reference);
+				Py_DECREF(result);
+				return nullptr;
+			}
 			Py_DECREF(reference);
 		}
 	}
@@ -2277,7 +2302,12 @@ PyObject* PyLines(PyObject*, PyObject* args, PyObject* kwargs)
 		for (unsigned index = 0; index < primaryLevel->lines.Size(); ++index)
 		{
 			PyObject* reference = MakeWorldRef(lineRefType, static_cast<int>(index));
-			PyList_Append(result, reference);
+			if (reference == nullptr || PyList_Append(result, reference) < 0)
+			{
+				Py_XDECREF(reference);
+				Py_DECREF(result);
+				return nullptr;
+			}
 			Py_DECREF(reference);
 		}
 	}
@@ -2290,7 +2320,12 @@ PyObject* PyLines(PyObject*, PyObject* args, PyObject* kwargs)
 		while ((index = iterator.Next()) >= 0)
 		{
 			PyObject* reference = MakeWorldRef(lineRefType, index);
-			PyList_Append(result, reference);
+			if (reference == nullptr || PyList_Append(result, reference) < 0)
+			{
+				Py_XDECREF(reference);
+				Py_DECREF(result);
+				return nullptr;
+			}
 			Py_DECREF(reference);
 		}
 	}

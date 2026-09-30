@@ -10,8 +10,9 @@
 #   - resetrenderpresets: one click back to Vanilla (graphics 1, lighting 1,
 #     fog 1).
 #
-# Runs the engine under xvfb with a fresh config and a Python driver that
-# switches presets and queries the selectors through the console.
+# Runs the engine under xvfb by default (or the engine's null-video driver
+# with --headless) with a fresh config and a Python driver that switches
+# presets and queries the selectors through the console.
 set -euo pipefail
 
 usage() {
@@ -25,6 +26,7 @@ Options:
   --iwad PATH       IWAD to run (required, e.g. doom2.wad)
   --exe PATH        executable for the test (default: build/biaseddoom)
   --timeout SEC     maximum seconds for the engine process (default: 120)
+  --headless        use BiasedDoom's null-video driver instead of Xvfb
   --keep-temp       retain the driver PK3, config, and logs
   -h, --help        show this help
 USAGE
@@ -35,6 +37,7 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 engine_exe="${repo_root}/build/biaseddoom"
 iwad_path=""
 test_timeout=120
+headless=0
 keep_temp=0
 
 while [[ $# -gt 0 ]]; do
@@ -53,6 +56,10 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || { printf 'error: --timeout requires seconds\n' >&2; exit 2; }
             test_timeout="$2"
             shift 2
+            ;;
+        --headless)
+            headless=1
+            shift
             ;;
         --keep-temp)
             keep_temp=1
@@ -80,7 +87,10 @@ command -v timeout >/dev/null 2>&1 || { printf 'error: GNU timeout is required\n
 command -v python3 >/dev/null 2>&1 || { printf 'error: python3 is required\n' >&2; exit 2; }
 
 display_runner=()
-if command -v xvfb-run >/dev/null 2>&1; then
+video_args=()
+if [[ "${headless}" -eq 1 ]]; then
+    video_args=(-headless)
+elif command -v xvfb-run >/dev/null 2>&1; then
     display_runner=(xvfb-run -a -s "-screen 0 1280x800x24")
 elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     printf 'error: no display available and xvfb-run is missing\n' >&2
@@ -132,6 +142,15 @@ def step_check_paired():
     bd.execute("echo MARK_PAIRED")
 
 
+def step_new_pair():
+    bd.execute("bd_graphics_preset 100")
+
+
+def step_check_new_pair():
+    query_all()
+    bd.execute("echo MARK_NEW_PAIR")
+
+
 def step_diverge():
     bd.execute("bd_fog_preset 3")
 
@@ -167,12 +186,14 @@ def step_check_reset():
 def on_map_load(event):
     bd.schedule(step_link_on, delay=5)
     bd.schedule(step_check_paired, delay=15)
-    bd.schedule(step_diverge, delay=25)
-    bd.schedule(step_check_diverged, delay=35)
-    bd.schedule(step_unlink, delay=45)
-    bd.schedule(step_check_unlinked, delay=55)
-    bd.schedule(step_reset, delay=65)
-    bd.schedule(step_check_reset, delay=75)
+    bd.schedule(step_new_pair, delay=25)
+    bd.schedule(step_check_new_pair, delay=35)
+    bd.schedule(step_diverge, delay=45)
+    bd.schedule(step_check_diverged, delay=55)
+    bd.schedule(step_unlink, delay=65)
+    bd.schedule(step_check_unlinked, delay=75)
+    bd.schedule(step_reset, delay=85)
+    bd.schedule(step_check_reset, delay=95)
 EOF
 
 driver_pk3="${test_root}/presetlink_test.pk3"
@@ -199,7 +220,7 @@ log_file="${test_root}/presetlink.log"
 set +e
 timeout --signal=INT --kill-after=5s "${test_timeout}s" \
     "${display_runner[@]}" "${engine_exe}" \
-    -stdout -nosound -nointro -python \
+    "${video_args[@]}" -stdout -nosound -nointro -python \
     -config "${test_root}/presetlink.ini" \
     -iwad "${iwad_path}" -file "${driver_pk3}" \
     +vid_activeinbackground true +i_pauseinbackground false \
@@ -227,10 +248,14 @@ grep -Fq 'PYTEST PRESETLINK_DONE' "${stdout_file}" || fail "driver did not compl
 awk '/MARK_PAIRED/{exit} /"bd_graphics_preset" is "65"/{g=1} /"bd_lighting_preset" is "40"/{l=1} /"bd_fog_preset" is "18"/{f=1} END{exit !(g&&l&&f)}' "${stdout_file}" \
     || fail "linked: graphics preset 65 should pair lighting 40 and fog 18"
 
+# New append-only graphics presets must participate in the same linked model.
+awk '/MARK_PAIRED/{m=1} /MARK_NEW_PAIR/{m=0} m && /"bd_graphics_preset" is "100"/{g=1} m && /"bd_lighting_preset" is "75"/{l=1} m && /"bd_fog_preset" is "53"/{f=1} END{exit !(g&&l&&f)}' "${stdout_file}" \
+    || fail "linked: graphics preset 100 should pair lighting 75 and fog 53"
+
 # Linked + manual fog change: the graphics selector must drop to Custom.
-awk '/MARK_PAIRED/{m=1} /MARK_DIVERGED/{m=0} m && /"bd_graphics_preset" is "0"/{found=1} END{exit !found}' "${stdout_file}" \
+awk '/MARK_NEW_PAIR/{m=1} /MARK_DIVERGED/{m=0} m && /"bd_graphics_preset" is "0"/{found=1} END{exit !found}' "${stdout_file}" \
     || fail "linked: manual fog preset change should drop graphics preset to Custom"
-awk '/MARK_PAIRED/{m=1} /MARK_DIVERGED/{m=0} m && /"bd_fog_preset" is "3"/{found=1} END{exit !found}' "${stdout_file}" \
+awk '/MARK_NEW_PAIR/{m=1} /MARK_DIVERGED/{m=0} m && /"bd_fog_preset" is "3"/{found=1} END{exit !found}' "${stdout_file}" \
     || fail "linked: manual fog preset 3 should stick"
 
 # ---------------------------------------------------------------------------

@@ -400,6 +400,26 @@ def test_spawn_without_tid_base_gets_persistent_free_tid():
     assert again[0] is handle, "restore did not adopt the auto-TID actor"
 
 
+def test_dead_npc_restore_does_not_respawn_a_duplicate():
+    npcs = importlib.import_module("bd_npcs.npcs")
+    manager = npcs.NPCManager()
+    manager.register(npcs.NPCDefinition(
+        "fallen", "Fallen Guard", "ZombieMan", tid_base=5100))
+
+    live = manager.spawn_all()[0]
+    live.alive = False  # a restored corpse remains addressable by its TID
+    bd.spawn_calls.clear()
+
+    restored = manager.spawn_all(from_savegame=True)
+    assert restored == [], "dead restored NPC was treated as live"
+    assert bd.spawn_calls == [], "dead restored NPC spawned a duplicate"
+    assert manager.dead == ("fallen",), "dead NPC was not remembered"
+
+    manager._save_tids()
+    assert bd.state[manager.dispositions.state_key]["dead"] == ["fallen"], \
+        "dead NPC state was not serialized"
+
+
 def test_horror_hub_map_load_keeps_light_state():
     atmosphere = importlib.import_module("bd_horror.atmosphere")
     sector = Sector(index=3, light=144)
@@ -434,6 +454,7 @@ def main():
         test_begin_talk_recovers_from_stale_session,
         test_spawn_all_from_hub_adopts_restored_actor,
         test_spawn_without_tid_base_gets_persistent_free_tid,
+        test_dead_npc_restore_does_not_respawn_a_duplicate,
         test_horror_hub_map_load_keeps_light_state,
     )
     for test in tests:

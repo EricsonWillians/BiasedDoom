@@ -80,6 +80,7 @@ void LeaveCriticalSection(FInternalCriticalSection *c)
 
 #include "critsec.h"
 
+#include <cstdlib>
 #include <pthread.h>
 
 namespace FileSys {
@@ -98,22 +99,26 @@ private:
 
 };
 
-// TODO: add error handling
-
 FInternalCriticalSection::FInternalCriticalSection()
 {
 	pthread_mutexattr_t attributes;
-	pthread_mutexattr_init(&attributes);
-	pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
-
-	pthread_mutex_init(&m_mutex, &attributes);
-
-	pthread_mutexattr_destroy(&attributes);
+	if (pthread_mutexattr_init(&attributes) != 0) std::abort();
+	if (pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE) != 0)
+	{
+		pthread_mutexattr_destroy(&attributes);
+		std::abort();
+	}
+	if (pthread_mutex_init(&m_mutex, &attributes) != 0)
+	{
+		pthread_mutexattr_destroy(&attributes);
+		std::abort();
+	}
+	if (pthread_mutexattr_destroy(&attributes) != 0) std::abort();
 }
 
 FInternalCriticalSection::~FInternalCriticalSection()
 {
-	pthread_mutex_destroy(&m_mutex);
+	if (pthread_mutex_destroy(&m_mutex) != 0) std::abort();
 }
 
 void FInternalCriticalSection::Enter()

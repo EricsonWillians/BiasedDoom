@@ -25,9 +25,9 @@
 #include "v_video.h"
 
 static int GApplyingPresetCount = 0;
-static constexpr int MaxGraphicsPreset = 65;
-static constexpr int MaxLightingPreset = 40;
-static constexpr int MaxFogPreset = 18;
+static constexpr int MaxGraphicsPreset = 100;
+static constexpr int MaxLightingPreset = 75;
+static constexpr int MaxFogPreset = 53;
 static constexpr int MaxSelectableTonemap = 14;
 
 // Each graphics preset pairs with one named lighting preset and one named fog
@@ -108,6 +108,41 @@ static const FPresetPairing GGraphicsPresetPairing[] = {
   {8, 7},    // 63 Soft Focus
   {5, 1},    // 64 Arcade Neon
   {40, 18},  // 65 Absolution (Doom 64)
+  {41, 19},  // 66 Absolution: Ember
+  {42, 20},  // 67 Absolution: Verdigris
+  {43, 21},  // 68 Absolution: Amethyst
+  {44, 22},  // 69 Absolution: Cobalt
+  {45, 23},  // 70 Gilded Reliquary
+  {46, 24},  // 71 Jade Sanctuary
+  {47, 25},  // 72 Ashen Eclipse
+  {48, 26},  // 73 Pelagic Temple
+  {49, 27},  // 74 Roseglass Chapel
+  {50, 28},  // 75 Stormbound Citadel
+  {51, 29},  // 76 Autumnal Ruins
+  {52, 30},  // 77 Aurora Winter
+  {53, 31},  // 78 Solar Flare Bazaar
+  {54, 32},  // 79 Bioluminescent Grotto
+  {55, 33},  // 80 Bloodglass Eclipse
+  {56, 34},  // 81 Clockwork Brass
+  {57, 35},  // 82 Orchid Nebula
+  {58, 36},  // 83 Neon Lotus
+  {59, 37},  // 84 Frostfire Citadel
+  {60, 38},  // 85 Mirage Oasis
+  {61, 39},  // 86 Phantom Carnival
+  {62, 40},  // 87 Obsidian Monsoon
+  {63, 41},  // 88 Prism Garden
+  {64, 42},  // 89 Mushroom Moon
+  {65, 43},  // 90 Chrome Basilica
+  {66, 44},  // 91 Phosphor Terminal
+  {67, 45},  // 92 Porcelain Citadel
+  {68, 46},  // 93 Lantern Festival
+  {69, 47},  // 94 Glasshouse Rain
+  {70, 48},  // 95 Mercury Mirror
+  {71, 49},  // 96 Cinder Opera
+  {72, 50},  // 97 Opaline Reef
+  {73, 51},  // 98 Ultraviolet Archive
+  {74, 52},  // 99 Saffron Sandstorm
+  {75, 53},  // 100 Polar Signal Station
 };
 static_assert(sizeof(GGraphicsPresetPairing) / sizeof(GGraphicsPresetPairing[0]) == MaxGraphicsPreset + 1,
               "every graphics preset needs a lighting/fog pairing");
@@ -472,6 +507,216 @@ static void ApplyLightingPreset(int preset)
                       1.10f, 1.10f, 0.20f, 3.2f, 0.0f, 0x3a4a6e,
                       0.0f, 0.0f, 1400.0f, 0x8090b0);
     return;
+  case 41: // Ember Reliquary: Absolution darkness, but with furnace-red pools.
+    SetLightingValues(2, 2.85f, 1.00f, 1.28f, 0.46f, 0.0f, 0.92f, 0.16f, false, 0.0f, true,
+                      1.12f, 0.10f, 0.24f, 0.06f, 1.0f,
+                      1.12f, 1.10f, 0.24f, 3.0f, 0.0f, 0x5a251f,
+                      0.0f, 0.0f, 1450.0f, 0xff8060);
+    return;
+  case 42: // Verdigris: oxidized copper greens over a lightless stone world.
+    SetLightingValues(2, 2.82f, 0.98f, 1.20f, -0.28f, 0.0f, 0.90f, 0.18f, false, 0.0f, true,
+                      1.10f, 0.08f, 0.24f, 0.06f, 1.0f,
+                      1.10f, 1.16f, 0.22f, 3.1f, 0.0f, 0x1d514f,
+                      0.0f, 0.0f, 1500.0f, 0x78fff0);
+    return;
+  case 43: // Amethyst: purple crystal light with sharp, readable highlights.
+    SetLightingValues(2, 2.86f, 0.98f, 1.26f, -0.20f, 0.0f, 0.94f, 0.18f, false, 0.0f, true,
+                      1.10f, 0.10f, 0.24f, 0.06f, 1.0f,
+                      1.12f, 1.18f, 0.26f, 2.8f, 0.0f, 0x3d285e,
+                      0.0f, 0.0f, 1450.0f, 0xd8a8ff);
+    return;
+  case 44: // Cobalt: moon-blue light pools with deep navy distance contrast.
+    SetLightingValues(2, 2.88f, 0.96f, 1.14f, -0.48f, 0.0f, 0.90f, 0.14f, false, 0.0f, true,
+                      1.10f, 0.12f, 0.22f, 0.05f, 1.0f,
+                      1.14f, 1.18f, 0.22f, 3.1f, 0.0f, 0x1c315e,
+                      0.0f, 0.0f, 1550.0f, 0x9ab8ff);
+    return;
+  case 45: // Gilded Reliquary: warm gold shafts and polished brass readability.
+    SetLightingValues(1, 1.78f, 1.14f, 1.10f, 0.38f, 0.055f, 1.32f, 0.34f, true, 0.28f, true,
+                      1.28f, 0.40f, 0.26f, 0.18f, 0.72f,
+                      1.00f, 1.36f, 0.40f, 2.5f, 0.32f, 0xb08b4e,
+                      0.03f, 0.34f, 3200.0f, 0xffd090);
+    return;
+  case 46: // Jade Sanctuary: serene jade-green light, soft enough for exploration.
+    SetLightingValues(1, 1.72f, 1.08f, 1.18f, -0.12f, 0.065f, 1.16f, 0.28f, true, 0.30f, true,
+                      1.28f, 0.48f, 0.28f, 0.22f, 0.66f,
+                      0.98f, 1.14f, 0.28f, 3.0f, 0.30f, 0x4f9b7b,
+                      0.0f, 0.30f, 3000.0f, 0xb0ffd0);
+    return;
+  case 47: // Ashen Eclipse: smoky ash contrast with restrained ember accents.
+    SetLightingValues(2, 2.55f, 0.98f, 0.78f, 0.16f, 0.018f, 0.96f, 0.12f, false, 0.0f, true,
+                      1.12f, 0.24f, 0.12f, 0.08f, 0.94f,
+                      1.18f, 1.08f, 0.22f, 3.2f, 0.10f, 0x62524b,
+                      0.05f, 0.20f, 2100.0f, 0xffa070);
+    return;
+  case 48: // Pelagic Temple: clear teal water-light with long, submerged depth.
+    SetLightingValues(1, 1.82f, 1.08f, 1.22f, -0.34f, 0.045f, 1.18f, 0.32f, true, 0.26f, true,
+                      1.30f, 0.44f, 0.30f, 0.22f, 0.68f,
+                      0.96f, 1.18f, 0.26f, 3.0f, 0.34f, 0x2d7f82,
+                      0.0f, 0.42f, 3500.0f, 0x80e8e8);
+    return;
+  case 49: // Roseglass Chapel: rose-gold glow and stained-glass colored rims.
+    SetLightingValues(1, 1.84f, 1.12f, 1.20f, 0.24f, 0.060f, 1.24f, 0.36f, true, 0.28f, true,
+                      1.28f, 0.42f, 0.28f, 0.20f, 0.68f,
+                      1.00f, 1.22f, 0.36f, 2.7f, 0.32f, 0xad6885,
+                      0.0f, 0.32f, 3000.0f, 0xffb0c8);
+    return;
+  case 50: // Stormbound: blue-grey lightning contrast with a controlled flicker.
+    SetLightingValues(2, 2.42f, 1.04f, 0.92f, -0.38f, 0.030f, 1.24f, 0.16f, true, 0.18f, true,
+                      1.20f, 0.28f, 0.14f, 0.10f, 0.84f,
+                      1.20f, 1.38f, 0.30f, 3.0f, 0.24f, 0x4a607d,
+                      0.34f, 0.42f, 3200.0f, 0xc0dcff);
+    return;
+  case 51: // Autumnal Ember: inviting amber light for ruins and woodland maps.
+    SetLightingValues(1, 1.82f, 1.10f, 1.06f, 0.48f, 0.075f, 1.14f, 0.30f, true, 0.28f, true,
+                      1.30f, 0.46f, 0.28f, 0.20f, 0.66f,
+                      0.96f, 1.12f, 0.24f, 3.0f, 0.30f, 0xad7040,
+                      0.10f, 0.34f, 3300.0f, 0xffc080);
+    return;
+  case 52: // Aurora Winter: icy cyan light with a faint magenta spectral rim.
+    SetLightingValues(1, 1.76f, 1.06f, 1.22f, -0.55f, 0.065f, 1.28f, 0.30f, true, 0.30f, true,
+                      1.30f, 0.46f, 0.30f, 0.22f, 0.68f,
+                      0.98f, 1.34f, 0.36f, 2.8f, 0.36f, 0x6ba8b8,
+                      0.0f, 0.40f, 3800.0f, 0xd8c0ff);
+    return;
+  case 53: // Solar Flare: saturated sun-gold light tuned for fast, bright combat.
+    SetLightingValues(1, 1.68f, 1.18f, 1.22f, 0.62f, 0.10f, 1.24f, 0.42f, true, 0.30f, true,
+                      1.34f, 0.40f, 0.28f, 0.20f, 0.62f,
+                      0.94f, 1.18f, 0.30f, 2.8f, 0.32f, 0xd08038,
+                      0.08f, 0.42f, 3600.0f, 0xffe080);
+    return;
+  case 54: // Bioluminescent Grotto: vivid aqua light and safe low cave ambience.
+    SetLightingValues(2, 2.25f, 1.04f, 1.42f, -0.42f, 0.025f, 1.20f, 0.46f, true, 0.18f, true,
+                      1.20f, 0.30f, 0.20f, 0.14f, 0.82f,
+                      1.08f, 1.24f, 0.32f, 2.9f, 0.28f, 0x187d82,
+                      0.0f, 0.26f, 2600.0f, 0x70fff0);
+    return;
+  case 55: // Bloodglass Eclipse: ruby pools, magenta rims, and hard silhouettes.
+    SetLightingValues(2, 2.48f, 1.04f, 1.38f, 0.30f, 0.018f, 1.16f, 0.34f, false, 0.0f, true,
+                      1.16f, 0.24f, 0.18f, 0.10f, 0.88f,
+                      1.22f, 1.28f, 0.38f, 2.6f, 0.18f, 0x7b2444,
+                      0.0f, 0.20f, 2200.0f, 0xff80b8);
+    return;
+  case 56: // Clockwork Brass: antique bronze warmth with precise metal highlights.
+    SetLightingValues(1, 1.86f, 1.10f, 1.02f, 0.46f, 0.070f, 1.42f, 0.30f, true, 0.24f, true,
+                      1.28f, 0.36f, 0.24f, 0.18f, 0.68f,
+                      1.02f, 1.42f, 0.26f, 3.0f, 0.24f, 0x9a6d32,
+                      0.04f, 0.28f, 3000.0f, 0xffd080);
+    return;
+  case 57: // Orchid Nebula: soft purple space-light with pink spectral glints.
+    SetLightingValues(1, 1.82f, 1.08f, 1.30f, -0.24f, 0.050f, 1.24f, 0.38f, true, 0.26f, true,
+                      1.28f, 0.42f, 0.28f, 0.20f, 0.70f,
+                      1.00f, 1.30f, 0.38f, 2.7f, 0.34f, 0x7250a8,
+                      0.0f, 0.34f, 3400.0f, 0xffb8f0);
+    return;
+  case 58: // Neon Lotus: hot pink and cyan, high saturation without a crushed floor.
+    SetLightingValues(1, 1.72f, 1.16f, 1.52f, -0.08f, 0.055f, 1.32f, 0.52f, true, 0.26f, true,
+                      1.28f, 0.34f, 0.30f, 0.22f, 0.66f,
+                      1.04f, 1.34f, 0.42f, 2.5f, 0.36f, 0x9b3f91,
+                      0.0f, 0.28f, 2800.0f, 0x80f8ff);
+    return;
+  case 59: // Frostfire: a cold blue field punctuated by restrained orange fire.
+    SetLightingValues(2, 2.34f, 1.04f, 1.18f, -0.36f, 0.030f, 1.30f, 0.34f, true, 0.20f, true,
+                      1.20f, 0.30f, 0.20f, 0.12f, 0.82f,
+                      1.14f, 1.34f, 0.30f, 2.9f, 0.30f, 0x416a9b,
+                      0.06f, 0.34f, 3000.0f, 0xffa070);
+    return;
+  case 60: // Mirage Oasis: turquoise shade, sunlit sand, and generous distance.
+    SetLightingValues(1, 1.68f, 1.10f, 1.14f, 0.34f, 0.095f, 1.14f, 0.30f, true, 0.30f, true,
+                      1.34f, 0.46f, 0.28f, 0.22f, 0.64f,
+                      0.94f, 1.16f, 0.26f, 3.0f, 0.30f, 0x60a69a,
+                      0.0f, 0.48f, 4200.0f, 0xffd8a0);
+    return;
+  case 61: // Phantom Carnival: candy-magenta light with a mischievous soft flicker.
+    SetLightingValues(1, 1.76f, 1.12f, 1.44f, 0.12f, 0.050f, 1.24f, 0.46f, true, 0.24f, true,
+                      1.26f, 0.34f, 0.28f, 0.20f, 0.68f,
+                      1.04f, 1.26f, 0.42f, 2.5f, 0.30f, 0xb34b9a,
+                      0.16f, 0.28f, 2800.0f, 0xffd0f0);
+    return;
+  case 62: // Obsidian Monsoon: charcoal storm contrast with cold silver flashes.
+    SetLightingValues(2, 2.68f, 0.96f, 0.74f, -0.42f, 0.010f, 1.12f, 0.12f, false, 0.0f, true,
+                      1.14f, 0.18f, 0.10f, 0.06f, 0.94f,
+                      1.26f, 1.38f, 0.26f, 3.2f, 0.12f, 0x394554,
+                      0.30f, 0.34f, 2800.0f, 0xc8e8ff);
+    return;
+  case 63: // Prism Garden: pastel, high-readability color without neon clipping.
+    SetLightingValues(1, 1.68f, 1.10f, 1.28f, 0.08f, 0.090f, 1.16f, 0.34f, true, 0.32f, true,
+                      1.30f, 0.48f, 0.30f, 0.24f, 0.62f,
+                      0.94f, 1.16f, 0.30f, 2.9f, 0.34f, 0x88b6a0,
+                      0.0f, 0.36f, 3400.0f, 0xffd0f8);
+    return;
+  case 64: // Mushroom Moon: twilight magenta bioluminescence in playable darkness.
+    SetLightingValues(2, 2.42f, 1.00f, 1.36f, -0.12f, 0.022f, 1.12f, 0.44f, true, 0.16f, true,
+                      1.16f, 0.26f, 0.20f, 0.12f, 0.86f,
+                      1.14f, 1.22f, 0.34f, 2.8f, 0.26f, 0x6f397d,
+                      0.04f, 0.26f, 2600.0f, 0xd8a0ff);
+    return;
+  case 65: // Chrome Basilica: cool pearl stone with polished, material-forward highlights.
+    SetLightingValues(1, 1.72f, 1.12f, 0.76f, -0.18f, 0.070f, 1.80f, 0.22f, true, 0.30f, true,
+                      1.30f, 0.32f, 0.18f, 0.14f, 0.78f,
+                      1.02f, 2.10f, 0.20f, 3.8f, 0.18f, 0x718699,
+                      0.0f, 0.36f, 3600.0f, 0xe8f8ff);
+    return;
+  case 66: // Phosphor Terminal: emerald and amber terminal glow with a readable floor.
+    SetLightingValues(2, 2.25f, 1.10f, 1.32f, -0.04f, 0.045f, 1.35f, 0.42f, true, 0.24f, true,
+                      1.22f, 0.28f, 0.16f, 0.12f, 0.82f,
+                      1.10f, 1.36f, 0.34f, 2.6f, 0.20f, 0x365e47,
+                      0.08f, 0.24f, 2400.0f, 0xb8ff80);
+    return;
+  case 67: // Porcelain Citadel: pale blue-white daylight with graphic, soft-edged shadows.
+    SetLightingValues(1, 1.62f, 1.08f, 0.72f, -0.15f, 0.130f, 1.22f, 0.14f, true, 0.40f, true,
+                      1.36f, 0.50f, 0.30f, 0.22f, 0.62f,
+                      0.86f, 1.55f, 0.18f, 3.8f, 0.22f, 0xa7c5d6,
+                      0.0f, 0.48f, 4300.0f, 0xe0f8ff);
+    return;
+  case 68: // Lantern Festival: warm paper lantern pools against ink-blue night.
+    SetLightingValues(2, 2.15f, 1.12f, 1.22f, 0.40f, 0.040f, 1.32f, 0.40f, true, 0.25f, true,
+                      1.26f, 0.32f, 0.20f, 0.14f, 0.78f,
+                      1.14f, 1.38f, 0.42f, 2.5f, 0.18f, 0x873949,
+                      0.16f, 0.25f, 2500.0f, 0xffb070);
+    return;
+  case 69: // Glasshouse Rain: emerald wet-specular light and cyan reflected shade.
+    SetLightingValues(1, 1.76f, 1.12f, 1.30f, -0.20f, 0.055f, 1.48f, 0.40f, true, 0.28f, true,
+                      1.32f, 0.46f, 0.30f, 0.22f, 0.68f,
+                      1.00f, 1.48f, 0.30f, 2.8f, 0.34f, 0x317d70,
+                      0.20f, 0.38f, 3300.0f, 0xa0fff0);
+    return;
+  case 70: // Mercury Mirror: restrained silver light with dense specular response.
+    SetLightingValues(2, 2.20f, 1.02f, 0.70f, -0.26f, 0.035f, 2.10f, 0.18f, true, 0.22f, true,
+                      1.20f, 0.22f, 0.12f, 0.08f, 0.88f,
+                      1.24f, 2.30f, 0.34f, 3.1f, 0.16f, 0x778995,
+                      0.02f, 0.30f, 3000.0f, 0xe8f4ff);
+    return;
+  case 71: // Cinder Opera: theatrical amber footlights and oxblood shadow detail.
+    SetLightingValues(2, 2.35f, 1.00f, 1.00f, 0.32f, 0.025f, 1.25f, 0.34f, true, 0.18f, true,
+                      1.18f, 0.28f, 0.14f, 0.10f, 0.88f,
+                      1.20f, 1.36f, 0.46f, 2.4f, 0.16f, 0x653842,
+                      0.18f, 0.24f, 2400.0f, 0xffb080);
+    return;
+  case 72: // Opaline Reef: coral and cyan daylight with pearly, gentle fill.
+    SetLightingValues(1, 1.68f, 1.14f, 1.18f, 0.10f, 0.090f, 1.20f, 0.36f, true, 0.34f, true,
+                      1.36f, 0.50f, 0.32f, 0.24f, 0.64f,
+                      0.94f, 1.20f, 0.32f, 2.8f, 0.40f, 0x7fc1bc,
+                      0.0f, 0.44f, 3800.0f, 0xffb8c8);
+    return;
+  case 73: // Ultraviolet Archive: ultraviolet ink pools with crisp cyan manuscript rims.
+    SetLightingValues(2, 2.25f, 1.08f, 1.48f, -0.32f, 0.035f, 1.50f, 0.48f, true, 0.22f, true,
+                      1.26f, 0.24f, 0.16f, 0.12f, 0.84f,
+                      1.18f, 1.60f, 0.46f, 2.4f, 0.26f, 0x46306d,
+                      0.04f, 0.26f, 2700.0f, 0x9fe8ff);
+    return;
+  case 74: // Saffron Sandstorm: hot saffron sun meeting a petrol-blue storm ceiling.
+    SetLightingValues(1, 1.60f, 1.14f, 1.08f, 0.56f, 0.100f, 1.10f, 0.28f, true, 0.30f, true,
+                      1.40f, 0.46f, 0.30f, 0.22f, 0.64f,
+                      0.92f, 1.08f, 0.22f, 3.0f, 0.30f, 0xb88a3e,
+                      0.12f, 0.52f, 4200.0f, 0xffd080);
+    return;
+  case 75: // Polar Signal Station: cyan-violet signal light with a small radio flicker.
+    SetLightingValues(2, 2.12f, 1.06f, 1.04f, -0.48f, 0.070f, 1.38f, 0.26f, true, 0.26f, true,
+                      1.28f, 0.32f, 0.18f, 0.12f, 0.78f,
+                      1.10f, 1.56f, 0.38f, 2.8f, 0.30f, 0x577a93,
+                      0.12f, 0.40f, 3600.0f, 0xb8efff);
+    return;
   default:
     return;
   }
@@ -772,6 +1017,359 @@ static void ApplyFogPreset(int preset)
     bd_fog_turbulence = 0.18f;
     bd_fog_turbulence_scale = 0.009f;
     SetFogGradientPreset(2, 0x0d0f22, 0.38f, 1.20f, 0.0f, -6.0f);
+    break;
+  case 19: // Ember Gloom: furnace-red depth walls for the Absolution ember variant.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 170.0f;
+    SetFogPresetColor(0x54201e);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.66f;
+    bd_fog_sky_strength = 0.95f;
+    bd_fog_thick_distance = 480.0f;
+    bd_fog_thick_multiplier = 5.2f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.60f;
+    bd_fog_turbulence = 0.14f;
+    bd_fog_turbulence_scale = 0.008f;
+    SetFogGradientPreset(2, 0x15090a, 0.34f, 1.12f, 12.0f, -6.0f);
+    break;
+  case 20: // Verdigris Veil: oxidized teal-green fog, dark but navigable.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 168.0f;
+    SetFogPresetColor(0x1e5855);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.64f;
+    bd_fog_sky_strength = 0.95f;
+    bd_fog_thick_distance = 500.0f;
+    bd_fog_thick_multiplier = 5.0f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.65f;
+    bd_fog_turbulence = 0.16f;
+    bd_fog_turbulence_scale = 0.008f;
+    SetFogGradientPreset(2, 0x082624, 0.32f, 1.10f, -12.0f, -5.0f);
+    break;
+  case 21: // Amethyst Veil: saturated violet depth with clear lit silhouettes.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 175.0f;
+    SetFogPresetColor(0x3e285f);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.66f;
+    bd_fog_sky_strength = 0.95f;
+    bd_fog_thick_distance = 470.0f;
+    bd_fog_thick_multiplier = 5.3f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.62f;
+    bd_fog_turbulence = 0.14f;
+    bd_fog_turbulence_scale = 0.008f;
+    SetFogGradientPreset(2, 0x150c27, 0.34f, 1.14f, 18.0f, -6.0f);
+    break;
+  case 22: // Cobalt Night: midnight-blue depth for cool Absolution levels.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 165.0f;
+    SetFogPresetColor(0x1d396b);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.64f;
+    bd_fog_sky_strength = 0.95f;
+    bd_fog_thick_distance = 520.0f;
+    bd_fog_thick_multiplier = 4.9f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.70f;
+    bd_fog_turbulence = 0.12f;
+    bd_fog_turbulence_scale = 0.007f;
+    SetFogGradientPreset(2, 0x07132d, 0.32f, 1.08f, -18.0f, -5.0f);
+    break;
+  case 23: // Incense Gold: luminous, gameplay-friendly gold cathedral haze.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.92f;
+    bd_fog_density = 115.0f;
+    SetFogPresetColor(0xb68e56);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.46f;
+    bd_fog_sky_strength = 0.92f;
+    bd_fog_thick_distance = 700.0f;
+    bd_fog_thick_multiplier = 3.0f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 1.28f;
+    bd_fog_turbulence = 0.08f;
+    bd_fog_turbulence_scale = 0.006f;
+    SetFogGradientPreset(1, 0x70512d, 0.28f, 1.34f, 0.0f, 8.0f);
+    break;
+  case 24: // Jade Mist: soft green sanctuary haze with generous visibility.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.88f;
+    bd_fog_density = 105.0f;
+    SetFogPresetColor(0x568f76);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.42f;
+    bd_fog_sky_strength = 0.90f;
+    bd_fog_thick_distance = 780.0f;
+    bd_fog_thick_multiplier = 2.7f;
+    bd_fog_quality = 1;
+    bd_fog_height_falloff = 0.95f;
+    bd_fog_turbulence = 0.10f;
+    bd_fog_turbulence_scale = 0.008f;
+    SetFogGradientPreset(1, 0x285947, 0.20f, 0.90f, 0.0f, -2.0f);
+    break;
+  case 25: // Ashfall: grey-brown volcanic distance with ember-coloured air.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 150.0f;
+    SetFogPresetColor(0x67625c);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.56f;
+    bd_fog_sky_strength = 0.94f;
+    bd_fog_thick_distance = 560.0f;
+    bd_fog_thick_multiplier = 4.1f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.82f;
+    bd_fog_turbulence = 0.26f;
+    bd_fog_turbulence_scale = 0.011f;
+    SetFogGradientPreset(2, 0x302825, 0.26f, 1.10f, 10.0f, -4.0f);
+    break;
+  case 26: // Abyssal Teal: dense underwater colour with readable near space.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 145.0f;
+    SetFogPresetColor(0x236775);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.58f;
+    bd_fog_sky_strength = 0.94f;
+    bd_fog_thick_distance = 540.0f;
+    bd_fog_thick_multiplier = 4.2f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.85f;
+    bd_fog_turbulence = 0.20f;
+    bd_fog_turbulence_scale = 0.010f;
+    SetFogGradientPreset(1, 0x0d3844, 0.30f, 1.12f, 0.0f, -4.0f);
+    break;
+  case 27: // Roseglass Haze: pink-violet chapel air with a light vertical lift.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.90f;
+    bd_fog_density = 120.0f;
+    SetFogPresetColor(0xa06a86);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.48f;
+    bd_fog_sky_strength = 0.92f;
+    bd_fog_thick_distance = 680.0f;
+    bd_fog_thick_multiplier = 3.2f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 1.15f;
+    bd_fog_turbulence = 0.08f;
+    bd_fog_turbulence_scale = 0.007f;
+    SetFogGradientPreset(1, 0x5b304c, 0.24f, 1.22f, 0.0f, 6.0f);
+    break;
+  case 28: // Thunderhead: blue-grey storm banks with mild directional movement.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.96f;
+    bd_fog_density = 145.0f;
+    SetFogPresetColor(0x52637b);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.52f;
+    bd_fog_sky_strength = 0.94f;
+    bd_fog_thick_distance = 600.0f;
+    bd_fog_thick_multiplier = 3.8f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 1.05f;
+    bd_fog_turbulence = 0.18f;
+    bd_fog_turbulence_scale = 0.009f;
+    SetFogGradientPreset(2, 0x222e42, 0.30f, 1.08f, -24.0f, -5.0f);
+    break;
+  case 29: // Autumn Mist: honeyed low fog for warm ruins and woodland maps.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.86f;
+    bd_fog_density = 100.0f;
+    SetFogPresetColor(0xaa7e50);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.40f;
+    bd_fog_sky_strength = 0.90f;
+    bd_fog_thick_distance = 820.0f;
+    bd_fog_thick_multiplier = 2.6f;
+    bd_fog_quality = 1;
+    bd_fog_height_falloff = 0.82f;
+    bd_fog_turbulence = 0.16f;
+    bd_fog_turbulence_scale = 0.010f;
+    SetFogGradientPreset(1, 0x70421e, 0.18f, 0.84f, 0.0f, -3.0f);
+    break;
+  case 30: // Aurora Frost: pale cyan fog with an aurora-like high gradient.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.90f;
+    bd_fog_density = 125.0f;
+    SetFogPresetColor(0x8ecbd0);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.50f;
+    bd_fog_sky_strength = 0.94f;
+    bd_fog_thick_distance = 680.0f;
+    bd_fog_thick_multiplier = 3.3f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 1.20f;
+    bd_fog_turbulence = 0.10f;
+    bd_fog_turbulence_scale = 0.007f;
+    SetFogGradientPreset(1, 0x4e8ba0, 0.30f, 1.30f, 0.0f, 7.0f);
+    break;
+  case 31: // Solar Dust: bright gold distance that stays useful in fast play.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.90f; bd_fog_density = 120.0f;
+    SetFogPresetColor(0xd6a65a); bd_fog_color_mode = 2; bd_fog_color_strength = 0.48f;
+    bd_fog_sky_strength = 0.92f; bd_fog_thick_distance = 700.0f; bd_fog_thick_multiplier = 3.1f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 1.05f; bd_fog_turbulence = 0.14f; bd_fog_turbulence_scale = 0.008f;
+    SetFogGradientPreset(2, 0x88511f, 0.26f, 1.04f, 20.0f, -4.0f);
+    break;
+  case 32: // Luminous Grotto: aqua cave mist with a clear near field.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.96f; bd_fog_density = 132.0f;
+    SetFogPresetColor(0x2d9690); bd_fog_color_mode = 2; bd_fog_color_strength = 0.54f;
+    bd_fog_sky_strength = 0.93f; bd_fog_thick_distance = 620.0f; bd_fog_thick_multiplier = 3.7f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 0.92f; bd_fog_turbulence = 0.18f; bd_fog_turbulence_scale = 0.009f;
+    SetFogGradientPreset(1, 0x0c514f, 0.28f, 1.06f, 0.0f, -3.0f);
+    break;
+  case 33: // Bloodglass Veil: crimson-magenta depth without Blackout-level loss.
+    bd_fog_mode = 1; bd_sector_fog_scale = 1.0f; bd_fog_density = 158.0f;
+    SetFogPresetColor(0x74294b); bd_fog_color_mode = 1; bd_fog_color_strength = 0.64f;
+    bd_fog_sky_strength = 0.95f; bd_fog_thick_distance = 510.0f; bd_fog_thick_multiplier = 4.8f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 0.82f; bd_fog_turbulence = 0.14f; bd_fog_turbulence_scale = 0.008f;
+    SetFogGradientPreset(2, 0x250813, 0.34f, 1.12f, 16.0f, -6.0f);
+    break;
+  case 34: // Brass Smog: antique bronze haze with soft rolling movement.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.94f; bd_fog_density = 128.0f;
+    SetFogPresetColor(0x9b7440); bd_fog_color_mode = 2; bd_fog_color_strength = 0.50f;
+    bd_fog_sky_strength = 0.92f; bd_fog_thick_distance = 660.0f; bd_fog_thick_multiplier = 3.4f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 0.94f; bd_fog_turbulence = 0.18f; bd_fog_turbulence_scale = 0.010f;
+    SetFogGradientPreset(1, 0x563719, 0.22f, 1.00f, 0.0f, 1.0f);
+    break;
+  case 35: // Orchid Nebula: lavender depth and a subtle star-cloud gradient.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.94f; bd_fog_density = 128.0f;
+    SetFogPresetColor(0x74559d); bd_fog_color_mode = 2; bd_fog_color_strength = 0.54f;
+    bd_fog_sky_strength = 0.93f; bd_fog_thick_distance = 650.0f; bd_fog_thick_multiplier = 3.5f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 1.12f; bd_fog_turbulence = 0.10f; bd_fog_turbulence_scale = 0.007f;
+    SetFogGradientPreset(1, 0x3b235c, 0.30f, 1.26f, 0.0f, 6.0f);
+    break;
+  case 36: // Lotus Neon Mist: pink-cyan fog with generous playable distance.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.92f; bd_fog_density = 118.0f;
+    SetFogPresetColor(0x9b508e); bd_fog_color_mode = 2; bd_fog_color_strength = 0.48f;
+    bd_fog_sky_strength = 0.92f; bd_fog_thick_distance = 720.0f; bd_fog_thick_multiplier = 3.0f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 1.00f; bd_fog_turbulence = 0.12f; bd_fog_turbulence_scale = 0.008f;
+    SetFogGradientPreset(2, 0x283861, 0.26f, 1.08f, -22.0f, -3.0f);
+    break;
+  case 37: // Frostfire Haze: cold blue distance with an ember-coloured floor.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.96f; bd_fog_density = 138.0f;
+    SetFogPresetColor(0x557ba5); bd_fog_color_mode = 2; bd_fog_color_strength = 0.54f;
+    bd_fog_sky_strength = 0.94f; bd_fog_thick_distance = 610.0f; bd_fog_thick_multiplier = 3.8f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 0.96f; bd_fog_turbulence = 0.14f; bd_fog_turbulence_scale = 0.008f;
+    SetFogGradientPreset(2, 0x563018, 0.22f, 1.02f, 14.0f, -5.0f);
+    break;
+  case 38: // Oasis Mirage: turquoise air and sun-warm directional distance.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.86f; bd_fog_density = 104.0f;
+    SetFogPresetColor(0x77aa9a); bd_fog_color_mode = 2; bd_fog_color_strength = 0.40f;
+    bd_fog_sky_strength = 0.90f; bd_fog_thick_distance = 860.0f; bd_fog_thick_multiplier = 2.5f;
+    bd_fog_quality = 1; bd_fog_height_falloff = 0.86f; bd_fog_turbulence = 0.20f; bd_fog_turbulence_scale = 0.012f;
+    SetFogGradientPreset(2, 0x9b6c32, 0.18f, 0.92f, 26.0f, -3.0f);
+    break;
+  case 39: // Carnival Smoke: sweet purple haze and mild, festive motion.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.94f; bd_fog_density = 128.0f;
+    SetFogPresetColor(0xa25d9a); bd_fog_color_mode = 2; bd_fog_color_strength = 0.52f;
+    bd_fog_sky_strength = 0.93f; bd_fog_thick_distance = 650.0f; bd_fog_thick_multiplier = 3.5f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 1.04f; bd_fog_turbulence = 0.18f; bd_fog_turbulence_scale = 0.010f;
+    SetFogGradientPreset(1, 0x51234f, 0.26f, 1.16f, 0.0f, 4.0f);
+    break;
+  case 40: // Obsidian Rain: storm-black distance with enough blue to navigate.
+    bd_fog_mode = 1; bd_sector_fog_scale = 1.04f; bd_fog_density = 168.0f;
+    SetFogPresetColor(0x29313d); bd_fog_color_mode = 1; bd_fog_color_strength = 0.62f;
+    bd_fog_sky_strength = 0.96f; bd_fog_thick_distance = 500.0f; bd_fog_thick_multiplier = 5.0f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 0.78f; bd_fog_turbulence = 0.22f; bd_fog_turbulence_scale = 0.011f;
+    SetFogGradientPreset(2, 0x080b12, 0.32f, 1.10f, -18.0f, -5.0f);
+    break;
+  case 41: // Prism Bloom: pale rainbow-pastel distance with excellent visibility.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.84f; bd_fog_density = 92.0f;
+    SetFogPresetColor(0xaac7bc); bd_fog_color_mode = 2; bd_fog_color_strength = 0.36f;
+    bd_fog_sky_strength = 0.90f; bd_fog_thick_distance = 900.0f; bd_fog_thick_multiplier = 2.3f;
+    bd_fog_quality = 1; bd_fog_height_falloff = 1.08f; bd_fog_turbulence = 0.08f; bd_fog_turbulence_scale = 0.007f;
+    SetFogGradientPreset(1, 0xc18cb3, 0.18f, 1.18f, 0.0f, 5.0f);
+    break;
+  case 42: // Spore Moonlight: rich purple-blue mushroom mist, dark but readable.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.98f; bd_fog_density = 148.0f;
+    SetFogPresetColor(0x633d79); bd_fog_color_mode = 2; bd_fog_color_strength = 0.58f;
+    bd_fog_sky_strength = 0.94f; bd_fog_thick_distance = 570.0f; bd_fog_thick_multiplier = 4.0f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 0.86f; bd_fog_turbulence = 0.20f; bd_fog_turbulence_scale = 0.010f;
+    SetFogGradientPreset(1, 0x2c1742, 0.32f, 1.10f, 0.0f, -2.0f);
+    break;
+  case 43: // Silver Haze: clean steel distance for polished material showcase maps.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.78f; bd_fog_density = 78.0f;
+    SetFogPresetColor(0x9bb1b8); bd_fog_color_mode = 2; bd_fog_color_strength = 0.26f;
+    bd_fog_sky_strength = 0.88f; bd_fog_thick_distance = 1100.0f; bd_fog_thick_multiplier = 2.0f;
+    bd_fog_quality = 1; bd_fog_height_falloff = 1.20f; bd_fog_turbulence = 0.04f; bd_fog_turbulence_scale = 0.006f;
+    SetFogGradientPreset(1, 0x687d91, 0.12f, 1.04f, 0.0f, 4.0f);
+    break;
+  case 44: // Terminal Bloom: gentle green phosphor air, not a visibility-killing glow.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.88f; bd_fog_density = 106.0f;
+    SetFogPresetColor(0x5e966d); bd_fog_color_mode = 2; bd_fog_color_strength = 0.38f;
+    bd_fog_sky_strength = 0.90f; bd_fog_thick_distance = 780.0f; bd_fog_thick_multiplier = 2.8f;
+    bd_fog_quality = 1; bd_fog_height_falloff = 1.10f; bd_fog_turbulence = 0.10f; bd_fog_turbulence_scale = 0.008f;
+    SetFogGradientPreset(2, 0x98c05a, 0.16f, 1.02f, 18.0f, -3.0f);
+    break;
+  case 45: // Porcelain Veil: pale blue-white distance with crisp black silhouettes.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.76f; bd_fog_density = 80.0f;
+    SetFogPresetColor(0xb9d2d8); bd_fog_color_mode = 2; bd_fog_color_strength = 0.25f;
+    bd_fog_sky_strength = 0.88f; bd_fog_thick_distance = 1120.0f; bd_fog_thick_multiplier = 1.9f;
+    bd_fog_quality = 1; bd_fog_height_falloff = 1.24f; bd_fog_turbulence = 0.03f; bd_fog_turbulence_scale = 0.006f;
+    SetFogGradientPreset(1, 0xd8edf0, 0.10f, 1.10f, 0.0f, 5.0f);
+    break;
+  case 46: // Lantern Smoke: warm near-air receding into a cool, navigable night.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.94f; bd_fog_density = 120.0f;
+    SetFogPresetColor(0x8d4e47); bd_fog_color_mode = 2; bd_fog_color_strength = 0.46f;
+    bd_fog_sky_strength = 0.92f; bd_fog_thick_distance = 680.0f; bd_fog_thick_multiplier = 3.3f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 1.02f; bd_fog_turbulence = 0.14f; bd_fog_turbulence_scale = 0.009f;
+    SetFogGradientPreset(1, 0xe3874f, 0.24f, 1.12f, 0.0f, 2.0f);
+    break;
+  case 47: // Glasshouse Rain: green-blue rain air with gentle greenhouse movement.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.96f; bd_fog_density = 125.0f;
+    SetFogPresetColor(0x4e8d80); bd_fog_color_mode = 2; bd_fog_color_strength = 0.48f;
+    bd_fog_sky_strength = 0.93f; bd_fog_thick_distance = 660.0f; bd_fog_thick_multiplier = 3.4f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 0.94f; bd_fog_turbulence = 0.18f; bd_fog_turbulence_scale = 0.010f;
+    SetFogGradientPreset(2, 0x164d50, 0.22f, 1.04f, -20.0f, -4.0f);
+    break;
+  case 48: // Mercury Haze: thin steel-grey air that leaves reflective detail intact.
+    bd_fog_mode = 2; bd_sector_fog_scale = 0.90f; bd_fog_density = 90.0f;
+    SetFogPresetColor(0x89969d); bd_fog_color_mode = 2; bd_fog_color_strength = 0.30f;
+    bd_fog_sky_strength = 0.89f; bd_fog_thick_distance = 940.0f; bd_fog_thick_multiplier = 2.3f;
+    bd_fog_quality = 1; bd_fog_height_falloff = 1.12f; bd_fog_turbulence = 0.05f; bd_fog_turbulence_scale = 0.006f;
+    SetFogGradientPreset(1, 0x64737c, 0.14f, 1.04f, 0.0f, 3.0f);
+    break;
+  case 49: // Velvet Smoke: burgundy theatre haze with a safe amber middle distance.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.96f; bd_fog_density = 128.0f;
+    SetFogPresetColor(0x6b3d46); bd_fog_color_mode = 2; bd_fog_color_strength = 0.48f;
+    bd_fog_sky_strength = 0.93f; bd_fog_thick_distance = 640.0f; bd_fog_thick_multiplier = 3.6f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 0.96f; bd_fog_turbulence = 0.16f; bd_fog_turbulence_scale = 0.009f;
+    SetFogGradientPreset(1, 0x3f202d, 0.22f, 1.08f, 0.0f, -1.0f);
+    break;
+  case 50: // Pearl Water: clear pale aqua-pink depth for bright coral exploration.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.82f; bd_fog_density = 84.0f;
+    SetFogPresetColor(0x9bc8c1); bd_fog_color_mode = 2; bd_fog_color_strength = 0.32f;
+    bd_fog_sky_strength = 0.89f; bd_fog_thick_distance = 980.0f; bd_fog_thick_multiplier = 2.2f;
+    bd_fog_quality = 1; bd_fog_height_falloff = 1.16f; bd_fog_turbulence = 0.08f; bd_fog_turbulence_scale = 0.007f;
+    SetFogGradientPreset(1, 0xe3aab0, 0.14f, 1.14f, 0.0f, 5.0f);
+    break;
+  case 51: // Ultraviolet Ink Mist: violet manuscript air edged by cyan spectral distance.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.96f; bd_fog_density = 120.0f;
+    SetFogPresetColor(0x563f78); bd_fog_color_mode = 2; bd_fog_color_strength = 0.50f;
+    bd_fog_sky_strength = 0.92f; bd_fog_thick_distance = 680.0f; bd_fog_thick_multiplier = 3.3f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 1.00f; bd_fog_turbulence = 0.13f; bd_fog_turbulence_scale = 0.009f;
+    SetFogGradientPreset(2, 0x284f7a, 0.22f, 1.08f, 24.0f, -3.0f);
+    break;
+  case 52: // Saffron Sand: turbulent gold dust with a deliberately clear near field.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.92f; bd_fog_density = 116.0f;
+    SetFogPresetColor(0xb18a4d); bd_fog_color_mode = 2; bd_fog_color_strength = 0.44f;
+    bd_fog_sky_strength = 0.91f; bd_fog_thick_distance = 720.0f; bd_fog_thick_multiplier = 3.0f;
+    bd_fog_quality = 2; bd_fog_height_falloff = 0.82f; bd_fog_turbulence = 0.24f; bd_fog_turbulence_scale = 0.012f;
+    SetFogGradientPreset(2, 0x526d78, 0.20f, 0.98f, -12.0f, -4.0f);
+    break;
+  case 53: // Polar Signal: clear icy mist with a cyan directional broadcast veil.
+    bd_fog_mode = 1; bd_sector_fog_scale = 0.84f; bd_fog_density = 90.0f;
+    SetFogPresetColor(0x8ab7c8); bd_fog_color_mode = 2; bd_fog_color_strength = 0.34f;
+    bd_fog_sky_strength = 0.90f; bd_fog_thick_distance = 930.0f; bd_fog_thick_multiplier = 2.4f;
+    bd_fog_quality = 1; bd_fog_height_falloff = 1.14f; bd_fog_turbulence = 0.09f; bd_fog_turbulence_scale = 0.007f;
+    SetFogGradientPreset(2, 0x536d9b, 0.18f, 1.08f, 16.0f, 4.0f);
     break;
   default:
     break;
@@ -3137,6 +3735,417 @@ static void ApplyGraphicsPreset(int preset) {
     bd_bloom_threshold = 0.78f;
     bd_vignette_enable = true;
     bd_vignette_strength = 0.10f;
+    return;
+  case 66: // Absolution: Ember. Color remains in the paired light/fog layers.
+    ApplyGraphicsPreset(65);
+    bd_bloom_strength = 1.06f;
+    bd_bloom_radius = 1.50f;
+    bd_bloom_threshold = 0.80f;
+    bd_vignette_strength = 0.12f;
+    return;
+  case 67: // Absolution: Verdigris. Keep the dark-safe neutral image pipeline.
+    ApplyGraphicsPreset(65);
+    bd_bloom_strength = 0.98f;
+    bd_bloom_radius = 1.42f;
+    bd_bloom_threshold = 0.82f;
+    bd_vignette_strength = 0.11f;
+    return;
+  case 68: // Absolution: Amethyst. A touch more bloom catches violet light pools.
+    ApplyGraphicsPreset(65);
+    bd_bloom_strength = 1.14f;
+    bd_bloom_radius = 1.55f;
+    bd_bloom_threshold = 0.76f;
+    bd_vignette_strength = 0.12f;
+    return;
+  case 69: // Absolution: Cobalt. Crisp blue highlights in a neutral dark pipeline.
+    ApplyGraphicsPreset(65);
+    bd_bloom_strength = 1.00f;
+    bd_bloom_radius = 1.46f;
+    bd_bloom_threshold = 0.80f;
+    bd_vignette_strength = 0.11f;
+    return;
+  case 70: // Gilded Reliquary: luminous but controlled treasure-vault atmosphere.
+    ApplyGraphicsPreset(41);
+    bd_bloom_strength = 1.02f;
+    bd_bloom_radius = 1.55f;
+    bd_bloom_threshold = 0.82f;
+    bd_godrays_strength = 0.26f;
+    bd_vignette_strength = 0.10f;
+    return;
+  case 71: // Jade Sanctuary: soft fantasy glow without giving up combat clarity.
+    ApplyGraphicsPreset(48);
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.76f;
+    bd_bloom_radius = 1.42f;
+    bd_bloom_threshold = 0.90f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.12f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.06f;
+    bd_lensflare_enable = false;
+    return;
+  case 72: // Ashen Eclipse: a playable ashfall night, kept dark without a grey veil.
+    ApplyGraphicsPreset(65);
+    bd_bloom_strength = 0.78f;
+    bd_bloom_radius = 1.32f;
+    bd_bloom_threshold = 0.88f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.06f;
+    bd_vignette_strength = 0.14f;
+    return;
+  case 73: // Pelagic Temple: tranquil underwater color, soft caustic-like bloom.
+    ApplyGraphicsPreset(45);
+    bd_bloom_strength = 0.94f;
+    bd_bloom_radius = 1.58f;
+    bd_bloom_threshold = 0.84f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.10f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.25f;
+    bd_edgeglow_enable = true;
+    bd_edgeglow_strength = 0.08f;
+    bd_edgeglow_threshold = 0.12f;
+    return;
+  case 74: // Roseglass Chapel: stained-glass pinks with a filmic, readable glow.
+    ApplyGraphicsPreset(42);
+    bd_bloom_strength = 0.92f;
+    bd_bloom_radius = 1.40f;
+    bd_bloom_threshold = 0.84f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.14f;
+    bd_colorgrade_mode = 1;
+    bd_colorgrade_strength = 0.22f;
+    bd_filmgrain_strength = 0.05f;
+    bd_chromatic_strength = 0.015f;
+    bd_vignette_strength = 0.14f;
+    bd_lensflare_strength = 0.12f;
+    return;
+  case 75: // Stormbound Citadel: a full cinematic stack tuned for rain-dark maps.
+    ApplyGraphicsPreset(53);
+    bd_bloom_strength = 0.78f;
+    bd_bloom_radius = 1.24f;
+    bd_bloom_threshold = 0.88f;
+    bd_vignette_strength = 0.15f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.015f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.24f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.18f;
+    return;
+  case 76: // Autumnal Ruins: warm 35 mm texture and a gentle late-afternoon glow.
+    ApplyGraphicsPreset(35);
+    bd_bloom_strength = 0.78f;
+    bd_bloom_radius = 1.38f;
+    bd_bloom_threshold = 0.86f;
+    bd_filmgrain_strength = 0.07f;
+    bd_vignette_strength = 0.13f;
+    return;
+  case 77: // Aurora Winter: icy, luminous exploration light with restrained bloom.
+    ApplyGraphicsPreset(61);
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.78f;
+    bd_bloom_radius = 1.34f;
+    bd_bloom_threshold = 0.90f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.08f;
+    bd_whitebalance_temperature = -0.36f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.22f;
+    return;
+  case 78: // Solar Flare Bazaar: a vivid, sun-drenched action-adventure look.
+    ApplyGraphicsPreset(50);
+    bd_bloom_strength = 0.82f;
+    bd_bloom_radius = 1.38f;
+    bd_bloom_threshold = 0.92f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.16f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.28f;
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.15f;
+    bd_godrays_enable = true;
+    bd_godrays_strength = 0.14f;
+    return;
+  case 79: // Bioluminescent Grotto: glowing aqua caves without losing the floor.
+    ApplyGraphicsPreset(46);
+    bd_bloom_strength = 1.06f;
+    bd_bloom_radius = 1.52f;
+    bd_bloom_threshold = 0.82f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.012f;
+    bd_vibrance_strength = 0.20f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.22f;
+    bd_edgeglow_enable = true;
+    bd_edgeglow_strength = 0.12f;
+    bd_edgeglow_threshold = 0.10f;
+    return;
+  case 80: // Bloodglass Eclipse: exotic ruby darkness, protected by Absolution rules.
+    ApplyGraphicsPreset(65);
+    bd_bloom_strength = 1.08f;
+    bd_bloom_radius = 1.48f;
+    bd_bloom_threshold = 0.78f;
+    bd_vignette_strength = 0.14f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.010f;
+    bd_edgeglow_enable = true;
+    bd_edgeglow_strength = 0.11f;
+    bd_edgeglow_threshold = 0.12f;
+    return;
+  case 81: // Clockwork Brass: a richly mechanical film-stock presentation.
+    ApplyGraphicsPreset(57);
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.62f;
+    bd_bloom_radius = 1.10f;
+    bd_bloom_threshold = 1.02f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.24f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.40f;
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.10f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.08f;
+    return;
+  case 82: // Orchid Nebula: an explorable violet space-fantasy dream.
+    ApplyGraphicsPreset(62);
+    bd_bloom_strength = 1.00f;
+    bd_bloom_radius = 1.58f;
+    bd_bloom_threshold = 0.80f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.018f;
+    bd_colorgrade_strength = 0.20f;
+    bd_vibrance_strength = 0.16f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.14f;
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.12f;
+    return;
+  case 83: // Neon Lotus: high-chroma cyber-fantasy, tempered for legibility.
+    ApplyGraphicsPreset(32);
+    bd_bloom_strength = 1.18f;
+    bd_bloom_radius = 1.58f;
+    bd_bloom_threshold = 0.72f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.035f;
+    bd_vibrance_strength = 0.34f;
+    return;
+  case 84: // Frostfire Citadel: blue steel and orange embers in cinematic contrast.
+    ApplyGraphicsPreset(12);
+    bd_bloom_strength = 0.86f;
+    bd_bloom_radius = 1.35f;
+    bd_bloom_threshold = 0.88f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.18f;
+    bd_vignette_strength = 0.12f;
+    bd_edgeglow_enable = true;
+    bd_edgeglow_strength = 0.08f;
+    bd_edgeglow_threshold = 0.12f;
+    return;
+  case 85: // Mirage Oasis: warm, calm desert colour with long readable horizons.
+    ApplyGraphicsPreset(20);
+    bd_bloom_strength = 0.88f;
+    bd_bloom_radius = 1.48f;
+    bd_bloom_threshold = 0.88f;
+    bd_vibrance_strength = 0.16f;
+    bd_godrays_enable = true;
+    bd_godrays_strength = 0.16f;
+    return;
+  case 86: // Phantom Carnival: playful magenta glow, deliberately kept comfortable.
+    ApplyGraphicsPreset(52);
+    bd_bloom_strength = 0.82f;
+    bd_bloom_radius = 1.48f;
+    bd_bloom_threshold = 0.82f;
+    bd_vibrance_strength = 0.22f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.025f;
+    return;
+  case 87: // Obsidian Monsoon: near-black rain ambience without a grey sky veil.
+    ApplyGraphicsPreset(65);
+    bd_bloom_strength = 0.84f;
+    bd_bloom_radius = 1.34f;
+    bd_bloom_threshold = 0.86f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.07f;
+    bd_sharpen_enable = true;
+    bd_sharpen_strength = 0.12f;
+    bd_vignette_strength = 0.16f;
+    return;
+  case 88: // Prism Garden: bright pastel fantasy with no harsh post-processing.
+    ApplyGraphicsPreset(55);
+    bd_bloom_strength = 1.00f;
+    bd_bloom_radius = 1.72f;
+    bd_bloom_threshold = 0.82f;
+    bd_colorgrade_strength = 0.18f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.14f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.02f;
+    bd_lensflare_enable = false;
+    return;
+  case 89: // Mushroom Moon: surreal spore-lit twilight that remains navigable.
+    ApplyGraphicsPreset(63);
+    bd_bloom_strength = 0.88f;
+    bd_bloom_radius = 1.72f;
+    bd_bloom_threshold = 0.82f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.05f;
+    bd_hueshift_enable = true;
+    bd_hueshift_degrees = 8.0f;
+    bd_whitebalance_temperature = -0.08f;
+    bd_vignette_strength = 0.12f;
+    return;
+  case 90: // Chrome Basilica: polished sci-fi material showcase, almost filter-free.
+    ApplyGraphicsPreset(57);
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.56f;
+    bd_bloom_radius = 1.00f;
+    bd_bloom_threshold = 1.08f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.06f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.10f;
+    bd_whitebalance_tint = 0.02f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.50f;
+    return;
+  case 91: // Phosphor Terminal: a playable retro-computer display, not a heavy CRT joke.
+    ApplyGraphicsPreset(51);
+    SetCrtPreset(2, 0.01f, 1.0f, 0.06f, 1.08f, 1.04f, 0.04f);
+    bd_retro_pixel_enable = true;
+    bd_retro_pixel_scale = 1.5f;
+    bd_bloom_enable = true;
+    bd_bloom_strength = 0.62f;
+    bd_bloom_radius = 1.12f;
+    bd_bloom_threshold = 0.96f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.012f;
+    bd_colorgrade_mode = 7;
+    bd_colorgrade_strength = 0.18f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.18f;
+    return;
+  case 92: // Porcelain Citadel: high-key graphic-novel daylight with calm, readable lines.
+    ApplyGraphicsPreset(54);
+    bd_posterize_levels = 7.0f;
+    bd_edgeglow_strength = 0.12f;
+    bd_edgeglow_threshold = 0.14f;
+    bd_bloom_enable = false;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.06f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.15f;
+    return;
+  case 93: // Lantern Festival: intimate gold film stock with a gentle celebratory glow.
+    ApplyGraphicsPreset(60);
+    bd_bloom_strength = 0.92f;
+    bd_bloom_radius = 1.45f;
+    bd_bloom_threshold = 0.82f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.06f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.015f;
+    bd_colorgrade_strength = 0.24f;
+    bd_lensflare_enable = true;
+    bd_lensflare_strength = 0.16f;
+    return;
+  case 94: // Glasshouse Rain: emerald wet-neon sheen with restrained cyberpunk artifacts.
+    ApplyGraphicsPreset(14);
+    bd_hueshift_enable = true;
+    bd_hueshift_degrees = -18.0f;
+    bd_colorgrade_mode = 4;
+    bd_colorgrade_strength = 0.22f;
+    bd_bloom_strength = 0.92f;
+    bd_bloom_radius = 1.40f;
+    bd_bloom_threshold = 0.88f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.018f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.14f;
+    return;
+  case 95: // Mercury Mirror: cool, near-monochrome noir that keeps specular detail.
+    ApplyGraphicsPreset(53);
+    bd_colorgrade_strength = 0.18f;
+    bd_hueshift_enable = false;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.16f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.04f;
+    bd_bloom_strength = 0.68f;
+    bd_bloom_radius = 1.16f;
+    bd_bloom_threshold = 0.94f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.25f;
+    return;
+  case 96: // Cinder Opera: charcoal-and-velvet drama in a restrained filmic presentation.
+    ApplyGraphicsPreset(47);
+    bd_bloom_strength = 0.85f;
+    bd_bloom_radius = 1.34f;
+    bd_bloom_threshold = 0.88f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.10f;
+    bd_vignette_enable = true;
+    bd_vignette_strength = 0.20f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.30f;
+    bd_grade_enable = true;
+    bd_grade_lift_r = -0.01f;
+    bd_grade_lift_g = -0.02f;
+    bd_grade_lift_b = 0.02f;
+    return;
+  case 97: // Opaline Reef: a bright pearl-and-coral watercolor daytime adventure.
+    ApplyGraphicsPreset(55);
+    bd_bloom_strength = 1.02f;
+    bd_bloom_radius = 1.78f;
+    bd_bloom_threshold = 0.82f;
+    bd_colorgrade_strength = 0.22f;
+    bd_vibrance_enable = true;
+    bd_vibrance_strength = 0.16f;
+    bd_hueshift_enable = true;
+    bd_hueshift_degrees = 8.0f;
+    return;
+  case 98: // Ultraviolet Archive: fluorescent manuscript fantasy with spectral ink edges.
+    ApplyGraphicsPreset(59);
+    gl_exposure_scale = 1.10f;
+    gl_exposure_min = 0.35f;
+    gl_exposure_base = 0.37f;
+    bd_hueshift_degrees = 26.0f;
+    bd_edgeglow_strength = 0.22f;
+    bd_bloom_strength = 0.88f;
+    bd_bloom_radius = 1.44f;
+    bd_bloom_threshold = 0.84f;
+    return;
+  case 99: // Saffron Sandstorm: weather-driven gold filmic contrast with a clear near field.
+    ApplyGraphicsPreset(5);
+    bd_bloom_strength = 0.85f;
+    bd_bloom_radius = 1.35f;
+    bd_bloom_threshold = 0.90f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.020f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.06f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = 0.42f;
+    bd_colorgrade_mode = 1;
+    bd_colorgrade_strength = 0.24f;
+    return;
+  case 100: // Polar Signal Station: pale-cyan retro projection with controlled radio texture.
+    ApplyGraphicsPreset(52);
+    bd_bloom_strength = 0.66f;
+    bd_bloom_radius = 1.50f;
+    bd_bloom_threshold = 0.88f;
+    gl_crt_scanline = 0.08f;
+    gl_crt_mask_intensity = 0.06f;
+    bd_chromatic_enable = true;
+    bd_chromatic_strength = 0.012f;
+    bd_filmgrain_enable = true;
+    bd_filmgrain_strength = 0.03f;
+    bd_whitebalance_enable = true;
+    bd_whitebalance_temperature = -0.38f;
+    bd_whitebalance_tint = 0.10f;
+    bd_clarity_enable = true;
+    bd_clarity_strength = 0.13f;
     return;
   default:
     return;

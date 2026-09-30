@@ -251,6 +251,10 @@ int FZipExploder::DecodeSF(std::vector<HuffNode> &decoder, int numvals)
 		READBYTE(a);
 		nv = ((a >> 4) & 15) + 1;
 		bl = (a & 15) + 1;
+		// A crafted table can claim more entries than the decoder holds;
+		// reject before writing past the stack-resident builder array.
+		if (nv > numvals - v)
+			return 1;	/* bad table */
 		while (nv--) {
 			builder[v].Length = bl;
 			builder[v].Value = v;
@@ -374,6 +378,8 @@ int ShrinkLoop(unsigned char *out, unsigned int outsize, FileReader &_In, unsign
 		Parent[code] = FREE_CODE;
 
 	READBITS(oldcode, codesize);
+	if (oldcode >= BOGUSCODE)
+		return -1;	/* the first code of a valid stream is always a literal byte */
 	if (size < outsize) {
 		out[size++] = oldcode;
 	}
@@ -384,7 +390,10 @@ int ShrinkLoop(unsigned char *out, unsigned int outsize, FileReader &_In, unsign
 		if (code == BOGUSCODE) {	/* possible to have consecutive escapes? */
 			READBITS(code, codesize);
 			if (code == 1) {
-				codesize++;
+				// Codes are at most 13 bits (HSIZE == 2^13); a crafted stream
+				// that grows the code size further would index out of bounds.
+				if (++codesize > 13)
+					return -1;
 			} else if (code == 2) {
 				/* clear leafs (nodes with no children) */
 				/* first loop:  mark each parent as such */
@@ -408,6 +417,9 @@ int ShrinkLoop(unsigned char *out, unsigned int outsize, FileReader &_In, unsign
 			continue;
 		}
 
+		if (code >= HSIZE)
+			return -1;	/* corrupt stream: code outside the table */
+
 		newstr = &Stack[HSIZE-1];
 		curcode = code;
 
@@ -422,6 +434,10 @@ int ShrinkLoop(unsigned char *out, unsigned int outsize, FileReader &_In, unsign
 		}
 
 		do {
+			// A crafted Parent cycle would walk newstr below the stack buffer
+			// forever; no valid string is longer than the table itself.
+			if (len >= HSIZE)
+				return -1;
 			*newstr-- = Value[curcode];
 			len++;
 			curcode = (Parent[curcode] & CODE_MASK);
@@ -434,12 +450,16 @@ int ShrinkLoop(unsigned char *out, unsigned int outsize, FileReader &_In, unsign
 
 		do {
 			freecode++;
-		} while (Parent[freecode] != FREE_CODE);
+		} while (freecode < HSIZE && Parent[freecode] != FREE_CODE);
+		if (freecode >= HSIZE)
+			return -1;	/* table full: corrupt stream */
 
 		Parent[freecode] = oldcode;
 		Value[freecode] = *newstr;
 		oldcode = code;
 
+		if (len > (int)(outsize - size))
+			return -1;	/* a valid stream expands to exactly outsize bytes */
 		while (len--) {
 			out[size++] = *newstr++;
 		}

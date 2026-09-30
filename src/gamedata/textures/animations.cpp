@@ -210,8 +210,8 @@ void FTextureAnimator::InitAnimated (void)
 	if (lumpnum != -1)
 	{
 		auto animatedlump = fileSystem.ReadFile (lumpnum);
-		ptrdiff_t animatedlen = fileSystem.FileLength(lumpnum);
 		auto animdefs = animatedlump.bytes();
+		const uint8_t *const animend = animdefs + animatedlump.size();
 		const uint8_t *anim_p;
 		FTextureID pic1, pic2;
 		int animtype;
@@ -220,18 +220,25 @@ void FTextureAnimator::InitAnimated (void)
 		// Init animation
 		animtype = FAnimDef::ANIM_Forward;
 
-		for (anim_p = animdefs; *anim_p != 0xFF; anim_p += 23)
+		for (anim_p = animdefs; anim_p < animend && *anim_p != 0xFF; anim_p += 23)
 		{
-			// make sure the current chunk of data is inside the lump boundaries.
-			if (anim_p + 22 >= animdefs + animatedlen)
+			// Make sure the current chunk is complete before reading its fields.
+			// A missing 0xFF terminator is invalid but must not turn a malformed
+			// PWAD into an out-of-bounds read.
+			if ((size_t)(animend - anim_p) < 23)
 			{
-				I_Error("Tried to read past end of ANIMATED lump.");
+				Printf(TEXTCOLOR_YELLOW "WARNING: truncated ANIMATED lump ignored.\n");
+				break;
 			}
+			char startName[10] = {};
+			char endName[10] = {};
+			memcpy(startName, anim_p + 1, 9);
+			memcpy(endName, anim_p + 10, 9);
 			if (*anim_p /* .istexture */ & 1)
 			{
 				// different episode ?
-				if (!(pic1 = TexMan.CheckForTexture ((const char*)(anim_p + 10) /* .startname */, ETextureType::Wall, texflags)).Exists() ||
-					!(pic2 = TexMan.CheckForTexture ((const char*)(anim_p + 1) /* .endname */, ETextureType::Wall, texflags)).Exists())
+				if (!(pic1 = TexMan.CheckForTexture(endName /* .startname */, ETextureType::Wall, texflags)).Exists() ||
+					!(pic2 = TexMan.CheckForTexture(startName /* .endname */, ETextureType::Wall, texflags)).Exists())
 					continue;		
 
 				// [RH] Bit 1 set means allow decals on walls with this texture
@@ -241,8 +248,8 @@ void FTextureAnimator::InitAnimated (void)
 			}
 			else
 			{
-				if (!(pic1 = TexMan.CheckForTexture ((const char*)(anim_p + 10) /* .startname */, ETextureType::Flat, texflags)).Exists() ||
-					!(pic2 = TexMan.CheckForTexture ((const char*)(anim_p + 1) /* .startname */, ETextureType::Flat, texflags)).Exists())
+				if (!(pic1 = TexMan.CheckForTexture(endName /* .startname */, ETextureType::Flat, texflags)).Exists() ||
+					!(pic2 = TexMan.CheckForTexture(startName /* .endname */, ETextureType::Flat, texflags)).Exists())
 					continue;
 			}
 
@@ -277,7 +284,7 @@ void FTextureAnimator::InitAnimated (void)
 				if (pic1 == pic2)
 				{
 					// This animation only has one frame. Skip it. (Doom aborted instead.)
-					Printf ("Animation %s in ANIMATED has only one frame\n", (const char*)(anim_p + 10));
+					Printf ("Animation %s in ANIMATED has only one frame\n", endName);
 					continue;
 				}
 				// [RH] Allow for backward animations as well as forward.
@@ -1203,4 +1210,3 @@ template<> FSerializer &Serialize(FSerializer &arc, const char *key, FDoorAnimat
 	}
 	return arc;
 }
-

@@ -35,6 +35,21 @@ struct BonesResult
 
 BonesResult ApplyBones();
 
+// Model vertices store a normal in GL_INT_2_10_10_10_REV form. GLES2 does
+// not accept that packed attribute type, so gles_buffers.cpp feeds its four
+// little-endian bytes as normalized unsigned values and we reconstruct the
+// signed 10-bit components here. This path is also valid on GLES3.
+vec3 DecodePackedNormal(vec4 packed)
+{
+	vec4 bytes = floor(packed * 255.0 + 0.5);
+	vec3 normal;
+	normal.x = bytes.x + 256.0 * mod(bytes.y, 4.0);
+	normal.y = floor(bytes.y / 4.0) + 64.0 * mod(bytes.z, 16.0);
+	normal.z = floor(bytes.z / 16.0) + 16.0 * mod(bytes.w, 64.0);
+	normal = mix(normal, normal - 1024.0, step(vec3(512.0), normal));
+	return max(normal / 511.0, vec3(-1.0));
+}
+
 
 void main()
 {
@@ -168,9 +183,9 @@ vec3 GetAttrNormal()
 		if ((useVertexData & 2) == 0)
 			return uVertexNormal.xyz;
 		else
-			return mix(aNormal.xyz, aNormal2.xyz, uInterpolationFactor);
+			return mix(DecodePackedNormal(aNormal), DecodePackedNormal(aNormal2), uInterpolationFactor);
 	#else
-		return mix(aNormal.xyz, aNormal2.xyz, uInterpolationFactor);
+		return mix(DecodePackedNormal(aNormal), DecodePackedNormal(aNormal2), uInterpolationFactor);
 	#endif
 }
 
@@ -183,7 +198,7 @@ void AddWeightedBone(uint boneIndex, float weight, inout vec4 position, inout ve
 		mat4 transform = bones[uBoneIndexBase + int(boneIndex)];
 		mat3 rotation = mat3(transform);
 		position += (transform * aPosition) * weight;
-		normal += (rotation * aNormal.xyz) * weight;
+		normal += (rotation * DecodePackedNormal(aNormal)) * weight;
 	}
 }
 
