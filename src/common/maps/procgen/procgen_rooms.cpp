@@ -19,9 +19,83 @@ static bool ContainsRoom(const TArray<int>& rooms, int room)
 	return false;
 }
 
+// These hashes are intentionally local to presentation planning. They never
+// touch FRandom, so adding a new footprint/material choice cannot perturb the
+// mission graph or later actor-placement draws.
+static uint32_t MixRoomPlanHash(uint32_t value)
+{
+	value ^= value >> 16;
+	value *= 0x7feb352du;
+	value ^= value >> 15;
+	value *= 0x846ca68bu;
+	value ^= value >> 16;
+	return value;
+}
+
+static uint32_t RoomPlanHash(uint32_t recipeHash, int first, int second, int salt)
+{
+	uint32_t value = recipeHash ^ (uint32_t)(first + 1) * 0x9e3779b9u;
+	value ^= (uint32_t)(second + 1) * 0x85ebca6bu;
+	value ^= (uint32_t)(salt + 1) * 0xc2b2ae35u;
+	return MixRoomPlanHash(value);
+}
+
+static int MaterialFamilyPalette(EProcGenMaterialFamily family)
+{
+	if (family <= PGMF_None) return 0;
+	// EProcGenMaterialFamily deliberately stores four variants per theme.
+	return ((int)family - 1) % 4;
+}
+
+static EProcGenRoomFootprint PickRoomFootprint(ThemeStyle theme,
+	EProcGenLandmarkArchetype landmark, bool critical, uint32_t choice)
+{
+	if (critical) return PGRF_SafeShell;
+	if (landmark == PGLA_Court || landmark == PGLA_Fortress)
+		return PGRF_CourtyardCut;
+	if (landmark == PGLA_Nave || landmark == PGLA_ShrineTerrace)
+		return PGRF_Apse;
+	if (landmark == PGLA_Gatehouse || landmark == PGLA_BridgeBasin)
+		return PGRF_TaperedBay;
+	if (landmark == PGLA_Bastion) return PGRF_SteppedCompound;
+
+	switch (theme)
+	{
+	case ThemeIndustrial:
+		return (choice & 1u) != 0u ? PGRF_TaperedBay : PGRF_SteppedCompound;
+	case ThemeHell:
+		return (choice % 3u) == 0u ? PGRF_CourtyardCut : PGRF_FracturedWedge;
+	case ThemeGothic:
+		return (choice & 1u) != 0u ? PGRF_Apse : PGRF_TaperedBay;
+	case ThemeCorrupted:
+		return (choice & 1u) != 0u ? PGRF_FracturedWedge : PGRF_SteppedCompound;
+	case ThemeTechbase:
+	default:
+		return (choice % 3u) == 0u ? PGRF_TaperedBay : PGRF_AsymmetricOctagon;
+	}
+}
+
+static int FootprintShapeFamily(EProcGenRoomFootprint footprint, uint32_t choice)
+{
+	switch (footprint)
+	{
+	case PGRF_TaperedBay:
+	case PGRF_Apse:
+		return (choice & 1u) != 0u ? 1 : 2;
+	case PGRF_SteppedCompound:
+	case PGRF_CourtyardCut:
+	case PGRF_FracturedWedge:
+		return 3;
+	default:
+		return 0;
+	}
+}
+
 void FProceduralMapGenerator::MergeRooms(int W, int H)
 {
 	Rooms.Clear();
+	const RunBlueprint& blueprint = GetRunBlueprint();
+	const ThemeStyle themeStyle = GetThemeStyle(Theme);
 	for (int y = 0; y < H; y++)
 		for (int x = 0; x < W; x++)
 			Grid[y][x].roomId = -1;
@@ -29,7 +103,9 @@ void FProceduralMapGenerator::MergeRooms(int W, int H)
 	auto IsSpecial = [&](const ProcGenCell& cell) -> bool
 	{
 		return cell.hasPlayerStart || cell.hasExit || cell.hasBoss || cell.hasKey ||
-			cell.isLocked || cell.reservedSecret;
+			cell.isLocked || cell.reservedSecret ||
+			cell.landmarkArchetype != PGLA_None || cell.verticalAnchor ||
+			cell.terrainRouteReservation;
 	};
 
 	auto Compatible = [&](const ProcGenCell& seed, const ProcGenCell& candidate) -> bool
@@ -38,13 +114,26 @@ void FProceduralMapGenerator::MergeRooms(int W, int H)
 		if (candidate.reservedSecret != seed.reservedSecret) return false;
 		if (candidate.isLocked || seed.isLocked)
 			return candidate.isLocked && seed.isLocked && candidate.lockType == seed.lockType;
+		// A required-route elevation anchor is one exact chamber-to-chamber
+		// connector, not a vague property of a merged landmark. Keep it atomic so
+		// its source cannot later absorb a key pad, a door threshold, or a hub and
+		// force the vertical plan to be discarded during coherence.
+		if (candidate.verticalAnchor || seed.verticalAnchor ||
+			candidate.terrainRouteReservation || seed.terrainRouteReservation)
+			return false;
 
 		if (IsSpecial(candidate) && !IsSpecial(seed)) return false;
 		if (candidate.hasPlayerStart != seed.hasPlayerStart && candidate.hasPlayerStart) return false;
 		if (candidate.hasExit != seed.hasExit && candidate.hasExit) return false;
 		if (candidate.hasBoss != seed.hasBoss && candidate.hasBoss) return false;
 		if (candidate.hasKey && (!seed.hasKey || candidate.keyType != seed.keyType)) return false;
-
+		// Landmark anchors own a complete, readable silhouette.  Their support
+		// cells may be absorbed, but two different authored identities must never
+		// blur into one generic mega-room merely because their grid cells touch.
+		if (candidate.landmarkArchetype != PGLA_None &&
+			seed.landmarkArchetype != PGLA_None &&
+			candidate.landmarkArchetype != seed.landmarkArchetype)
+			return false;
 		if (seed.hasKey)
 			return candidate.pathRank == seed.pathRank && candidate.isArena;
 		if (seed.hasExit || seed.hasBoss)
@@ -72,6 +161,23 @@ void FProceduralMapGenerator::MergeRooms(int W, int H)
 		const int combatGrowth = Difficulty - 1;
 		if (seed.isLocked) return 1;
 		const int landmarkGrowth = 2 + Size / 4;
+		if (seed.landmarkArchetype != PGLA_None)
+		{
+			// These are intentionally footprint targets rather than decoration
+			// quotas.  The room merger may stop early at a stage boundary, which is
+			// the compact, safe fallback for tightly packed maps.
+			switch ((EProcGenLandmarkArchetype)seed.landmarkArchetype)
+			{
+			case PGLA_Gatehouse: return 3 + combatGrowth + (RNG() % 2);
+			case PGLA_ShrineTerrace: return 4 + landmarkGrowth / 2 + (RNG() % 3);
+			case PGLA_BridgeBasin: return 4 + landmarkGrowth / 2 + (RNG() % 3);
+			case PGLA_Nave: return 6 + landmarkGrowth + (RNG() % 4);
+			case PGLA_Bastion: return 7 + landmarkGrowth + combatGrowth + (RNG() % 4);
+			case PGLA_Fortress: return 8 + landmarkGrowth + combatGrowth * 2 + (RNG() % 5);
+			case PGLA_Court: return 5 + landmarkGrowth + (RNG() % 4);
+			default: break;
+			}
+		}
 		if (seed.hasExit || seed.hasBoss)
 			return 5 + landmarkGrowth + combatGrowth * 2 + (RNG() % (3 + Size / 8));
 		if (seed.hasKey)
@@ -121,21 +227,47 @@ void FProceduralMapGenerator::MergeRooms(int W, int H)
 				const int target = TargetRoomSize(seed);
 				RoomInfo room;
 				room.id = Rooms.Size();
-				room.minI = room.maxI = x;
-				room.minJ = room.maxJ = y;
-				room.cellCount = 0;
-				room.spatialClass = target <= 1 ? 0 :
+					room.minI = room.maxI = x;
+					room.minJ = room.maxJ = y;
+					room.cellCount = 0;
+					const uint32_t footprintHash = RoomPlanHash(blueprint.RecipeHash,
+						x, y, seed.pathRank + seed.lockStage * 17);
+					const bool criticalFootprint = seed.hasPlayerStart || seed.hasKey ||
+						seed.hasExit || seed.hasBoss || seed.isLocked || seed.verticalAnchor;
+					room.footprint = PickRoomFootprint(themeStyle,
+						(EProcGenLandmarkArchetype)seed.landmarkArchetype,
+						criticalFootprint, footprintHash);
+					room.footprintVariant = (int)((footprintHash >> 5) & 3u);
+					room.contourInset = 16 + (int)((footprintHash >> 11) % 3u) * 8;
+					room.spatialClass = target <= 1 ? 0 :
 					(target <= 2 ? 1 : (target <= 6 ? 2 : 3));
 				if (target <= 1) room.shapeFamily = 0;
+				else if (seed.landmarkArchetype == PGLA_Nave ||
+					seed.landmarkArchetype == PGLA_BridgeBasin)
+					room.shapeFamily = ((seed.pathRank + seed.lockStage) & 1) ? 1 : 2;
+				else if (seed.landmarkArchetype == PGLA_Gatehouse ||
+					seed.landmarkArchetype == PGLA_ShrineTerrace)
+					room.shapeFamily = 0;
+				else if (seed.landmarkArchetype == PGLA_Court ||
+					seed.landmarkArchetype == PGLA_Bastion ||
+					seed.landmarkArchetype == PGLA_Fortress)
+					room.shapeFamily = 3;
 				else if (seed.isArena || seed.isHub || seed.hasExit || seed.hasBoss)
 					room.shapeFamily = 3;
-				else
-				{
-					const int familyRoll = RNG() % 100;
-					room.shapeFamily = familyRoll < 24 ? 0 :
-						(familyRoll < 49 ? 1 : (familyRoll < 74 ? 2 : 3));
-				}
-				Rooms.Push(room);
+					else
+					{
+						const int familyRoll = RNG() % 100;
+						room.shapeFamily = familyRoll < 24 ? 0 :
+							(familyRoll < 49 ? 1 : (familyRoll < 74 ? 2 : 3));
+					}
+					// Preserve the existing RNG draw above, then let the recipe-only
+					// footprint grammar bias the merger toward a compatible silhouette.
+					// Critical pads deliberately keep their compact safe shell.
+					if (!criticalFootprint && target > 1 &&
+						room.footprint != PGRF_AsymmetricOctagon)
+						room.shapeFamily = FootprintShapeFamily(
+							(EProcGenRoomFootprint)room.footprint, footprintHash);
+					Rooms.Push(room);
 				const int roomId = Rooms.Size() - 1;
 
 				TArray<std::pair<int, int>> cells;
@@ -264,6 +396,16 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 {
 	TArray<TArray<int>> adjacency;
 	adjacency.Resize(Rooms.Size());
+	const RunBlueprint& blueprint = GetRunBlueprint();
+	const ThemeStyle themeStyle = GetThemeStyle(Theme);
+	// Room merging can absorb optional support cells into a main-route chamber.
+	// Preserve the plan carried by the earliest actual route cell as that
+	// room's player-facing beat/card; scan order and enum ordering are not
+	// meaningful design priorities here.
+	TArray<int> primaryPlanRank;
+	TArray<int> primaryPlanIsMain;
+	primaryPlanRank.Resize(Rooms.Size());
+	primaryPlanIsMain.Resize(Rooms.Size());
 
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
@@ -295,6 +437,40 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		room.healthBonusCount = 0;
 		room.hasArmor = false;
 		room.powerups.Clear();
+		room.runBeat = PGRB_None;
+		room.encounterCard = PGEC_None;
+		room.featureMotif = PGFM_None;
+		room.featureMotifPriority = 0;
+		room.district = 0;
+		room.stageShape = PGSS_Spine;
+		room.landmarkArchetype = PGLA_None;
+		room.districtRole = PGDR_Entry;
+		room.materialFamily = PGMF_None;
+		room.footprint = PGRF_SafeShell;
+		room.footprintVariant = 0;
+		room.contourInset = 0;
+		room.footprintFallback = false;
+		room.elevationRole = PGER_Flat;
+		room.elevationTarget = 0;
+		room.optionalTerrainAnchor = false;
+		room.terrainRouteReservation = false;
+		room.verticalIntent = PGVI_Flat;
+		room.verticalRise = 0;
+		room.verticalAnchor = false;
+		room.manualInteraction = PGMI_None;
+		room.threatBudget = 0;
+		room.recoveryBudget = 0;
+		room.optionalArmory = false;
+		room.arsenalTrack = (int)GetArsenalTrackKind();
+		room.finaleCard = (int)GetFinaleCardKind();
+		room.rewardPlan = PGRW_None;
+		room.cardFeasible = false;
+		room.cardGeometry = "";
+		room.cardCapacity = 0;
+		room.cardStaticEnemies = 0;
+		room.cardManualActions = 0;
+		primaryPlanRank[ri] = 999999;
+		primaryPlanIsMain[ri] = 0;
 	}
 
 	int startRoom = -1;
@@ -313,6 +489,8 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 			room.isArena = room.isArena || cell.isArena;
 			room.isHub = room.isHub || cell.isHub;
 			room.reservedSecret = room.reservedSecret || cell.reservedSecret;
+			room.terrainRouteReservation = room.terrainRouteReservation ||
+				cell.terrainRouteReservation;
 			room.branchDepth = std::max(room.branchDepth, cell.branchDepth);
 			if (cell.pathRank >= 0) room.progressionRank = std::min(room.progressionRank, cell.pathRank);
 			if (cell.hasKey)
@@ -324,7 +502,63 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 			{
 				room.isLocked = true;
 				room.lockType = cell.lockType;
+				room.manualInteraction = PGMI_KeyedDoor;
 			}
+			const int planRank = cell.pathRank >= 0 ? cell.pathRank : 999999;
+			const int planIsMain = cell.onMainPath ? 1 : 0;
+			const int roomId = cell.roomId;
+			if ((!primaryPlanIsMain[roomId] && planIsMain) ||
+				(primaryPlanIsMain[roomId] == planIsMain &&
+				 planRank < primaryPlanRank[roomId]))
+			{
+				primaryPlanRank[roomId] = planRank;
+				primaryPlanIsMain[roomId] = planIsMain;
+				room.runBeat = cell.runBeat;
+				room.encounterCard = cell.encounterCard;
+					room.stageShape = cell.stageShape;
+					room.landmarkArchetype = cell.landmarkArchetype;
+					room.districtRole = cell.districtRole;
+					room.materialFamily = cell.materialFamily;
+					room.elevationRole = cell.elevationRole;
+					room.elevationTarget = cell.elevationTarget;
+					room.verticalIntent = cell.verticalIntent;
+				room.verticalRise = cell.verticalRise;
+				// The flat successor sentinel protects the other endpoint of a
+				// planned stair during merging, but only the signed source is a
+				// room-facing vertical anchor or manifest beat.
+				room.verticalAnchor = cell.verticalAnchor && cell.verticalRise != 0;
+			}
+			// A supporting cell can carry a unique landmark anchor after a room
+			// merger.  Prefer that authored form over an ordinary main-path cell;
+			// it is the one case where semantic identity should outrank rank.
+			if (cell.landmarkArchetype != PGLA_None &&
+				(room.landmarkArchetype == PGLA_None || cell.verticalAnchor))
+			{
+				room.landmarkArchetype = cell.landmarkArchetype;
+				room.districtRole = cell.districtRole;
+			}
+			if (cell.verticalAnchor && cell.verticalRise != 0 &&
+				!room.hasPlayerStart && !room.hasKey &&
+				!room.hasExit && !room.isLocked)
+			{
+				room.verticalIntent = cell.verticalIntent;
+				room.verticalRise = cell.verticalRise;
+				room.verticalAnchor = true;
+			}
+			if (cell.featureMotif != PGFM_None &&
+				(cell.featureMotifPriority >= room.featureMotifPriority ||
+				 room.featureMotif == PGFM_None))
+			{
+				room.featureMotif = cell.featureMotif;
+				room.featureMotifPriority = cell.featureMotifPriority;
+			}
+			room.district = std::max(room.district, cell.district);
+			room.threatBudget = std::max(room.threatBudget, cell.threatBudget);
+			room.recoveryBudget = std::max(room.recoveryBudget, cell.recoveryBudget);
+			room.optionalArmory = room.optionalArmory || cell.optionalArmory;
+			room.arsenalTrack = cell.arsenalTrack;
+			room.finaleCard = cell.finaleCard;
+			room.rewardPlan = std::max(room.rewardPlan, cell.rewardPlan);
 			if (cell.hasPlayerStart) startRoom = cell.roomId;
 
 			for (int d = 0; d < 4; d++)
@@ -338,6 +572,79 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 					adjacency[cell.roomId].Push(other);
 			}
 		}
+	}
+
+	// A generated room can span supporting cells around a landmark.  Those
+	// cells legitimately carry their own recovery or optional plans, but they
+	// must never obscure the player-facing identity of the room that owns a
+	// start, required key, or exit.  Restore these semantic anchors after the
+	// cell aggregation rather than relying on enum order or merge scan order.
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+	{
+		RoomInfo& room = Rooms[ri];
+		if (room.hasPlayerStart)
+		{
+			room.runBeat = PGRB_Opening;
+			room.encounterCard = PGEC_Breather;
+			room.rewardPlan = PGRW_Emergency;
+		}
+		else if (room.hasExit)
+		{
+			room.runBeat = PGRB_Finale;
+			room.encounterCard = PGEC_SetPiece;
+			room.rewardPlan = PGRW_FinaleReserve;
+		}
+		else if (room.hasKey)
+		{
+			room.runBeat = PGRB_KeyObjective;
+			room.encounterCard = PGEC_SetPiece;
+			room.rewardPlan = PGRW_KeyReserve;
+		}
+		// Mandatory pads, keyed thresholds, and the exit are deliberately not
+		// vertical anchors.  Their landmark form remains visible, but any planned
+		// rise is realized on a neighboring ordinary route connector instead.
+		if (room.hasPlayerStart || room.hasKey || room.hasExit || room.isLocked)
+		{
+			room.verticalIntent = PGVI_Flat;
+			room.verticalRise = 0;
+			room.verticalAnchor = false;
+		}
+		if (room.hasExit || room.hasBoss)
+		{
+			room.landmarkArchetype = PGLA_Fortress;
+			room.districtRole = PGDR_Finale;
+		}
+		else if (room.isLocked)
+		{
+			room.landmarkArchetype = PGLA_Gatehouse;
+			room.districtRole = PGDR_Defense;
+		}
+		else if (room.hasKey && room.landmarkArchetype == PGLA_None)
+		{
+			room.landmarkArchetype = PGLA_ShrineTerrace;
+			room.districtRole = PGDR_Sanctum;
+		}
+		const int stage = clamp(room.lockStage, 0, RunBlueprint::MaxStages - 1);
+		if (room.materialFamily == PGMF_None)
+			room.materialFamily = blueprint.StageMaterialFamilies[stage];
+		const uint32_t footprintHash = RoomPlanHash(blueprint.RecipeHash,
+			room.minI * 257 + room.maxI, room.minJ * 257 + room.maxJ,
+			room.id * 31 + room.lockStage * 7 + room.cellCount);
+		const bool criticalFootprint = room.hasPlayerStart || room.hasKey ||
+			room.hasExit || room.hasBoss || room.isLocked || room.verticalAnchor;
+		room.footprint = PickRoomFootprint(themeStyle,
+			(EProcGenLandmarkArchetype)room.landmarkArchetype, criticalFootprint,
+			footprintHash);
+		if (room.cellCount <= 1 && (room.footprint == PGRF_SteppedCompound ||
+			room.footprint == PGRF_CourtyardCut || room.footprint == PGRF_FracturedWedge))
+			room.footprint = PGRF_AsymmetricOctagon;
+		room.footprintVariant = (int)((footprintHash >> 4) & 3u);
+		room.contourInset = 16 + (int)((footprintHash >> 12) % 4u) * 8;
+		room.footprintFallback = false;
+		if (!criticalFootprint && room.cellCount > 1 &&
+			room.footprint != PGRF_AsymmetricOctagon)
+			room.shapeFamily = FootprintShapeFamily(
+				(EProcGenRoomFootprint)room.footprint, footprintHash);
 	}
 
 	if (startRoom < 0 && Rooms.Size() > 0) startRoom = 0;
@@ -502,34 +809,29 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		{ 144.0, 168.0 }, { 168.0, 144.0 }, { 160.0, 160.0 }, { 176.0, 176.0 }
 	};
 	static const double CornerProfiles[] = { 20.0, 28.0, 36.0, 44.0, 52.0 };
-	// Broad terraces give the route a readable vertical silhouette. Every value
-	// is a multiple of 16 so BuildUDMF can bridge neighboring rooms with exact
-	// 8-unit stair sectors instead of relying on Doom's implicit step limit.
-	static const int GentleFloorCadence[] = { 0, 16, 32, 48, 64, 48, 32, 16 };
-	static const int VariedFloorCadence[] = { 0, 32, 64, 96, 64, 32, 0, -32 };
-	static const int DramaticFloorCadence[] = { 0, 48, 96, 144, 96, 48, 0, -48 };
-	const ThemeStyle themeStyle = GetThemeStyle(Theme);
-	TArray<int> roomClearHeights;
+		TArray<int> roomClearHeights;
 	roomClearHeights.Resize(Rooms.Size());
 
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
 		RoomInfo& room = Rooms[ri];
 		const int phase = clamp(room.distFromStart * 4 / (maxDistance + 1), 0, 3);
-		int palette = phase;
-		if (!room.onMainPath && !room.hasKey && !room.hasExit)
-			palette = clamp(phase + (room.branchDepth >= 2 ? 1 : 0), 0, 3);
-
 		int styleHash = abs(room.id * 37 + room.minI * 17 + room.maxJ * 29 +
 			room.cellCount * 13 + room.progressionRank * 7 + room.branchDepth * 19);
 		room.visualVariant = styleHash % countof(HalfProfiles);
-		// Keep neighboring rooms in broad material clusters. Wall changes occur at
-		// lock stages, progression zones, or strong room roles instead of on every
-		// random edge; floor and ceiling variation can remain more frequent because
-		// their boundary is an explicit portal threshold.
+		// A district's recipe-planned material family controls its shared wall
+		// treatment. Optional deep branches may shift one related subpalette, but
+		// ordinary neighboring rooms no longer march through a distance-only cycle.
+		const EProcGenMaterialFamily materialFamily =
+			(EProcGenMaterialFamily)room.materialFamily;
+		const int materialPalette = MaterialFamilyPalette(materialFamily);
 		bool infernalSurfaces = themeStyle == ThemeHell || themeStyle == ThemeGothic ||
-			(themeStyle == ThemeCorrupted && phase >= 2);
-		int surfacePalette = palette;
+			(themeStyle == ThemeCorrupted &&
+				(materialFamily == PGMF_CorruptedBreachTerrace ||
+				 materialFamily == PGMF_CorruptedHellCore || phase >= 2));
+		int surfacePalette = materialPalette;
+		if (!room.onMainPath && !room.hasKey && !room.hasExit && room.branchDepth >= 2)
+			surfacePalette = (surfacePalette + 1) % 4;
 		int familyShift = 0;
 		if (themeStyle == ThemeIndustrial)
 		{
@@ -543,10 +845,18 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		{
 			familyShift = infernalSurfaces ? 1 : 3;
 		}
-		int textureVariant = (surfacePalette * 2 + room.lockStage + familyShift) % 6;
+		int textureVariant = (materialPalette * 2 + room.lockStage + familyShift) % 6;
 		if (room.branchDepth >= 2) textureVariant = (textureVariant + 1) % 6;
 		if (room.isArena || room.isHub || room.hasKey || room.hasExit)
 			textureVariant = (textureVariant + 2) % 6;
+		// The contour grammar gives a bounded local variation without making a
+		// district read as a random texture lottery.
+		if (room.footprint == PGRF_Apse || room.footprint == PGRF_CourtyardCut)
+			textureVariant = (textureVariant + 1) % 6;
+		else if (room.footprint == PGRF_FracturedWedge)
+			textureVariant = (textureVariant + 2) % 6;
+		if (room.featureMotif == PGFM_ShrineSecrets)
+			textureVariant = (textureVariant + 1) % 6;
 		const int floorVariant = (textureVariant + room.cellCount + styleHash / 11) % 6;
 		const int ceilingVariant = (textureVariant + 2 + styleHash / 17) % 6;
 		const char* (*wallZones)[6] = infernalSurfaces ? HellWallZones : TechWallZones;
@@ -666,6 +976,52 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 			if (room.visualVariant & 1) room.halfWidth = std::max(104.0, room.halfWidth - 16.0);
 			else room.halfHeight = std::max(104.0, room.halfHeight - 16.0);
 		}
+		// The footprint controls proportion as well as the contour that the UDMF
+		// pass will emit. This keeps a tapered bay or apse from being merely an
+		// octagon with a different texture family.
+		switch ((EProcGenRoomFootprint)room.footprint)
+		{
+		case PGRF_TaperedBay:
+			if (room.footprintVariant & 1)
+			{
+				room.halfWidth = std::max(160.0, room.halfWidth);
+				room.halfHeight = std::min(136.0, room.halfHeight);
+			}
+			else
+			{
+				room.halfWidth = std::min(136.0, room.halfWidth);
+				room.halfHeight = std::max(160.0, room.halfHeight);
+			}
+			break;
+		case PGRF_Apse:
+			if (room.footprintVariant & 1)
+				room.halfWidth = std::max(168.0, room.halfWidth);
+			else
+				room.halfHeight = std::max(168.0, room.halfHeight);
+			break;
+		case PGRF_SteppedCompound:
+			room.halfWidth = std::max(152.0, room.halfWidth);
+			room.halfHeight = std::max(152.0, room.halfHeight);
+			break;
+		case PGRF_CourtyardCut:
+			room.halfWidth = std::max(160.0, room.halfWidth);
+			room.halfHeight = std::max(160.0, room.halfHeight);
+			break;
+		case PGRF_FracturedWedge:
+			if (room.footprintVariant & 1)
+			{
+				room.halfWidth = std::max(156.0, room.halfWidth);
+				room.halfHeight = std::min(144.0, room.halfHeight);
+			}
+			else
+			{
+				room.halfWidth = std::min(144.0, room.halfWidth);
+				room.halfHeight = std::max(156.0, room.halfHeight);
+			}
+			break;
+		default:
+			break;
+		}
 		if (room.isArena || room.hasExit)
 			room.halfWidth = room.halfHeight = 184.0;
 		else if (room.isHub || room.hasKey)
@@ -688,6 +1044,8 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		room.halfWidth = std::min(room.halfWidth, 168.0);
 		room.halfHeight = std::min(room.halfHeight, 168.0);
 		room.cornerCut = CornerProfiles[(styleHash / 5) % countof(CornerProfiles)];
+		if (room.footprint != PGRF_SafeShell)
+			room.cornerCut = std::max(room.cornerCut, (double)room.contourInset);
 		if (Detail == 0) room.cornerCut = std::min(room.cornerCut, 28.0);
 		else if (Detail == 2) room.cornerCut += 8.0;
 		if (themeStyle == ThemeTechbase) room.cornerCut = std::min(room.cornerCut, 36.0);
@@ -702,25 +1060,10 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		room.cornerCut = std::min(room.cornerCut,
 			std::max(0.0, std::min(room.halfWidth, room.halfHeight) - 56.0));
 
-		const int* floorCadence = Verticality == 0 ? GentleFloorCadence :
-			(Verticality == 2 ? DramaticFloorCadence : VariedFloorCadence);
-		const int elevationPhase = room.distFromStart % countof(VariedFloorCadence);
-		room.floorZ = floorCadence[elevationPhase];
-		if (!room.onMainPath)
-		{
-			const int baseBranchRise = Verticality == 0 ? 16 : (Verticality == 2 ? 48 : 32);
-			const int branchRise = room.branchDepth >= 2 ? baseBranchRise : 16;
-			room.floorZ += ((styleHash / 23) & 1) ? branchRise : -branchRise;
-		}
-		if (themeStyle == ThemeHell) room.floorZ += phase >= 2 ? 16 : 0;
-		else if (themeStyle == ThemeGothic && phase >= 1) room.floorZ += 16;
-		else if (themeStyle == ThemeIndustrial && !room.onMainPath)
-			room.floorZ += (styleHash & 1) ? 16 : -16;
-		else if (themeStyle == ThemeCorrupted && phase >= 2)
-			room.floorZ += (phase - 1) * 16;
-		const double minFloor = Verticality == 0 ? -32.0 : (Verticality == 2 ? -96.0 : -64.0);
-		const double maxFloor = Verticality == 0 ? 96.0 : (Verticality == 2 ? 176.0 : 128.0);
-		room.floorZ = clamp(room.floorZ, minFloor, maxFloor);
+		// The actual height is assigned by the graph terrain field after every
+		// room has a final role and adjacency. Starting from zero here prevents a
+		// distance-modulo cadence from leaking back into a constrained fallback.
+		room.floorZ = 0;
 
 		int clearHeight = 160 + (room.visualVariant % 4) * 16;
 		if (room.spatialClass == 0) clearHeight = 128 + (room.visualVariant % 3) * 16;
@@ -754,6 +1097,8 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 			room.light += (room.isArena || room.hasKey || room.hasExit) ? 8 : -16;
 		else if (themeStyle == ThemeCorrupted) room.light -= phase * 8;
 		room.light = clamp((room.light / 8) * 8, 160, 208);
+		if (room.district == 1) room.light = std::min(208, room.light + 8);
+		else if (room.district >= 2) room.light = std::max(160, room.light - 8);
 		static const int TechLightColors[] = { 0xe8f2ff, 0xdcecff, 0xd4e6ff, 0xc8dcf4 };
 		static const int HellLightColors[] = { 0xffddc8, 0xffc4a8, 0xffa080, 0xff8068 };
 		static const int IndustrialLightColors[] = { 0xf0ead8, 0xe6dcc4, 0xdcd0b4, 0xd4c6a8 };
@@ -764,7 +1109,7 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		else if (themeStyle == ThemeIndustrial) lightColors = IndustrialLightColors;
 		else if (themeStyle == ThemeGothic) lightColors = GothicLightColors;
 		else if (themeStyle == ThemeCorrupted) lightColors = CorruptedLightColors;
-		room.lightColor = lightColors[phase];
+		room.lightColor = lightColors[(phase + materialPalette) % countof(TechLightColors)];
 		room.fadeColor = themeStyle == ThemeHell ? 0x100000 :
 			(themeStyle == ThemeGothic ? 0x080810 :
 			(themeStyle == ThemeIndustrial ? 0x080704 :
@@ -799,28 +1144,75 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		}
 		else
 		{
-			// Progression raises pressure in broad steps. Classic difficulty no
-			// longer adds a blanket monster to every main-route room, while the
-			// explicit arena budgets below still scale predictably.
+			// The old monotonic phase formula is now a safety baseline. Blueprint
+			// cards add a readable combat question while the tier/footprint caps keep
+			// the result fair for stock IWAD monsters.
 			int pressure = (Difficulty - 1) / 2 + (Difficulty >= 4 ? 1 : 0);
 			const int landmarkPressure = Difficulty / 2 + (Difficulty >= 5 ? 1 : 0);
 			if (Difficulty == 2 && ((room.id + phase) % 4) == 0) pressure++;
 			if (phase >= 2) pressure++;
 			if (Difficulty >= 5 && room.onMainPath && phase > 0) pressure++;
 			if (room.branchDepth >= 2) pressure--;
-			room.enemyCount = clamp(pressure + (int)(RNG() % 2), 1, 3);
-			if (room.isDeadEnd && !room.hasKey) room.enemyCount = std::min(room.enemyCount, 1 + Difficulty / 2);
-			if (room.isHub) room.enemyCount = clamp(1 + landmarkPressure + phase / 2, 2, 4);
-			if (room.isArena) room.enemyCount = clamp(1 + landmarkPressure + phase / 2 + room.cellCount / 6, 2, 5);
-			if (room.hasKey) room.enemyCount = clamp(1 + landmarkPressure + phase / 2 + room.cellCount / 6, 2, 5);
-			if (room.isLocked) room.enemyCount = clamp(1 + Difficulty / 3 +
-				(Difficulty >= 5 ? 1 : 0) + phase / 2, 1, 4);
-			if (room.hasExit) room.enemyCount = clamp(1 + landmarkPressure + Size / 6 + room.cellCount / 8, 2, 5);
-			if (room.hasBoss) room.enemyCount = std::min(room.enemyCount, std::max(1, Difficulty - 2));
+			pressure += room.threatBudget + blueprint.ThreatCurve;
+
+			int cardFloor = 1;
+			int cardBonus = 0;
+			int cardCap = 3;
+			switch ((EProcGenEncounterCard)room.encounterCard)
+			{
+			case PGEC_Breather:
+				cardFloor = 0; cardCap = 0; break;
+			case PGEC_Skirmish:
+				cardFloor = 1; cardCap = 2; break;
+			case PGEC_Crossfire:
+				cardFloor = 2; cardBonus = 1; cardCap = 4; break;
+			case PGEC_Pincer:
+				cardFloor = 2; cardBonus = 1; cardCap = 4; break;
+			case PGEC_Ambush:
+				cardFloor = 2; cardCap = 4; break;
+			case PGEC_CacheChallenge:
+				cardFloor = 1; cardBonus = 1; cardCap = 3; break;
+			case PGEC_HoldingLine:
+				cardFloor = 3; cardBonus = 1; cardCap = 4; break;
+			case PGEC_SetPiece:
+				cardFloor = 3; cardBonus = 2; cardCap = 5; break;
+			default:
+				break;
+			}
+			if (room.hasKey && cardFloor == 0)
+			{
+				// A mandatory key shrine still needs a small authored confrontation.
+				cardFloor = 2;
+				cardCap = 4;
+				room.encounterCard = PGEC_Skirmish;
+			}
+			room.enemyCount = cardFloor == 0 ? 0 :
+				clamp(pressure + cardBonus + (int)(RNG() % 2), cardFloor, cardCap);
+			if (room.isDeadEnd && !room.hasKey)
+				room.enemyCount = std::min(room.enemyCount, 1 + Difficulty / 2 +
+					(room.encounterCard == PGEC_CacheChallenge ? 1 : 0));
+			if (room.isHub) room.enemyCount = clamp(std::max(cardFloor,
+				1 + landmarkPressure + phase / 2 + cardBonus), cardFloor, std::max(cardCap, 4));
+			if (room.isArena) room.enemyCount = clamp(std::max(cardFloor,
+				1 + landmarkPressure + phase / 2 + room.cellCount / 6 + cardBonus),
+				cardFloor, std::max(cardCap, 5));
+			if (room.hasKey) room.enemyCount = clamp(std::max(cardFloor,
+				1 + landmarkPressure + phase / 2 + room.cellCount / 6 + cardBonus),
+				cardFloor, std::max(cardCap, 5));
+			if (room.isLocked) room.enemyCount = clamp(std::max(cardFloor,
+				1 + Difficulty / 3 + (Difficulty >= 5 ? 1 : 0) + phase / 2),
+				cardFloor, std::max(cardCap, 4));
+			if (room.hasExit) room.enemyCount = clamp(std::max(cardFloor,
+				1 + landmarkPressure + Size / 6 + room.cellCount / 8 + cardBonus),
+				cardFloor, 5);
+			if (room.hasBoss)
+				room.enemyCount = std::min(room.enemyCount, std::max(1, Difficulty - 2) +
+					(room.finaleCard == PGFC_Siege ? 1 : 0));
 			if (room.distFromStart == 1 && !room.isArena && !room.hasKey && !room.isLocked)
 				room.enemyCount = std::min(room.enemyCount, 2);
 			room.monsterTier = clamp(1 + phase + (Difficulty >= 4 ? 1 : 0) +
-				(room.hasBoss && Difficulty >= 5 ? 1 : 0), 1, 5);
+				(room.hasBoss && Difficulty >= 5 ? 1 : 0) +
+				(room.encounterCard == PGEC_HoldingLine ? 1 : 0), 1, 5);
 			if (room.cellCount <= 1) room.monsterTier = std::min(room.monsterTier, 2);
 			else if (room.cellCount <= 2) room.monsterTier = std::min(room.monsterTier, 3);
 		}
@@ -829,15 +1221,266 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		// selected rewards, deep branches, and transitions request normal doors.
 		room.hasDoor = false;
 		if (room.hasKey) room.hasDoor = true;
+		else if (room.encounterCard == PGEC_Pincer || room.encounterCard == PGEC_Ambush)
+			room.hasDoor = true;
 		else if (room.isDeadEnd && room.branchDepth >= 2) room.hasDoor = (RNG() % 100) < 55;
 		else if (!room.onMainPath && room.branchDepth >= 2) room.hasDoor = (RNG() % 100) < 25;
 		else if (room.onMainPath && phase >= 2 && !room.isHub && !room.isArena)
 			room.hasDoor = (RNG() % 100) < 18;
+		// Keep normal-door rolls in the shared stream so an added terrain
+		// reservation does not perturb later actor/reward placement. The route is
+		// emitted open afterwards, leaving every reserved edge available to become
+		// a real stair terrace rather than a door-and-ledge threshold.
+		if (room.terrainRouteReservation) room.hasDoor = false;
 	}
 
-	// A real door cannot also serve as a staircase. Collapse only the components
-	// that require a door (start staging, keyed boundaries, and key shrines),
-	// leaving ordinary route edges free to become visible height transitions.
+	// Seed floors from a recipe-planned terrain field over the realized room
+	// graph. This deliberately replaces the former `distance % cadence` wave:
+	// a dramatic map has one readable highland or basin, while branches acquire
+	// locally varied terraces from an already connected parent. The later
+	// component projection is still the safety authority for every <=64 step.
+	auto QuantizeToEight = [](int value) -> int
+	{
+		return value >= 0 ? ((value + 4) / 8) * 8 : ((value - 4) / 8) * 8;
+	};
+	const int terrainLimit = Verticality == 0 ? 96 : (Verticality == 1 ? 160 : 320);
+	const int branchStep = Verticality == 0 ? 16 : (Verticality == 1 ? 32 : 48);
+	int maxMainRank = 1;
+	int terrainPeakRank = -1;
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+	{
+		const RoomInfo& room = Rooms[ri];
+		if (!room.onMainPath) continue;
+		maxMainRank = std::max(maxMainRank, std::max(0, room.progressionRank));
+		if ((room.elevationRole == PGER_Highland || room.elevationRole == PGER_Basin) &&
+			terrainPeakRank < 0)
+			terrainPeakRank = std::max(0, room.progressionRank);
+	}
+	if (terrainPeakRank < 0)
+		terrainPeakRank = clamp(maxMainRank / 2, 1, maxMainRank);
+
+	TArray<bool> elevationAssigned;
+	elevationAssigned.Resize(Rooms.Size());
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+	{
+		RoomInfo& room = Rooms[ri];
+		const bool criticalTerrace = room.hasPlayerStart || room.hasKey || room.hasExit ||
+			room.hasBoss || room.isLocked;
+		if (!room.onMainPath && !criticalTerrace)
+		{
+			elevationAssigned[ri] = false;
+			continue;
+		}
+		int target = 0;
+		if (!criticalTerrace && blueprint.MainRouteElevationTarget != 0)
+		{
+			const int rank = clamp(room.progressionRank, 0, maxMainRank);
+			if (rank <= terrainPeakRank)
+				target = blueprint.MainRouteElevationTarget * rank /
+					std::max(1, terrainPeakRank);
+			else
+				target = blueprint.MainRouteElevationTarget * (maxMainRank - rank) /
+					std::max(1, maxMainRank - terrainPeakRank);
+		}
+		room.elevationTarget = clamp(QuantizeToEight(target), -terrainLimit, terrainLimit);
+		room.floorZ = room.elevationTarget;
+		if (criticalTerrace)
+			room.elevationRole = PGER_Flat;
+		else if (abs(room.elevationTarget) >= 96)
+			room.elevationRole = room.elevationTarget > 0 ? PGER_Highland : PGER_Basin;
+		else if (room.elevationTarget != 0)
+			room.elevationRole = PGER_Terrace;
+		elevationAssigned[ri] = true;
+	}
+
+	// Choose one deep, reachable optional district as the opposite dramatic
+	// horizon. It remains an intention, not a failure condition: if its graph
+	// path is too short, the safety projection below trims it to legal stairs.
+	int optionalExtremeRoom = -1;
+	if (blueprint.OptionalElevationTarget != 0)
+	{
+		uint32_t optionalScore = UINT32_MAX;
+		const int requiredDistance = std::max(3,
+			abs(blueprint.OptionalElevationTarget) / std::max(16, branchStep));
+		for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+		{
+			const RoomInfo& room = Rooms[ri];
+			if (room.onMainPath || room.hasPlayerStart || room.hasKey || room.hasExit ||
+				room.hasBoss || room.isLocked || room.branchDepth < 2 ||
+				room.distFromStart < requiredDistance)
+				continue;
+			const uint32_t score = RoomPlanHash(blueprint.RecipeHash, room.id,
+				room.progressionRank, room.branchDepth + room.lockStage * 13);
+			if (score < optionalScore)
+			{
+				optionalScore = score;
+				optionalExtremeRoom = (int)ri;
+			}
+		}
+	}
+
+	for (int pass = 0; pass < (int)Rooms.Size(); ++pass)
+	{
+		bool changed = false;
+		for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+		{
+			if (elevationAssigned[ri]) continue;
+			RoomInfo& room = Rooms[ri];
+			int parent = -1;
+			for (unsigned int ai = 0; ai < adjacency[ri].Size(); ++ai)
+			{
+				const int other = adjacency[ri][ai];
+				if (!elevationAssigned[other]) continue;
+				if (parent < 0 || Rooms[other].distFromStart < Rooms[parent].distFromStart ||
+					(Rooms[other].distFromStart == Rooms[parent].distFromStart && other < parent))
+					parent = other;
+			}
+			if (parent < 0) continue;
+			const uint32_t hash = RoomPlanHash(blueprint.RecipeHash, room.id, parent,
+				room.branchDepth * 19 + room.lockStage);
+			const int direction = (hash & 1u) != 0u ? 1 : -1;
+			int delta = direction * (room.branchDepth >= 2 ? branchStep : 16);
+			if (room.featureMotif == PGFM_VerticalPressure ||
+				room.landmarkArchetype == PGLA_BridgeBasin)
+				delta += direction * 16;
+			room.elevationTarget = clamp(QuantizeToEight(
+				Rooms[parent].elevationTarget + delta), -terrainLimit, terrainLimit);
+			room.floorZ = room.elevationTarget;
+			room.elevationRole = room.elevationTarget >= 64 ? PGER_Highland :
+				(room.elevationTarget <= -64 ? PGER_Basin : PGER_Terrace);
+			elevationAssigned[ri] = true;
+			changed = true;
+		}
+		if (!changed) break;
+	}
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+	{
+		if (elevationAssigned[ri]) continue;
+		Rooms[ri].elevationTarget = 0;
+		Rooms[ri].floorZ = 0;
+		Rooms[ri].elevationRole = PGER_Flat;
+	}
+	if (optionalExtremeRoom >= 0)
+	{
+		RoomInfo& optional = Rooms[optionalExtremeRoom];
+		optional.elevationTarget = clamp(blueprint.OptionalElevationTarget,
+			-terrainLimit, terrainLimit);
+		optional.floorZ = optional.elevationTarget;
+		optional.elevationRole = optional.elevationTarget > 0 ?
+			PGER_Highland : PGER_Basin;
+	}
+
+	// Bind each cell-planned elevation anchor to the following required-route
+	// room. Room merging may have changed IDs, so resolve this against the room
+	// graph rather than assuming an anchor's next grid cell survived unchanged.
+	// The core planner never nominates a pad, key, gate, or exit; if composition
+	// cannot retain that promise we drop the beat rather than putting stairs in a
+	// door threshold.
+	struct VerticalRouteConstraint
+	{
+		int from = -1;
+		int to = -1;
+		int rise = 0;
+		// Keep the actual cell edge that earned this beat.  Room composition and
+		// level-terrace projection are allowed to reject the relation later; in
+		// that case the stale stair-chain marker must be removed rather than
+		// leaving a zero-rise connector advertised as a dogleg.
+		int sourceX = -1;
+		int sourceY = -1;
+		int direction = -1;
+		int stage = -1;
+		EProcGenVerticalIntent intent = PGVI_Flat;
+	};
+	TArray<VerticalRouteConstraint> verticalConstraints;
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+	{
+		RoomInfo& from = Rooms[ri];
+		if (!from.verticalAnchor || !from.onMainPath || from.verticalRise == 0 ||
+			from.hasPlayerStart || from.hasKey || from.hasExit || from.isLocked)
+			continue;
+		int nextRoom = -1;
+		int nextX = -1;
+		int nextY = -1;
+		int nextDirection = -1;
+		// The anchor cell and its next main-path cell are both protected from
+		// merging, but the *next* cell can legitimately belong to a composed room
+		// whose earliest progression rank is earlier than this edge. Looking only
+		// at RoomInfo::progressionRank then drops a perfectly valid planned dogleg
+		// after room composition. Rebind through the original consecutive cell pair
+		// first; its route rank and stage are the actual contract the core planner
+		// proved before merging.
+		for (int y = 0; y < H; ++y)
+		{
+			for (int x = 0; x < W; ++x)
+			{
+				const ProcGenCell& anchor = Grid[y][x];
+				if (!anchor.present || anchor.roomId != (int)ri ||
+					!anchor.verticalAnchor || !anchor.onMainPath)
+					continue;
+				for (int direction = 0; direction < 4; ++direction)
+				{
+					if (!anchor.conn[direction]) continue;
+					const int nx = x + DX[direction];
+					const int ny = y + DY[direction];
+					if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+					const ProcGenCell& next = Grid[ny][nx];
+					if (!next.present || !next.onMainPath ||
+						next.pathRank != anchor.pathRank + 1 ||
+						next.lockStage != anchor.lockStage ||
+						next.roomId < 0 || next.roomId >= (int)Rooms.Size())
+						continue;
+					RoomInfo& to = Rooms[next.roomId];
+					if (to.hasPlayerStart || to.hasKey || to.hasExit || to.isLocked)
+						continue;
+					if (nextRoom < 0 || next.roomId < nextRoom ||
+						(next.roomId == nextRoom &&
+							(y < nextY || (y == nextY &&
+								(x < nextX || (x == nextX && direction < nextDirection))))))
+					{
+						nextRoom = next.roomId;
+						nextX = x;
+						nextY = y;
+						nextDirection = direction;
+					}
+				}
+			}
+		}
+		// Retain the graph-level search as a compact fallback for any unusual
+		// composed layout whose original cell relation could not be retained.
+		if (nextRoom < 0)
+		{
+			for (unsigned int ai = 0; ai < adjacency[ri].Size(); ++ai)
+			{
+				const int otherId = adjacency[ri][ai];
+				RoomInfo& to = Rooms[otherId];
+				if (!to.onMainPath || to.lockStage != from.lockStage ||
+					to.progressionRank != from.progressionRank + 1 ||
+					to.hasPlayerStart || to.hasKey || to.hasExit || to.isLocked)
+					continue;
+				if (nextRoom < 0 || otherId < nextRoom) nextRoom = otherId;
+			}
+		}
+		if (nextRoom < 0)
+		{
+			from.verticalAnchor = false;
+			from.verticalIntent = PGVI_Flat;
+			from.verticalRise = 0;
+			continue;
+		}
+		RoomInfo& to = Rooms[nextRoom];
+		// A normal door is just as unsuitable as a keyed door for a mandatory
+		// elevation transition. Keep both rooms open so BuildUDMF emits a wide
+		// eight-unit stair connector instead of a door-and-ledge combination.
+		from.hasDoor = false;
+		to.hasDoor = false;
+		verticalConstraints.Push({ (int)ri, nextRoom,
+			clamp(from.verticalRise, -64, 64), nextX, nextY, nextDirection,
+			from.lockStage, (EProcGenVerticalIntent)from.verticalIntent });
+	}
+
+	// A real door cannot also serve as a staircase. Collapse components that
+	// require a door (including ordinary planned doors), leaving only the
+	// explicitly selected route edges free to become visible height transitions.
 	TArray<int> floorParent;
 	floorParent.Resize(Rooms.Size());
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++) floorParent[ri] = ri;
@@ -866,12 +1509,243 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 			const int other = adjacency[ri][ai];
 			const RoomInfo& first = Rooms[ri];
 			const RoomInfo& second = Rooms[other];
-			const bool mandatoryDoor = first.lockStage != second.lockStage ||
+			// Planned vertical endpoints cleared their normal-door request above.
+			// Every remaining door or critical pad now becomes one level terrace;
+			// this makes the opening contract explicit instead of relying on the
+			// emitter to quietly discard an impossible door-and-ledge combination.
+			const bool criticalTerrace = first.lockStage != second.lockStage ||
 				first.hasPlayerStart || second.hasPlayerStart ||
-				first.hasKey || second.hasKey;
-			if (mandatoryDoor) JoinFloorComponents(ri, other);
+				first.hasKey || second.hasKey || first.hasExit || second.hasExit ||
+				first.hasBoss || second.hasBoss || first.isLocked || second.isLocked;
+			const bool normalDoor = (first.hasDoor || second.hasDoor) &&
+				!first.terrainRouteReservation && !second.terrainRouteReservation;
+			if (criticalTerrace || normalDoor) JoinFloorComponents(ri, other);
 		}
 	}
+
+	// A planned stair can stay open itself yet be absorbed into one level
+	// component through other mandatory door terraces after room composition.
+	// Rebinding is safe only after those terraces have been formed: a candidate
+	// must be an unbypassed, ordinary main-route edge whose endpoints are still
+	// distinct components. This preserves the door-level guarantee and makes the
+	// selected rise a real serialized stair rather than a manifest-only promise.
+	auto ClearVerticalConstraintMarker = [&](const VerticalRouteConstraint& constraint)
+	{
+		auto ClearEdge = [&](int x, int y, int direction)
+		{
+			if (x < 0 || x >= W || y < 0 || y >= H || direction < 0 || direction >= 4)
+				return;
+			const int nx = x + DX[direction];
+			const int ny = y + DY[direction];
+			if (nx < 0 || nx >= W || ny < 0 || ny >= H) return;
+			ProcGenCell& source = Grid[y][x];
+			ProcGenCell& target = Grid[ny][nx];
+			source.connectionStairChain[direction] = -1;
+			target.connectionStairChain[OPP[direction]] = -1;
+			if (source.verticalAnchor && source.verticalRise == constraint.rise)
+			{
+				source.verticalAnchor = false;
+				source.verticalIntent = PGVI_Flat;
+				source.verticalRise = 0;
+			}
+			// Core marks the successor only as a room-merging sentinel. It carries no
+			// beat itself, so discard it with its failed source edge.
+			if (target.verticalAnchor && target.verticalRise == 0)
+				target.verticalAnchor = false;
+		};
+
+		if (constraint.sourceX >= 0 && constraint.sourceY >= 0 &&
+			constraint.direction >= 0)
+		{
+			ClearEdge(constraint.sourceX, constraint.sourceY, constraint.direction);
+			return;
+		}
+		// Graph-level fallback bindings do not carry coordinates. Resolve only the
+		// exact consecutive route edge that points at the recorded target room;
+		// never erase a different stage's marker from a composed chamber.
+		for (int y = 0; y < H; ++y)
+		{
+			for (int x = 0; x < W; ++x)
+			{
+				const ProcGenCell& source = Grid[y][x];
+				if (!source.present || source.roomId != constraint.from ||
+					!source.verticalAnchor || source.verticalRise != constraint.rise)
+					continue;
+				for (int direction = 0; direction < 4; ++direction)
+				{
+					const int nx = x + DX[direction];
+					const int ny = y + DY[direction];
+					if (!source.conn[direction] || nx < 0 || nx >= W || ny < 0 || ny >= H)
+						continue;
+					const ProcGenCell& target = Grid[ny][nx];
+					if (target.present && target.roomId == constraint.to &&
+						target.onMainPath && target.pathRank == source.pathRank + 1)
+						ClearEdge(x, y, direction);
+				}
+			}
+		}
+	};
+	auto HasSameStageStairBypass = [&](int sourceX, int sourceY, int targetX,
+		int targetY, int stage) -> bool
+	{
+		TArray<uint8_t> visited;
+		visited.Resize(W * H);
+		for (unsigned int index = 0; index < visited.Size(); ++index)
+			visited[index] = 0;
+		TArray<int> queue;
+		const int sourceIndex = sourceY * W + sourceX;
+		const int targetIndex = targetY * W + targetX;
+		queue.Push(sourceIndex);
+		visited[sourceIndex] = 1;
+		for (unsigned int qi = 0; qi < queue.Size(); ++qi)
+		{
+			const int current = queue[qi];
+			const int currentX = current % W;
+			const int currentY = current / W;
+			const ProcGenCell& cell = Grid[currentY][currentX];
+			for (int direction = 0; direction < 4; ++direction)
+			{
+				if (!cell.conn[direction]) continue;
+				const int nextX = currentX + DX[direction];
+				const int nextY = currentY + DY[direction];
+				if (nextX < 0 || nextX >= W || nextY < 0 || nextY >= H) continue;
+				const ProcGenCell& next = Grid[nextY][nextX];
+				if (!next.present || cell.lockStage != stage || next.lockStage != stage)
+					continue;
+				const bool selectedEdge =
+					(currentX == sourceX && currentY == sourceY &&
+						nextX == targetX && nextY == targetY) ||
+					(currentX == targetX && currentY == targetY &&
+						nextX == sourceX && nextY == sourceY);
+				if (selectedEdge) continue;
+				const int nextIndex = nextY * W + nextX;
+				if (visited[nextIndex]) continue;
+				if (nextIndex == targetIndex) return true;
+				visited[nextIndex] = 1;
+				queue.Push(nextIndex);
+			}
+		}
+		return false;
+	};
+	auto RebindCollapsedVerticalConstraint = [&](VerticalRouteConstraint& constraint) -> bool
+	{
+		if (constraint.stage < 0 || constraint.stage >= RunBlueprint::MaxStages)
+			return false;
+		int chosenX = -1;
+		int chosenY = -1;
+		int chosenDirection = -1;
+		int chosenFrom = -1;
+		int chosenTo = -1;
+		uint32_t chosenScore = UINT32_MAX;
+		for (int y = 0; y < H; ++y)
+		{
+			for (int x = 0; x < W; ++x)
+			{
+				const ProcGenCell& source = Grid[y][x];
+				if (!source.present || !source.onMainPath || source.lockStage != constraint.stage ||
+					source.hasPlayerStart || source.hasKey || source.hasExit || source.isLocked ||
+					source.verticalAnchor || source.roomId < 0 ||
+					source.roomId >= (int)Rooms.Size() || Rooms[source.roomId].cellCount != 1)
+					continue;
+				for (int direction = 0; direction < 4; ++direction)
+				{
+					if (!source.conn[direction] || source.connectionStairChain[direction] >= 0)
+						continue;
+					const int nextX = x + DX[direction];
+					const int nextY = y + DY[direction];
+					if (nextX < 0 || nextX >= W || nextY < 0 || nextY >= H) continue;
+					const ProcGenCell& target = Grid[nextY][nextX];
+					if (!target.present || !target.onMainPath ||
+						target.lockStage != constraint.stage ||
+						target.pathRank != source.pathRank + 1 ||
+						target.hasPlayerStart || target.hasKey || target.hasExit || target.isLocked ||
+						target.verticalAnchor || target.roomId < 0 ||
+						target.roomId >= (int)Rooms.Size() ||
+						target.roomId == source.roomId ||
+						target.connectionStairChain[OPP[direction]] >= 0)
+						continue;
+					if (FindFloorRoot(source.roomId) == FindFloorRoot(target.roomId) ||
+						HasSameStageStairBypass(x, y, nextX, nextY, constraint.stage))
+						continue;
+					const uint32_t score = RoomPlanHash(blueprint.RecipeHash, y * W + x,
+						constraint.stage, source.pathRank * 37 + (int)constraint.intent * 11 + direction);
+					if (score >= chosenScore) continue;
+					chosenScore = score;
+					chosenX = x;
+					chosenY = y;
+					chosenDirection = direction;
+					chosenFrom = source.roomId;
+					chosenTo = target.roomId;
+				}
+			}
+		}
+		if (chosenDirection < 0) return false;
+
+		ProcGenCell& source = Grid[chosenY][chosenX];
+		const int targetX = chosenX + DX[chosenDirection];
+		const int targetY = chosenY + DY[chosenDirection];
+		ProcGenCell& target = Grid[targetY][targetX];
+		RoomInfo& fromRoom = Rooms[chosenFrom];
+		RoomInfo& toRoom = Rooms[chosenTo];
+		fromRoom.hasDoor = false;
+		toRoom.hasDoor = false;
+		fromRoom.verticalIntent = constraint.intent;
+		fromRoom.verticalRise = constraint.rise;
+		fromRoom.verticalAnchor = true;
+		source.verticalIntent = constraint.intent;
+		source.verticalRise = constraint.rise;
+		source.verticalAnchor = true;
+		const int chain = constraint.stage * 4096 + source.pathRank;
+		source.connectionStairChain[chosenDirection] = chain;
+		target.connectionStairChain[OPP[chosenDirection]] = chain;
+		if (source.connectionProfile[chosenDirection] == PGCP_Narrow ||
+			target.connectionProfile[OPP[chosenDirection]] == PGCP_Narrow)
+		{
+			source.connectionProfile[chosenDirection] = PGCP_Standard;
+			target.connectionProfile[OPP[chosenDirection]] = PGCP_Standard;
+		}
+		source.connectionClearWidth[chosenDirection] = std::max(
+			source.connectionClearWidth[chosenDirection], 128);
+		target.connectionClearWidth[OPP[chosenDirection]] = std::max(
+			target.connectionClearWidth[OPP[chosenDirection]], 128);
+		source.connectionDepth[chosenDirection] = std::max(
+			source.connectionDepth[chosenDirection], 64);
+		target.connectionDepth[OPP[chosenDirection]] = std::max(
+			target.connectionDepth[OPP[chosenDirection]], 64);
+		constraint.from = chosenFrom;
+		constraint.to = chosenTo;
+		constraint.sourceX = chosenX;
+		constraint.sourceY = chosenY;
+		constraint.direction = chosenDirection;
+		return true;
+	};
+	for (unsigned int ci = 0; ci < verticalConstraints.Size(); ++ci)
+	{
+		VerticalRouteConstraint& constraint = verticalConstraints[ci];
+		if (constraint.from < 0 || constraint.to < 0 ||
+			FindFloorRoot(constraint.from) != FindFloorRoot(constraint.to))
+			continue;
+		ClearVerticalConstraintMarker(constraint);
+		RoomInfo& oldFrom = Rooms[constraint.from];
+		oldFrom.verticalAnchor = false;
+		oldFrom.verticalIntent = PGVI_Flat;
+		oldFrom.verticalRise = 0;
+		RebindCollapsedVerticalConstraint(constraint);
+	}
+	// Apply the signed design rises after rooms choose their door state but
+	// before component projection. The endpoints intentionally remain separate
+	// components, so the stair edge retains its authored ascent/descent instead
+	// of being averaged away by a nearby keyed threshold.
+	for (const VerticalRouteConstraint& constraint : verticalConstraints)
+	{
+		if (constraint.from < 0 || constraint.to < 0) continue;
+		Rooms[constraint.to].floorZ = Rooms[constraint.from].floorZ + constraint.rise;
+	}
+	// Do not publish the constraints as realized yet. Component projection below
+	// deliberately smooths room floors around ordinary door thresholds and can
+	// otherwise turn a requested 32-unit dogleg into a shorter, misleading stair
+	// while the manifest still advertises the original rise. We finalize both the
+	// component floors and the realization record together after that projection.
 
 	TArray<int> componentFloor;
 	TArray<int> componentMembers;
@@ -1007,22 +1881,797 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 				componentQueue.Push(other);
 			}
 		}
-		int maximumGraphDistance = 1;
-		for (unsigned int ri = 0; ri < graphDistance.Size(); ri++)
-			maximumGraphDistance = std::max(maximumGraphDistance, graphDistance[ri]);
-		const int* fallbackCadence = Verticality == 0 ? GentleFloorCadence :
-			(Verticality == 2 ? DramaticFloorCadence : VariedFloorCadence);
+		// The rare cyclic fallback remains graph-derived too: one BFS layer is at
+		// most 48 units from the next, so it cannot reintroduce an implicit ledge
+		// after the terrain field above was rejected by a cycle.
+		const int fallbackStep = Verticality == 0 ? 16 :
+			(Verticality == 1 ? 32 : 48);
+		const int fallbackSign = blueprint.MainRouteElevationTarget == 0 ?
+			((blueprint.RecipeHash & 1u) != 0u ? 1 : -1) :
+			(blueprint.MainRouteElevationTarget > 0 ? 1 : -1);
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 		{
 			if (FindFloorRoot(ri) != (int)ri) continue;
 			const int distance = std::max(0, graphDistance[ri]);
-			int floor = fallbackCadence[distance % countof(VariedFloorCadence)];
-			const int graphPhase = clamp(distance * 4 / (maximumGraphDistance + 1), 0, 3);
-			if (themeStyle == ThemeHell && graphPhase >= 2) floor += 16;
-			else if (themeStyle == ThemeGothic && graphPhase >= 1) floor += 16;
-			else if (themeStyle == ThemeCorrupted && graphPhase >= 2)
-				floor += (graphPhase - 1) * 16;
+			const int ripple = distance > 1 &&
+				(RoomPlanHash(blueprint.RecipeHash, (int)ri, distance, 97) & 3u) == 0u ?
+				8 : 0;
+			int floor = fallbackSign * std::min(terrainLimit,
+				distance * fallbackStep + ripple);
 			componentFloor[ri] = floor;
+		}
+	}
+
+	// Component averaging and the rare graph-distance fallback above are useful
+	// for keeping arbitrary branch connections within the 64-unit staircase
+	// bound, but an authored main-route vertical beat is a stronger contract. Put
+	// every feasible constraint back on its exact component-to-component delta
+	// now that the broad projection has settled. This moves a complete component,
+	// so all door-linked rooms remain on one terrace; it never creates a step
+	// beneath a door threshold. If a cyclic branch makes the exact delta unsafe,
+	// leave the safe projection intact and truthfully drop that beat instead of
+	// claiming a dogleg that the serialized map cannot contain.
+	// Treat every accepted vertical beat as a rigid, signed relation between
+	// component terraces: floor(to) = floor(from) + rise.  This weighted union
+	// keeps a target's neighboring branch components free to move with it during
+	// the normal 64-unit projection instead of making a correct route beat lose
+	// to an unrelated local average.
+	TArray<int> verticalParent;
+	TArray<int> verticalOffset;
+	verticalParent.Resize(Rooms.Size());
+	verticalOffset.Resize(Rooms.Size());
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+	{
+		verticalParent[ri] = (int)ri;
+		verticalOffset[ri] = 0;
+	}
+	auto FindVerticalRoot = [&](int component, int& offset) -> int
+	{
+		offset = 0;
+		while (verticalParent[component] != component)
+		{
+			offset += verticalOffset[component];
+			component = verticalParent[component];
+		}
+		return component;
+	};
+
+	auto VerticalRelationsFit = [&]() -> bool
+	{
+		for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+		{
+			const int firstComponent = FindFloorRoot((int)ri);
+			for (unsigned int ai = 0; ai < adjacency[ri].Size(); ++ai)
+			{
+				const int secondComponent = FindFloorRoot(adjacency[ri][ai]);
+				if (firstComponent == secondComponent) continue;
+				int firstOffset = 0;
+				int secondOffset = 0;
+				const int firstGroup = FindVerticalRoot(firstComponent, firstOffset);
+				const int secondGroup = FindVerticalRoot(secondComponent, secondOffset);
+				if (firstGroup == secondGroup && abs(firstOffset - secondOffset) > 64)
+				{
+					return false;
+				}
+			}
+		}
+		return true;
+	};
+
+	TArray<bool> realizedConstraints;
+	realizedConstraints.Resize(verticalConstraints.Size());
+	for (unsigned int ci = 0; ci < realizedConstraints.Size(); ++ci)
+		realizedConstraints[ci] = false;
+	for (unsigned int ci = 0; ci < verticalConstraints.Size(); ++ci)
+	{
+		const VerticalRouteConstraint& constraint = verticalConstraints[ci];
+		const int fromComponent = FindFloorRoot(constraint.from);
+		const int toComponent = FindFloorRoot(constraint.to);
+		int fromOffset = 0;
+		int toOffset = 0;
+		const int fromGroup = FindVerticalRoot(fromComponent, fromOffset);
+		const int toGroup = FindVerticalRoot(toComponent, toOffset);
+		if (fromGroup == toGroup)
+		{
+			realizedConstraints[ci] = toOffset == fromOffset + constraint.rise;
+			continue;
+		}
+
+		// Make the target group's base relative to the source group's base. If
+		// that would put an ordinary edge inside one rigid group beyond a legal
+		// stair rise, undo only this beat and retain the rest of the plan.
+		verticalParent[toGroup] = fromGroup;
+		verticalOffset[toGroup] = fromOffset + constraint.rise - toOffset;
+		if (!VerticalRelationsFit())
+		{
+			verticalParent[toGroup] = toGroup;
+			verticalOffset[toGroup] = 0;
+			continue;
+		}
+		realizedConstraints[ci] = true;
+	}
+
+	TArray<int> groupForComponent;
+	TArray<int> groupOffset;
+	TArray<int> groupBase;
+	TArray<int> groupMembers;
+	TArray<int> groupDistance;
+	groupForComponent.Resize(Rooms.Size());
+	groupOffset.Resize(Rooms.Size());
+	groupBase.Resize(Rooms.Size());
+	groupMembers.Resize(Rooms.Size());
+	groupDistance.Resize(Rooms.Size());
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+	{
+		groupForComponent[ri] = -1;
+		groupOffset[ri] = 0;
+		groupBase[ri] = 0;
+		groupMembers[ri] = 0;
+		groupDistance[ri] = 0x3fffffff;
+	}
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+	{
+		if (FindFloorRoot((int)ri) != (int)ri) continue;
+		int offset = 0;
+		const int group = FindVerticalRoot((int)ri, offset);
+		groupForComponent[ri] = group;
+		groupOffset[ri] = offset;
+		groupBase[group] += componentFloor[ri] - offset;
+		groupMembers[group]++;
+		groupDistance[group] = std::min(groupDistance[group], componentDistance[ri]);
+	}
+	for (unsigned int group = 0; group < groupMembers.Size(); ++group)
+	{
+		if (groupMembers[group] == 0) continue;
+		groupBase[group] = (int)lround(
+			groupBase[group] / (double)groupMembers[group] / 16.0) * 16;
+	}
+	const int startGroup = startRoot >= 0 ? groupForComponent[startRoot] : -1;
+	if (startGroup >= 0)
+		groupBase[startGroup] = -groupOffset[startRoot];
+	auto ProjectedFloor = [&](int component) -> int
+	{
+		return groupBase[groupForComponent[component]] + groupOffset[component];
+	};
+	auto ProjectedTransitionsFit = [&]() -> bool
+	{
+		for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+		{
+			const int firstComponent = FindFloorRoot((int)ri);
+			for (unsigned int ai = 0; ai < adjacency[ri].Size(); ++ai)
+			{
+				const int secondComponent = FindFloorRoot(adjacency[ri][ai]);
+				if (abs(ProjectedFloor(firstComponent) -
+					ProjectedFloor(secondComponent)) > 64)
+					return false;
+			}
+		}
+		return true;
+	};
+
+	const int constrainedRelaxationPasses = std::max(24, (int)Rooms.Size() + 4);
+	for (int pass = 0; pass < constrainedRelaxationPasses; ++pass)
+	{
+		bool changed = false;
+		for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+		{
+			const int firstComponent = FindFloorRoot((int)ri);
+			for (unsigned int ai = 0; ai < adjacency[ri].Size(); ++ai)
+			{
+				const int secondComponent = FindFloorRoot(adjacency[ri][ai]);
+				const int firstGroup = groupForComponent[firstComponent];
+				const int secondGroup = groupForComponent[secondComponent];
+				if (firstGroup == secondGroup) continue;
+				const int firstFloor = ProjectedFloor(firstComponent);
+				const int secondFloor = ProjectedFloor(secondComponent);
+				if (abs(firstFloor - secondFloor) <= 64) continue;
+
+				int movingComponent = firstComponent;
+				int fixedComponent = secondComponent;
+				if (firstGroup == startGroup)
+				{
+					movingComponent = secondComponent;
+					fixedComponent = firstComponent;
+				}
+				else if (secondGroup != startGroup &&
+					(groupDistance[secondGroup] > groupDistance[firstGroup] ||
+						(groupDistance[secondGroup] == groupDistance[firstGroup] &&
+							secondGroup > firstGroup)))
+				{
+					movingComponent = secondComponent;
+					fixedComponent = firstComponent;
+				}
+				const int movingFloor = ProjectedFloor(movingComponent);
+				const int fixedFloor = ProjectedFloor(fixedComponent);
+				const int desiredFloor = fixedFloor +
+					(movingFloor > fixedFloor ? 64 : -64);
+				groupBase[groupForComponent[movingComponent]] =
+					desiredFloor - groupOffset[movingComponent];
+				changed = true;
+			}
+		}
+		if (!changed) break;
+	}
+
+	if (ProjectedTransitionsFit())
+	{
+		for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+		{
+			if (FindFloorRoot((int)ri) == (int)ri)
+				componentFloor[ri] = ProjectedFloor((int)ri);
+		}
+	}
+	else
+	{
+		// This is an extremely constrained cyclic fallback. Preserve the original
+		// safe terrain and report no fake vertical realization rather than letting
+		// a route beat violate the 64-unit stair contract.
+		for (unsigned int ci = 0; ci < realizedConstraints.Size(); ++ci)
+			realizedConstraints[ci] = false;
+	}
+
+	// The broad target field above is intentionally gentle around doors, keys,
+	// and cycles.  On a large dramatic run that conservatism could previously
+	// erase the one promised highland/basin altogether.  Re-anchor a feasible
+	// component-graph chain here, after every door terrace and eight-unit stair
+	// relation is known.  This solves only group bases; vertical beat offsets
+	// remain rigid, and every graph edge is still clamped to a 64-unit walk.
+	const bool wantsExtremeTerrain = Verticality == 2 && Size >= 3 &&
+		blueprint.MainRouteElevationTarget != 0 && startGroup >= 0;
+	if (wantsExtremeTerrain)
+	{
+		TArray<TArray<int>> terrainGroupAdjacency;
+		terrainGroupAdjacency.Resize(Rooms.Size());
+		for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+		{
+			const int firstComponent = FindFloorRoot((int)ri);
+			const int firstGroup = groupForComponent[firstComponent];
+			if (firstGroup < 0) continue;
+			for (unsigned int ai = 0; ai < adjacency[ri].Size(); ++ai)
+			{
+				const int secondComponent = FindFloorRoot(adjacency[ri][ai]);
+				const int secondGroup = groupForComponent[secondComponent];
+				if (secondGroup < 0 || firstGroup == secondGroup) continue;
+				if (!ContainsRoom(terrainGroupAdjacency[firstGroup], secondGroup))
+					terrainGroupAdjacency[firstGroup].Push(secondGroup);
+				if (!ContainsRoom(terrainGroupAdjacency[secondGroup], firstGroup))
+					terrainGroupAdjacency[secondGroup].Push(firstGroup);
+			}
+		}
+		auto BuildTerrainDistances = [&](int source, TArray<int>& distances)
+		{
+			distances.Resize(Rooms.Size());
+			for (unsigned int index = 0; index < distances.Size(); ++index)
+				distances[index] = -1;
+			if (source < 0 || source >= (int)terrainGroupAdjacency.Size()) return;
+			TArray<int> queue;
+			distances[source] = 0;
+			queue.Push(source);
+			for (unsigned int qi = 0; qi < queue.Size(); ++qi)
+			{
+				const int group = queue[qi];
+				for (unsigned int ai = 0; ai < terrainGroupAdjacency[group].Size(); ++ai)
+				{
+					const int other = terrainGroupAdjacency[group][ai];
+					if (distances[other] >= 0) continue;
+					distances[other] = distances[group] + 1;
+					queue.Push(other);
+				}
+			}
+		};
+
+		struct TerrainAnchor
+		{
+			int room = -1;
+			int component = -1;
+			int group = -1;
+			uint32_t score = UINT32_MAX;
+		};
+		auto IsTerrainAnchor = [](const RoomInfo& room) -> bool
+		{
+			return !room.hasPlayerStart && !room.hasKey && !room.hasExit &&
+				!room.hasBoss && !room.isLocked && !room.isSecret;
+		};
+		const int mainTarget = blueprint.MainRouteElevationTarget;
+		// Size-five dramatic runs promise an opposite reachable district, not a
+		// merely decorative 64-unit terrace.  Some compact recipes deliberately
+		// start with that small broad-field suggestion; promote it only for this
+		// anchor search to the smallest contractual opposite extreme.  Do not
+		// publish the promoted value here: Blueprint is updated below only after
+		// ApplyTerrainAnchors has proved and committed the complete stair chain.
+		const int optionalTarget = Verticality == 2 && Size >= 5 &&
+			abs(blueprint.OptionalElevationTarget) < 192 ?
+			(mainTarget < 0 ? 192 : -192) : blueprint.OptionalElevationTarget;
+		const int mainSteps = (abs(mainTarget) + 63) / 64;
+		// A compact dramatic route may contain a rigid dogleg group whose other
+		// member sits 32--64 units above the nominated horizon room.  The recipe
+		// target is intentionally only the broad destination; the actual route
+		// still has to stay inside the documented size-three/four 128--192 band.
+		// Keep a global cap here rather than flattening the dogleg after the fact:
+		// rejecting an over-cap anchor preserves both its explicit stair relation
+		// and every adjacent <=64-unit walking constraint.
+		const int dramaticTerrainCap = Size >= 5 ? 320 : 192;
+		const int dramaticTerrainFloor = Size >= 5 ? 192 : 128;
+		auto ReboundMainTarget = [&](const TerrainAnchor& anchor) -> int
+		{
+			if (Verticality != 2 || Size < 3) return mainTarget;
+			int rebound = mainTarget;
+			for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+			{
+				const RoomInfo& room = Rooms[ri];
+				if (!room.onMainPath || room.hasPlayerStart) continue;
+				const int component = FindFloorRoot((int)ri);
+				if (groupForComponent[component] != anchor.group) continue;
+				const int relativeOffset = groupOffset[component] -
+					groupOffset[anchor.component];
+				if (mainTarget > 0)
+					rebound = std::min(rebound, dramaticTerrainCap - relativeOffset);
+				else
+					rebound = std::max(rebound, -dramaticTerrainCap - relativeOffset);
+			}
+			rebound = QuantizeToEight(rebound);
+			if (abs(rebound) < dramaticTerrainFloor ||
+				(mainTarget > 0) != (rebound > 0))
+				return 0;
+			return rebound;
+		};
+		TArray<int> fromStart;
+		BuildTerrainDistances(startGroup, fromStart);
+		TArray<TerrainAnchor> mainAnchors;
+		for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+		{
+			const RoomInfo& room = Rooms[ri];
+			if (!room.onMainPath || !IsTerrainAnchor(room)) continue;
+			const int component = FindFloorRoot((int)ri);
+			const int group = groupForComponent[component];
+			if (group < 0 || group == startGroup || fromStart[group] < mainSteps) continue;
+			uint32_t score = RoomPlanHash(blueprint.RecipeHash, room.id,
+				room.progressionRank, 0x741);
+			if ((room.elevationTarget > 0) != (mainTarget > 0)) score >>= 1;
+			if (room.terrainRouteReservation) score >>= 2;
+			TerrainAnchor anchor;
+			anchor.room = (int)ri;
+			anchor.component = component;
+			anchor.group = group;
+			anchor.score = score;
+			mainAnchors.Push(anchor);
+		}
+		auto ApplyTerrainAnchors = [&](const TerrainAnchor& mainAnchor,
+			int requestedMainTarget, const TerrainAnchor* optionalAnchor,
+			int requestedOptionalTarget) -> bool
+		{
+			TArray<int> savedBase;
+			savedBase.Resize(groupBase.Size());
+			for (unsigned int index = 0; index < groupBase.Size(); ++index)
+				savedBase[index] = groupBase[index];
+
+			// A highland and an opposite optional basin are a set of bounded
+			// difference constraints, not a direction-dependent smoothing pass.
+			// The former relaxation moved the first non-fixed side of each edge;
+			// on a cyclic large map that can make an otherwise feasible pair of
+			// anchors look impossible (or soften it below the promised extreme).
+			// Keep the component offsets from authored doglegs rigid, then solve
+			// every walking edge as |floor(a) - floor(b)| <= 64.  Bellman-Ford on
+			// the equivalent upper-bound system is deterministic and proves the
+			// fixed start/main/optional terraces are jointly feasible before we
+			// commit their bases.
+			TArray<bool> fixedGroup;
+			fixedGroup.Resize(groupBase.Size());
+			TArray<int> fixedBase;
+			fixedBase.Resize(groupBase.Size());
+			for (unsigned int index = 0; index < fixedGroup.Size(); ++index)
+			{
+				fixedGroup[index] = false;
+				fixedBase[index] = 0;
+			}
+			auto PinTerrainGroup = [&](int group, int base) -> bool
+			{
+				if (group < 0 || group >= (int)fixedGroup.Size()) return false;
+				if (fixedGroup[group]) return fixedBase[group] == base;
+				fixedGroup[group] = true;
+				fixedBase[group] = base;
+				return true;
+			};
+			if (!PinTerrainGroup(startGroup, -groupOffset[startRoot]) ||
+				!PinTerrainGroup(mainAnchor.group,
+					requestedMainTarget - groupOffset[mainAnchor.component]))
+				return false;
+			if (optionalAnchor != nullptr)
+			{
+				if (!PinTerrainGroup(optionalAnchor->group,
+					requestedOptionalTarget - groupOffset[optionalAnchor->component]))
+					return false;
+			}
+
+			struct TerrainDifferenceConstraint
+			{
+				int from = -1;
+				int to = -1;
+				int upperBound = 0;
+			};
+			TArray<TerrainDifferenceConstraint> terrainConstraints;
+			auto AddTerrainConstraint = [&](int from, int to, int upperBound)
+			{
+				if (from >= 0 && to >= 0)
+					terrainConstraints.Push({ from, to, upperBound });
+			};
+			for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+			{
+				const int firstComponent = FindFloorRoot((int)ri);
+				const int firstGroup = groupForComponent[firstComponent];
+				for (unsigned int ai = 0; ai < adjacency[ri].Size(); ++ai)
+				{
+					const int secondComponent = FindFloorRoot(adjacency[ri][ai]);
+					const int secondGroup = groupForComponent[secondComponent];
+					if (firstGroup < 0 || secondGroup < 0 || firstGroup == secondGroup)
+						continue;
+					const int firstOffset = groupOffset[firstComponent];
+					const int secondOffset = groupOffset[secondComponent];
+					// base(second) - base(first) <= 64 + offset(first) - offset(second)
+					AddTerrainConstraint(firstGroup, secondGroup,
+						64 + firstOffset - secondOffset);
+					AddTerrainConstraint(secondGroup, firstGroup,
+						64 + secondOffset - firstOffset);
+				}
+			}
+			const int terrainSource = (int)groupBase.Size();
+			if (Verticality == 2 && Size >= 3)
+			{
+				// Bound every main-route room, not just the room nominated as the
+				// horizon anchor. Rigid dogleg offsets can otherwise make a sibling
+				// terrace silently exceed the size-specific highland/basin range.
+				for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+				{
+					const RoomInfo& room = Rooms[ri];
+					if (!room.onMainPath || room.hasPlayerStart) continue;
+					const int component = FindFloorRoot((int)ri);
+					const int group = groupForComponent[component];
+					if (group < 0) continue;
+					const int offset = groupOffset[component];
+					const int oppositeTransitionLimit = dramaticTerrainFloor - 8;
+					if (requestedMainTarget > 0)
+					{
+						// A local dogleg may dip through a shallow neutral band, but
+						// only the optional district may reach the opposite dramatic
+						// extreme. -limit <= floor <= cap.
+						AddTerrainConstraint(group, terrainSource,
+							oppositeTransitionLimit + offset);
+						AddTerrainConstraint(terrainSource, group,
+							dramaticTerrainCap - offset);
+					}
+					else
+					{
+						// -cap <= floor <= limit for a basin-oriented main route.
+						AddTerrainConstraint(terrainSource, group,
+							oppositeTransitionLimit - offset);
+						AddTerrainConstraint(group, terrainSource,
+							dramaticTerrainCap + offset);
+					}
+				}
+			}
+			for (unsigned int group = 0; group < fixedGroup.Size(); ++group)
+			{
+				if (!fixedGroup[group]) continue;
+				// Pin base(group) exactly relative to an otherwise free source.
+				AddTerrainConstraint(terrainSource, (int)group, fixedBase[group]);
+				AddTerrainConstraint((int)group, terrainSource, -fixedBase[group]);
+			}
+			TArray<int> terrainPotential;
+			terrainPotential.Resize(terrainSource + 1);
+			for (unsigned int index = 0; index < terrainPotential.Size(); ++index)
+				terrainPotential[index] = 0;
+			bool impossible = false;
+			for (int pass = 0; pass <= terrainSource; ++pass)
+			{
+				bool changed = false;
+				for (const TerrainDifferenceConstraint& constraint : terrainConstraints)
+				{
+					const int candidate = terrainPotential[constraint.from] +
+						constraint.upperBound;
+					if (candidate >= terrainPotential[constraint.to]) continue;
+					terrainPotential[constraint.to] = candidate;
+					changed = true;
+				}
+				if (!changed) break;
+				if (pass == terrainSource)
+				{
+					impossible = true;
+					break;
+				}
+			}
+			if (!impossible)
+			{
+				for (unsigned int group = 0; group < groupMembers.Size(); ++group)
+				{
+					if (groupMembers[group] == 0) continue;
+					groupBase[group] = terrainPotential[group] - terrainPotential[terrainSource];
+				}
+				if (!ProjectedTransitionsFit())
+					impossible = true;
+			}
+			if (!impossible)
+			{
+				const int realizedMain = groupBase[mainAnchor.group] +
+					groupOffset[mainAnchor.component];
+				const int realizedOptional = optionalAnchor == nullptr ? 0 :
+					groupBase[optionalAnchor->group] + groupOffset[optionalAnchor->component];
+				if (realizedMain == requestedMainTarget &&
+					(optionalAnchor == nullptr || realizedOptional == requestedOptionalTarget))
+				{
+					bool routeWithinBound = true;
+					if (Verticality == 2 && Size >= 3)
+					{
+						for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+						{
+							const RoomInfo& room = Rooms[ri];
+							if (!room.onMainPath || room.hasPlayerStart) continue;
+							const int component = FindFloorRoot((int)ri);
+							const int floor = groupBase[groupForComponent[component]] +
+								groupOffset[component];
+							if (abs(floor) > dramaticTerrainCap ||
+								(requestedMainTarget > 0 ?
+									floor <= -dramaticTerrainFloor :
+									floor >= dramaticTerrainFloor))
+							{
+								routeWithinBound = false;
+								break;
+							}
+						}
+					}
+					if (routeWithinBound) return true;
+				}
+			}
+			for (unsigned int index = 0; index < groupBase.Size(); ++index)
+				groupBase[index] = savedBase[index];
+			return false;
+		};
+
+		bool terrainAnchored = false;
+		int realizedTerrainMainRoom = -1;
+		int realizedTerrainMainTarget = 0;
+		int realizedTerrainOptionalRoom = -1;
+		int realizedTerrainOptionalTarget = 0;
+		TArray<bool> mainTried;
+		mainTried.Resize(mainAnchors.Size());
+		for (unsigned int index = 0; index < mainTried.Size(); ++index) mainTried[index] = false;
+		for (unsigned int mainAttempt = 0;
+			mainAttempt < mainAnchors.Size() && mainAttempt < 16 && !terrainAnchored;
+			++mainAttempt)
+		{
+			int bestMain = -1;
+			for (unsigned int index = 0; index < mainAnchors.Size(); ++index)
+				if (!mainTried[index] && (bestMain < 0 ||
+					mainAnchors[index].score < mainAnchors[bestMain].score))
+					bestMain = (int)index;
+			if (bestMain < 0) break;
+			mainTried[bestMain] = true;
+			const TerrainAnchor& mainAnchor = mainAnchors[bestMain];
+			const int candidateMainTarget = ReboundMainTarget(mainAnchor);
+			if (candidateMainTarget == 0) continue;
+			TArray<int> fromMain;
+			BuildTerrainDistances(mainAnchor.group, fromMain);
+			if (optionalTarget == 0)
+			{
+				terrainAnchored = ApplyTerrainAnchors(mainAnchor, candidateMainTarget,
+					nullptr, 0);
+				if (terrainAnchored)
+				{
+					realizedTerrainMainRoom = mainAnchor.room;
+					realizedTerrainMainTarget = candidateMainTarget;
+				}
+				continue;
+			}
+
+			// A 320-unit opposite district needs five clean 64-unit walks from
+			// its local terrace and nine from a 256-unit main horizon. A compact
+			// but otherwise healthy graph can legitimately have only seven such
+			// links. Keep the required opposite extreme rather than silently
+			// flattening it: deterministically try the recipe's requested target,
+			// then the smaller 256/192-unit alternatives that the size-5 contract
+			// still explicitly permits.
+			const int optionalSign = optionalTarget < 0 ? -1 : 1;
+			for (int magnitude = abs(optionalTarget);
+				magnitude >= 192 && !terrainAnchored; magnitude -= 64)
+			{
+				const int candidateOptionalTarget = optionalSign * magnitude;
+				const int optionalSteps = (abs(candidateOptionalTarget) + 63) / 64;
+				const int oppositeSteps = (abs(candidateMainTarget - candidateOptionalTarget) + 63) / 64;
+				TArray<TerrainAnchor> optionalAnchors;
+				for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+				{
+					const RoomInfo& room = Rooms[ri];
+					if (room.onMainPath || room.branchDepth < 1)
+						continue;
+					if (!IsTerrainAnchor(room)) continue;
+					const int component = FindFloorRoot((int)ri);
+					const int group = groupForComponent[component];
+					if (group < 0 || group == mainAnchor.group || group == startGroup ||
+						fromStart[group] < optionalSteps)
+						continue;
+					if (fromMain[group] < oppositeSteps) continue;
+					TerrainAnchor anchor;
+					anchor.room = (int)ri;
+					anchor.component = component;
+					anchor.group = group;
+					anchor.score = RoomPlanHash(blueprint.RecipeHash, room.id,
+						room.branchDepth, 0x9b1);
+					if (room.terrainRouteReservation) anchor.score >>= 2;
+					optionalAnchors.Push(anchor);
+				}
+				TArray<bool> optionalTried;
+				optionalTried.Resize(optionalAnchors.Size());
+				for (unsigned int index = 0; index < optionalTried.Size(); ++index)
+					optionalTried[index] = false;
+				for (unsigned int optionalAttempt = 0;
+					optionalAttempt < optionalAnchors.Size() && optionalAttempt < 16 && !terrainAnchored;
+					++optionalAttempt)
+				{
+					int bestOptional = -1;
+					for (unsigned int index = 0; index < optionalAnchors.Size(); ++index)
+					{
+						if (!optionalTried[index] && (bestOptional < 0 ||
+							optionalAnchors[index].score < optionalAnchors[bestOptional].score))
+							bestOptional = (int)index;
+					}
+					if (bestOptional < 0) break;
+					const TerrainAnchor optionalAnchor = optionalAnchors[bestOptional];
+					optionalTried[bestOptional] = true;
+					terrainAnchored = ApplyTerrainAnchors(mainAnchor, candidateMainTarget,
+						&optionalAnchor, candidateOptionalTarget);
+					if (terrainAnchored)
+					{
+						realizedTerrainMainRoom = mainAnchor.room;
+						realizedTerrainMainTarget = candidateMainTarget;
+						realizedTerrainOptionalRoom = optionalAnchor.room;
+						realizedTerrainOptionalTarget = candidateOptionalTarget;
+					}
+				}
+			}
+		}
+		// If a recipe asked for a 256/320-unit pair but the selected, protected
+		// optional limb only has the six real terrace transitions required by the
+		// size-five contract, rebind both ends to the valid +/-192 fallback.  This
+		// is deliberately a second solver pass rather than a manifest rewrite:
+		// the graph proof still has to establish every <=64-unit walk, and a map
+		// with no feasible pair remains on the ordinary safe terrain path.
+		if (!terrainAnchored && optionalTarget != 0 && Size >= 5)
+		{
+			const int fallbackMainTarget = mainTarget < 0 ? -192 : 192;
+			const int fallbackOptionalTarget = -fallbackMainTarget;
+			TArray<TerrainAnchor> fallbackMainAnchors;
+			for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+			{
+				const RoomInfo& room = Rooms[ri];
+				if (!room.onMainPath || !IsTerrainAnchor(room)) continue;
+				const int component = FindFloorRoot((int)ri);
+				const int group = groupForComponent[component];
+				if (group < 0 || group == startGroup || fromStart[group] < 3) continue;
+				TerrainAnchor anchor;
+				anchor.room = (int)ri;
+				anchor.component = component;
+				anchor.group = group;
+				anchor.score = RoomPlanHash(blueprint.RecipeHash, room.id,
+					room.progressionRank, 0x5d7);
+				if (room.terrainRouteReservation) anchor.score >>= 2;
+				fallbackMainAnchors.Push(anchor);
+			}
+			TArray<bool> fallbackMainTried;
+			fallbackMainTried.Resize(fallbackMainAnchors.Size());
+			for (unsigned int index = 0; index < fallbackMainTried.Size(); ++index)
+				fallbackMainTried[index] = false;
+			for (unsigned int mainAttempt = 0;
+				mainAttempt < fallbackMainAnchors.Size() && mainAttempt < 64 && !terrainAnchored;
+				++mainAttempt)
+			{
+				int bestMain = -1;
+				for (unsigned int index = 0; index < fallbackMainAnchors.Size(); ++index)
+					if (!fallbackMainTried[index] && (bestMain < 0 ||
+						fallbackMainAnchors[index].score < fallbackMainAnchors[bestMain].score))
+						bestMain = (int)index;
+				if (bestMain < 0) break;
+				fallbackMainTried[bestMain] = true;
+				const TerrainAnchor& mainAnchor = fallbackMainAnchors[bestMain];
+				TArray<int> fromMain;
+				BuildTerrainDistances(mainAnchor.group, fromMain);
+				TArray<TerrainAnchor> fallbackOptionalAnchors;
+				for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+				{
+					const RoomInfo& room = Rooms[ri];
+					if (room.onMainPath || room.branchDepth < 1 || !IsTerrainAnchor(room))
+						continue;
+					const int component = FindFloorRoot((int)ri);
+					const int group = groupForComponent[component];
+					if (group < 0 || group == startGroup || group == mainAnchor.group ||
+						fromStart[group] < 3 || fromMain[group] < 6)
+						continue;
+					TerrainAnchor anchor;
+					anchor.room = (int)ri;
+					anchor.component = component;
+					anchor.group = group;
+					anchor.score = RoomPlanHash(blueprint.RecipeHash, room.id,
+						room.branchDepth, 0xa3d);
+					if (room.terrainRouteReservation) anchor.score >>= 2;
+					fallbackOptionalAnchors.Push(anchor);
+				}
+				TArray<bool> fallbackOptionalTried;
+				fallbackOptionalTried.Resize(fallbackOptionalAnchors.Size());
+				for (unsigned int index = 0; index < fallbackOptionalTried.Size(); ++index)
+					fallbackOptionalTried[index] = false;
+				for (unsigned int optionalAttempt = 0;
+					optionalAttempt < fallbackOptionalAnchors.Size() && optionalAttempt < 64 &&
+					!terrainAnchored; ++optionalAttempt)
+				{
+					int bestOptional = -1;
+					for (unsigned int index = 0; index < fallbackOptionalAnchors.Size(); ++index)
+						if (!fallbackOptionalTried[index] && (bestOptional < 0 ||
+							fallbackOptionalAnchors[index].score <
+							fallbackOptionalAnchors[bestOptional].score))
+							bestOptional = (int)index;
+					if (bestOptional < 0) break;
+					fallbackOptionalTried[bestOptional] = true;
+					const TerrainAnchor optionalAnchor = fallbackOptionalAnchors[bestOptional];
+					terrainAnchored = ApplyTerrainAnchors(mainAnchor, fallbackMainTarget,
+						&optionalAnchor, fallbackOptionalTarget);
+					if (terrainAnchored)
+					{
+						realizedTerrainMainRoom = mainAnchor.room;
+						realizedTerrainMainTarget = fallbackMainTarget;
+						realizedTerrainOptionalRoom = optionalAnchor.room;
+						realizedTerrainOptionalTarget = fallbackOptionalTarget;
+					}
+				}
+			}
+		}
+		if (terrainAnchored)
+		{
+			for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+				if (FindFloorRoot((int)ri) == (int)ri)
+					componentFloor[ri] = ProjectedFloor((int)ri);
+			if (realizedTerrainMainRoom >= 0)
+			{
+				RoomInfo& mainRoom = Rooms[realizedTerrainMainRoom];
+				mainRoom.elevationTarget = realizedTerrainMainTarget;
+				mainRoom.elevationRole = realizedTerrainMainTarget > 0 ? PGER_Highland : PGER_Basin;
+			}
+			if (realizedTerrainOptionalRoom >= 0)
+			{
+				optionalExtremeRoom = realizedTerrainOptionalRoom;
+				RoomInfo& optionalRoom = Rooms[realizedTerrainOptionalRoom];
+				optionalRoom.elevationTarget = realizedTerrainOptionalTarget;
+				optionalRoom.elevationRole = realizedTerrainOptionalTarget > 0 ?
+					PGER_Highland : PGER_Basin;
+				Blueprint.OptionalElevationTarget = realizedTerrainOptionalTarget;
+			}
+			}
+		}
+
+	// The manifest is realization data, not a restatement of the recipe. Reset
+	// it from the exact component constraints we could keep, and make a failed
+	// anchor flat before the later room-to-cell propagation reaches BuildUDMF.
+	Blueprint.RealizedVerticalBeats = 0;
+	for (int stage = 0; stage < RunBlueprint::MaxStages; ++stage)
+	{
+		Blueprint.RealizedStageVerticalIntents[stage] = PGVI_Flat;
+		Blueprint.RealizedStageVerticalRises[stage] = 0;
+	}
+	for (unsigned int ci = 0; ci < verticalConstraints.Size(); ++ci)
+	{
+		const VerticalRouteConstraint& constraint = verticalConstraints[ci];
+		RoomInfo& from = Rooms[constraint.from];
+		if (!realizedConstraints[ci])
+		{
+			ClearVerticalConstraintMarker(constraint);
+			from.verticalAnchor = false;
+			from.verticalIntent = PGVI_Flat;
+			from.verticalRise = 0;
+			continue;
+		}
+		Blueprint.RealizedVerticalBeats++;
+		if (from.lockStage >= 0 && from.lockStage < RunBlueprint::MaxStages)
+		{
+			Blueprint.RealizedStageVerticalIntents[from.lockStage] =
+				(EProcGenVerticalIntent)from.verticalIntent;
+			Blueprint.RealizedStageVerticalRises[from.lockStage] = constraint.rise;
 		}
 	}
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
@@ -1030,6 +2679,51 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		RoomInfo& room = Rooms[ri];
 		room.floorZ = componentFloor[FindFloorRoot(ri)];
 		room.ceilZ = room.floorZ + roomClearHeights[ri];
+	}
+	Blueprint.RealizedMainRouteElevation = 0;
+	int realizedMainExtremeRoom = -1;
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+	{
+		const RoomInfo& room = Rooms[ri];
+		if (!room.onMainPath || room.hasPlayerStart) continue;
+		const int floor = (int)lround(room.floorZ);
+		if (abs(floor) > abs(Blueprint.RealizedMainRouteElevation))
+		{
+			Blueprint.RealizedMainRouteElevation = floor;
+			realizedMainExtremeRoom = (int)ri;
+		}
+	}
+	// The graph solver may place the tallest terrace in a rigid dogleg sibling
+	// rather than the originally nominated horizon room.  Mark that exact
+	// emitted witness as the highland/basin so the manifest describes the map
+	// the player can traverse, not just the earlier planning preference.
+	if (Verticality == 2 && Size >= 3 && realizedMainExtremeRoom >= 0)
+	{
+		RoomInfo& extreme = Rooms[realizedMainExtremeRoom];
+		extreme.elevationTarget = Blueprint.RealizedMainRouteElevation;
+		extreme.elevationRole = Blueprint.RealizedMainRouteElevation > 0 ?
+			PGER_Highland : PGER_Basin;
+	}
+	for (unsigned int ri = 0; ri < Rooms.Size(); ++ri)
+		Rooms[ri].optionalTerrainAnchor = false;
+	Blueprint.RealizedOptionalElevation = 0;
+	if (optionalExtremeRoom >= 0 && optionalExtremeRoom < (int)Rooms.Size())
+	{
+		RoomInfo& optional = Rooms[optionalExtremeRoom];
+		optional.optionalTerrainAnchor = true;
+		const int realizedOptional = (int)lround(optional.floorZ);
+		Blueprint.RealizedOptionalElevation = realizedOptional;
+		// A constrained cycle can legally soften an optional scenic district.
+		// Keep the manifest target tied to the actual reachable terrace rather
+		// than advertising the pre-projection horizon as if it had been emitted.
+		if (Blueprint.OptionalElevationTarget != realizedOptional)
+		{
+			Blueprint.OptionalElevationTarget = realizedOptional;
+			optional.elevationTarget = realizedOptional;
+			optional.elevationRole = realizedOptional == 0 ? PGER_Flat :
+				(abs(realizedOptional) >= 96 ?
+					(realizedOptional > 0 ? PGER_Highland : PGER_Basin) : PGER_Terrace);
+		}
 	}
 
 	for (int y = 0; y < H; y++)
@@ -1044,6 +2738,10 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 			cell.floorTex = room.floorTex;
 			cell.ceilTex = room.ceilTex;
 			cell.wallTex = room.wallTex;
+			cell.materialFamily = room.materialFamily;
+			cell.footprint = room.footprint;
+			cell.elevationRole = room.elevationRole;
+			cell.elevationTarget = room.elevationTarget;
 			cell.light = room.light;
 			cell.enemyCount = room.enemyCount;
 			cell.monsterTier = room.monsterTier;
@@ -1057,9 +2755,12 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 	(void)H;
 	TArray<int> mainRooms;
 	TArray<int> sideRooms;
+	TArray<int> plannedArmoryRooms;
 	int startRoom = -1;
 	int maxProgressionRank = 1;
 	const ThemeStyle themeStyle = GetThemeStyle(Theme);
+	const RunBlueprint& blueprint = GetRunBlueprint();
+	const EProcGenArsenalTrack arsenalTrack = GetArsenalTrackKind();
 
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
@@ -1068,6 +2769,19 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 		if (room.hasPlayerStart) startRoom = ri;
 		else if (room.onMainPath && !room.hasExit) mainRooms.Push(ri);
 		else if (!room.hasExit) sideRooms.Push(ri);
+
+		// The cell-level planner nominates an armory before room composition.
+		// A landmark merge can absorb that cell into the main route, where it is
+		// no longer an optional choice. Retain only safe side-room nominations;
+		// the deterministic fallback below will choose another feasible room.
+		if (room.optionalArmory)
+		{
+			if (!room.onMainPath && !room.hasExit && !room.hasKey && !room.isLocked)
+				plannedArmoryRooms.Push(ri);
+			room.optionalArmory = false;
+			if (room.rewardPlan == PGRW_Armory)
+				room.rewardPlan = PGRW_Cache;
+		}
 	}
 
 	auto SortByDistance = [&](TArray<int>& list)
@@ -1085,7 +2799,28 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			}
 		}
 	};
-	SortByDistance(mainRooms);
+	auto SortByProgression = [&](TArray<int>& list)
+	{
+		for (int i = 0; i < (int)list.Size(); i++)
+		{
+			int best = i;
+			for (int j = i + 1; j < (int)list.Size(); j++)
+			{
+				const RoomInfo& candidate = Rooms[list[j]];
+				const RoomInfo& current = Rooms[list[best]];
+				if (candidate.progressionRank < current.progressionRank ||
+					(candidate.progressionRank == current.progressionRank && candidate.id < current.id))
+					best = j;
+			}
+			if (best != i)
+			{
+				int tmp = list[i];
+				list[i] = list[best];
+				list[best] = tmp;
+			}
+		}
+	};
+	SortByProgression(mainRooms);
 	SortByDistance(sideRooms);
 
 	auto GiveWeapon = [&](int roomId, int type)
@@ -1111,19 +2846,77 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			}
 		}
 	};
+	auto GiveOptionalWeapon = [&](int type)
+	{
+		for (int pass = 0; pass < 2; pass++)
+		{
+			for (int index = (int)sideRooms.Size() - 1; index >= 0; index--)
+			{
+				RoomInfo& room = Rooms[sideRooms[index]];
+				if (room.hasWeapon || room.hasExit || room.hasKey || room.isLocked) continue;
+				if (pass == 0 && !ContainsRoom(plannedArmoryRooms, room.id)) continue;
+				GiveWeapon(room.id, type);
+				room.optionalArmory = true;
+				room.rewardPlan = std::max(room.rewardPlan, (int)PGRW_Armory);
+				return;
+			}
+		}
+	};
 
 	if (startRoom >= 0) GiveWeapon(startRoom, 2001); // shotgun: immediate agency
 	const bool doom2Roster = (gameinfo.flags & GI_MAPxx) != 0;
-	if (doom2Roster && mainRooms.Size() > 1)
-		GiveProgressionWeapon(mainRooms.Size() / 4, 82); // Doom II super shotgun
-	if (mainRooms.Size() > 2)
-		GiveProgressionWeapon(mainRooms.Size() / 3, 2002); // chaingun
-	if (Size >= 2 && mainRooms.Size() > 3)
-		GiveProgressionWeapon(mainRooms.Size() / 2, 2003); // rocket launcher
-	if (Size >= 4 && mainRooms.Size() > 4)
-		GiveProgressionWeapon(mainRooms.Size() * 3 / 4, 2004); // plasma
+	const int routeJitter = (int)((blueprint.RecipeHash >> 13) % 3u) - 1;
+	auto RouteIndex = [&](int numerator, int denominator) -> int
+	{
+		if (mainRooms.Size() == 0) return 0;
+		return clamp((int)mainRooms.Size() * numerator / denominator + routeJitter,
+			0, (int)mainRooms.Size() - 1);
+	};
+	// Tracks reorder familiar stock Doom tools rather than making a mandatory
+	// route depend on a rare pickup. Optional armories provide the complementary
+	// playstyle and are always outside the completion path.
+	switch (arsenalTrack)
+	{
+	case PGAT_Demolition:
+		if (mainRooms.Size() > 2) GiveProgressionWeapon(RouteIndex(1, 4), 2002);
+		if (Size >= 2 && mainRooms.Size() > 3) GiveProgressionWeapon(RouteIndex(2, 5), 2003);
+		if (doom2Roster && mainRooms.Size() > 1) GiveProgressionWeapon(RouteIndex(3, 5), 82);
+		if (Size >= 4 && mainRooms.Size() > 4) GiveProgressionWeapon(RouteIndex(4, 5), 2004);
+		GiveOptionalWeapon(doom2Roster ? 82 : 2002);
+		break;
+	case PGAT_Energy:
+		if (mainRooms.Size() > 2) GiveProgressionWeapon(RouteIndex(1, 4), 2002);
+		if (doom2Roster && mainRooms.Size() > 1) GiveProgressionWeapon(RouteIndex(1, 3), 82);
+		if (Size >= 2 && mainRooms.Size() > 3) GiveProgressionWeapon(RouteIndex(1, 2), 2003);
+		if (Size >= 4 && mainRooms.Size() > 4) GiveProgressionWeapon(RouteIndex(2, 3), 2004);
+		GiveOptionalWeapon(2003);
+		break;
+	case PGAT_Ballistic:
+	default:
+		if (doom2Roster && mainRooms.Size() > 1) GiveProgressionWeapon(RouteIndex(1, 4), 82);
+		if (mainRooms.Size() > 2) GiveProgressionWeapon(RouteIndex(1, 3), 2002);
+		if (Size >= 2 && mainRooms.Size() > 3) GiveProgressionWeapon(RouteIndex(1, 2), 2003);
+		if (Size >= 4 && mainRooms.Size() > 4) GiveProgressionWeapon(RouteIndex(3, 4), 2004);
+		GiveOptionalWeapon(arsenalTrack == PGAT_Ballistic ? 2003 : 2002);
+		break;
+	}
 	if (Size >= 5 && Difficulty >= 5 && sideRooms.Size() > 0)
-		GiveWeapon(sideRooms.Last(), 2006); // optional BFG reward
+	{
+		GiveOptionalWeapon(2006); // high-risk late BFG contract
+	}
+
+	auto HasMainPathWeaponBefore = [&](const RoomInfo& room, int type) -> bool
+	{
+		if (room.weaponType == type) return true;
+		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+		{
+			const RoomInfo& candidate = Rooms[ri];
+			if (candidate.onMainPath && candidate.hasWeapon && candidate.weaponType == type &&
+				candidate.progressionRank <= room.progressionRank)
+				return true;
+		}
+		return false;
+	};
 
 	auto AmmoForStage = [&](const RoomInfo& room) -> int
 	{
@@ -1135,8 +2928,10 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			if (room.weaponType == 2004 || room.weaponType == 2006) return 2047;
 		}
 		int phase = clamp(room.progressionRank * 4 / (maxProgressionRank + 1), 0, 3);
-		if (phase >= 3 && Size >= 4) return 2047;
-		if (phase >= 2 && Size >= 2) return 2010;
+		if (Size >= 4 && HasMainPathWeaponBefore(room, 2004) &&
+			(arsenalTrack == PGAT_Energy || phase >= 3)) return 2047;
+		if (Size >= 2 && HasMainPathWeaponBefore(room, 2003) &&
+			(arsenalTrack == PGAT_Demolition || phase >= 2)) return 2010;
 		return (RNG() & 1) ? 2008 : 2007;
 	};
 	auto LargeAmmoForStage = [&](const RoomInfo& room) -> int
@@ -1148,6 +2943,16 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 		if (small == 2047) return 17;   // cell pack
 		return small;
 	};
+
+	// A cache challenge is an optional combat choice with a guaranteed useful
+	// payoff, never an empty label inherited from a branch cell that later
+	// merged into a larger room.
+	for (RoomInfo& room : Rooms)
+	{
+		if (room.encounterCard != PGEC_CacheChallenge) continue;
+		room.rewardPlan = std::max(room.rewardPlan, (int)PGRW_Cache);
+		room.recoveryBudget = std::max(room.recoveryBudget, 1);
+	}
 
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
@@ -1164,22 +2969,29 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			continue;
 		}
 
-		const bool majorFight = room.enemyCount >= 5 || room.isArena || room.hasKey || room.hasExit;
+		const bool cardSetPiece = room.encounterCard == PGEC_SetPiece ||
+			room.encounterCard == PGEC_HoldingLine;
+		const bool majorFight = room.enemyCount >= 5 || room.isArena || room.hasKey ||
+			room.hasExit || cardSetPiece;
 		const bool sustainedFight = Difficulty >= 4 && room.enemyCount >= 3;
-		const bool reward = room.hasWeapon || room.hasKey || room.isDeadEnd;
-		if (room.hasWeapon || majorFight || sustainedFight ||
-			(room.onMainPath && (RNG() % 100) < 60))
+		const bool plannedReserve = room.rewardPlan == PGRW_Emergency ||
+			room.rewardPlan == PGRW_KeyReserve || room.rewardPlan == PGRW_FinaleReserve;
+		const bool reward = room.hasWeapon || room.optionalArmory || room.hasKey ||
+			room.isDeadEnd || room.rewardPlan == PGRW_Cache ||
+			room.rewardPlan == PGRW_Armory;
+		if (room.hasWeapon || majorFight || sustainedFight || plannedReserve ||
+			room.recoveryBudget > 0 || (room.onMainPath && (RNG() % 100) < 48))
 		{
 			room.hasAmmo = true;
 			room.ammoType = majorFight ? LargeAmmoForStage(room) : AmmoForStage(room);
-			room.ammoCount = majorFight ? 2 : 1;
+			room.ammoCount = majorFight || plannedReserve ? 2 : 1;
 		}
-		if (majorFight || reward || (sustainedFight && room.onMainPath) ||
-			(room.onMainPath && (RNG() % 100) < 75))
+		if (majorFight || reward || plannedReserve || room.recoveryBudget > 0 ||
+			(sustainedFight && room.onMainPath) || (room.onMainPath && (RNG() % 100) < 62))
 		{
 			room.hasHealth = true;
 			room.healthType = majorFight ? 2012 : 2011;
-			room.healthCount = majorFight ? 2 : 1;
+			room.healthCount = majorFight || plannedReserve ? 2 : 1;
 		}
 		if ((!room.hasHealth && room.onMainPath && (RNG() % 100) < 55) ||
 			(!room.onMainPath && room.branchDepth >= 2))
@@ -1189,6 +3001,38 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			room.hasArmor = true;
 			room.armorType = room.hasBoss ? 2019 : 2015;
 		}
+	}
+
+	// Blueprint planning never allows a third consecutive major card on the
+	// critical path. The fallback reduces the third room to a skirmish instead
+	// of deleting a key/exit encounter, so topology remains untouched.
+	int highPressureRun = 0;
+	for (unsigned int index = 0; index < mainRooms.Size(); index++)
+	{
+		RoomInfo& room = Rooms[mainRooms[index]];
+		const bool highPressure = room.enemyCount >= 4 ||
+			room.encounterCard == PGEC_Crossfire || room.encounterCard == PGEC_Pincer ||
+			room.encounterCard == PGEC_Ambush || room.encounterCard == PGEC_SetPiece ||
+			room.encounterCard == PGEC_HoldingLine;
+		if (!highPressure)
+		{
+			highPressureRun = 0;
+			continue;
+		}
+		highPressureRun++;
+		if (highPressureRun <= 2) continue;
+		room.encounterCard = PGEC_Skirmish;
+		room.enemyCount = std::min(room.enemyCount, 2);
+		room.threatBudget = std::min(room.threatBudget, 1);
+		room.recoveryBudget = std::max(room.recoveryBudget, 1);
+		room.rewardPlan = std::max(room.rewardPlan, (int)PGRW_Emergency);
+		room.hasHealth = true;
+		room.healthType = 2011;
+		room.healthCount = std::max(room.healthCount, 1);
+		room.hasAmmo = true;
+		room.ammoType = AmmoForStage(room);
+		room.ammoCount = std::max(room.ammoCount, 1);
+		highPressureRun = 0;
 	}
 
 	// Never leave a long run of the critical path without recovery. Two rooms
@@ -1214,10 +3058,33 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 		}
 	}
 
+	// Key arenas and set pieces deliberately hand the player a breather before
+	// the next campaign beat. This is a small forward-looking ledger rather
+	// than a probabilistic refill roll, and it applies equally to every profile.
+	for (unsigned int index = 0; index + 1 < mainRooms.Size(); index++)
+	{
+		const RoomInfo& source = Rooms[mainRooms[index]];
+		const bool needsRecovery = source.hasKey || source.isArena ||
+			source.encounterCard == PGEC_SetPiece || source.encounterCard == PGEC_HoldingLine;
+		if (!needsRecovery) continue;
+		RoomInfo& target = Rooms[mainRooms[index + 1]];
+		target.hasHealth = true;
+		target.healthType = 2012;
+		target.healthCount = std::max(target.healthCount, 2);
+		target.hasAmmo = true;
+		target.ammoType = LargeAmmoForStage(target);
+		target.ammoCount = std::max(target.ammoCount, 1);
+		target.recoveryBudget = std::max(target.recoveryBudget, 1);
+		target.rewardPlan = std::max(target.rewardPlan, (int)PGRW_Emergency);
+	}
+
 	// Deep optional rooms are explicit survival opportunities, not decorative
 	// dead ends. Seeded selection favors the far ends of side limbs and grants a
 	// recovery bundle substantial enough to justify exploration.
-	int survivalCacheBudget = std::max(2, 1 + Size / 3);
+	int shrineRooms = 0;
+	for (const RoomInfo& room : Rooms)
+		if (room.featureMotif == PGFM_ShrineSecrets) shrineRooms++;
+	int survivalCacheBudget = std::max(2, 1 + Size / 3) + (shrineRooms > 0 ? 1 : 0);
 	for (int pass = 0; pass < 3 && survivalCacheBudget > 0; pass++)
 	{
 		for (int index = (int)sideRooms.Size() - 1; index >= 0 && survivalCacheBudget > 0; index--)
@@ -1236,6 +3103,7 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			room.ammoType = LargeAmmoForStage(room);
 			room.ammoCount = std::max(room.ammoCount, 2);
 			room.hasDoor = room.hasDoor || room.isDeadEnd;
+			room.rewardPlan = std::max(room.rewardPlan, (int)PGRW_Cache);
 			if ((survivalCacheBudget & 1) == 0 && !room.hasArmor)
 			{
 				room.hasArmor = true;
@@ -1248,10 +3116,21 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 	// Turn a few optional dead ends into real Doom-style secrets. Selection is
 	// deterministic and favors the deepest side limbs; every secret receives a
 	// useful recovery bundle even when weapon progression chose another room.
-	int secretBudget = 3 + Size / 3 + (Detail >= 1 ? 1 : 0) + (Detail == 2 ? 1 : 0);
+	int secretBudget = 3 + Size / 3 + (Detail >= 1 ? 1 : 0) + (Detail == 2 ? 1 : 0) +
+		(shrineRooms > 0 ? 1 : 0);
+	// The terrain pass may reserve one deep optional district as the opposite
+	// dramatic horizon.  A secret room is deliberately re-levelled to its sole
+	// neighbour by BuildUDMF so its hidden door cannot become a ledge; therefore
+	// it cannot also carry that promised, reachable extreme.  Keep the actual
+	// terrain anchor explorable as an ordinary optional district instead.
+	auto IsOptionalTerrainAnchor = [&](const RoomInfo& room) -> bool
+	{
+		return room.optionalTerrainAnchor;
+	};
 	auto MakeSecret = [&](RoomInfo& room)
 	{
 		room.isSecret = true;
+		room.manualInteraction = PGMI_SecretDoor;
 		room.hasDoor = true;
 		room.hasAmmo = true;
 		room.ammoType = AmmoForStage(room);
@@ -1265,12 +3144,13 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			room.hasArmor = true;
 			room.armorType = 2015;
 		}
+		room.rewardPlan = std::max(room.rewardPlan, (int)PGRW_Cache);
 	};
 	for (int index = (int)sideRooms.Size() - 1; index >= 0 && secretBudget > 0; index--)
 	{
 		RoomInfo& room = Rooms[sideRooms[index]];
 		if (!room.reservedSecret || !room.isDeadEnd || room.hasKey ||
-			room.hasExit || room.isLocked)
+			room.hasExit || room.isLocked || IsOptionalTerrainAnchor(room))
 			continue;
 		MakeSecret(room);
 		secretBudget--;
@@ -1280,7 +3160,9 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 		for (int index = (int)sideRooms.Size() - 1; index >= 0 && secretBudget > 0; index--)
 		{
 			RoomInfo& room = Rooms[sideRooms[index]];
-			if (room.isSecret || !room.isDeadEnd || room.hasKey || room.hasExit || room.isLocked) continue;
+			if (room.isSecret || !room.isDeadEnd || room.hasKey || room.hasExit ||
+				room.isLocked || IsOptionalTerrainAnchor(room))
+				continue;
 			if (pass == 0 && room.branchDepth < 2) continue;
 			if (pass == 2 && room.branchDepth < 1) continue;
 			MakeSecret(room);
@@ -1382,6 +3264,23 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			cell.armorType = room.armorType;
 			cell.enemyCount = room.enemyCount;
 			cell.monsterTier = room.monsterTier;
+			cell.runBeat = room.runBeat;
+			cell.encounterCard = room.encounterCard;
+			cell.featureMotif = room.featureMotif;
+			cell.featureMotifPriority = room.featureMotifPriority;
+			cell.district = room.district;
+			cell.stageShape = room.stageShape;
+			cell.landmarkArchetype = room.landmarkArchetype;
+			cell.districtRole = room.districtRole;
+			cell.verticalIntent = room.verticalIntent;
+			cell.verticalRise = room.verticalRise;
+			cell.verticalAnchor = room.verticalAnchor;
+			cell.threatBudget = room.threatBudget;
+			cell.recoveryBudget = room.recoveryBudget;
+			cell.optionalArmory = room.optionalArmory;
+			cell.arsenalTrack = room.arsenalTrack;
+			cell.finaleCard = room.finaleCard;
+			cell.rewardPlan = room.rewardPlan;
 		}
 	}
 }

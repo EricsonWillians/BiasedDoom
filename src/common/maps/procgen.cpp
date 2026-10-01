@@ -24,6 +24,7 @@
 #include "gamestate.h"
 #include "i_system.h"
 #include "menu.h"
+#include "files.h"
 #include <utility>
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,41 @@ namespace
 		value = (value ^ (value >> 16)) * 0x21f0aaadu;
 		value = (value ^ (value >> 15)) * 0x735a2d97u;
 		return value ^ (value >> 15);
+	}
+
+	void ConfigureProceduralGenerator(FProceduralMapGenerator& gen, FCommandLine& argv)
+	{
+		gen.SetSeed(argv.argc() > 1 ? atoi(argv[1]) : 0);
+		gen.SetTheme(argv.argc() > 2 ? argv[2] : "techbase");
+		gen.SetDifficulty(argv.argc() > 3 ? atoi(argv[3]) : 3);
+		gen.SetSize(argv.argc() > 4 ? atoi(argv[4]) : 3);
+		gen.SetLayout(argv.argc() > 5 ? atoi(argv[5]) : 1);
+		gen.SetVerticality(argv.argc() > 6 ? atoi(argv[6]) : 1);
+		gen.SetDetail(argv.argc() > 7 ? atoi(argv[7]) : 1);
+		gen.SetOutdoors(argv.argc() > 8 ? atoi(argv[8]) : 1);
+	}
+
+	bool WriteProceduralDump(const FString& path, const FString& contents, const char* description)
+	{
+		FileWriter* file = FileWriter::Open(path.GetChars());
+		if (file == nullptr)
+		{
+			Printf(TEXTCOLOR_RED "Could not open %s for writing.\n", path.GetChars());
+			return false;
+		}
+
+		const size_t expected = contents.Len();
+		const bool written = file->Write(contents.GetChars(), expected) == expected;
+		delete file;
+		if (!written)
+		{
+			Printf(TEXTCOLOR_RED "Could not fully write %s.\n", path.GetChars());
+			return false;
+		}
+
+		Printf("Dumped %s to %s (%lu bytes)\n", description, path.GetChars(),
+			(unsigned long)expected);
+		return true;
 	}
 }
 
@@ -255,23 +291,26 @@ CCMD(procmap_restore_defaults)
 CCMD(dumpprocudmf)
 {
 	FProceduralMapGenerator& gen = FProceduralMapGenerator::GetInstance();
-	gen.SetSeed(argv.argc() > 1 ? atoi(argv[1]) : 0);
-	gen.SetTheme(argv.argc() > 2 ? argv[2] : "techbase");
-	gen.SetDifficulty(argv.argc() > 3 ? atoi(argv[3]) : 3);
-	gen.SetSize(argv.argc() > 4 ? atoi(argv[4]) : 3);
-	gen.SetLayout(argv.argc() > 5 ? atoi(argv[5]) : 1);
-	gen.SetVerticality(argv.argc() > 6 ? atoi(argv[6]) : 1);
-	gen.SetDetail(argv.argc() > 7 ? atoi(argv[7]) : 1);
-	gen.SetOutdoors(argv.argc() > 8 ? atoi(argv[8]) : 1);
+	ConfigureProceduralGenerator(gen, argv);
 	if (gen.Generate())
 	{
-		FILE* f = fopen("/tmp/procmap_test.udmf", "w");
-		if (f)
-		{
-			fputs(gen.GetUDMFText().GetChars(), f);
-			fclose(f);
-			Printf("Dumped UDMF to /tmp/procmap_test.udmf (%lu bytes)\n", (unsigned long)gen.GetUDMFText().Len());
-		}
+		const FString path = argv.argc() > 9 ? argv[9] : "/tmp/procmap_test.udmf";
+		WriteProceduralDump(path, gen.GetUDMFText(), "UDMF");
+	}
+	else
+	{
+		Printf(TEXTCOLOR_RED "Generation failed: %s\n", gen.GetLastError());
+	}
+}
+
+CCMD(dumpprocmanifest)
+{
+	FProceduralMapGenerator& gen = FProceduralMapGenerator::GetInstance();
+	ConfigureProceduralGenerator(gen, argv);
+	if (gen.Generate())
+	{
+		const FString path = argv.argc() > 9 ? argv[9] : "/tmp/procmap_manifest.json";
+		WriteProceduralDump(path, gen.GetRunManifest(), "procedural run manifest");
 	}
 	else
 	{
@@ -301,6 +340,8 @@ CCMD(procmap)
 		(int)procgen_seed, (const char*)procgen_theme, (int)procgen_difficulty,
 		(int)procgen_size, (int)procgen_layout, (int)procgen_verticality,
 		(int)procgen_detail, (int)procgen_outdoors);
+	Printf("Run profile: %s\n", gen.GetRunProfile().GetChars());
+	Printf("Run briefing: %s\n", gen.GetRunBriefing().GetChars());
 
 	// Do NOT call Generate() here. P_OpenProceduralMapData will generate
 	// the map when the engine loads PROCMAP, ensuring a single generation

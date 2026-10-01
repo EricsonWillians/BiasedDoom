@@ -33,5 +33,7 @@ class ProceduralMapGenerator
     native static void SetOutdoors(int outdoors);
     native static int Generate();        // returns 1 on success, 0 on failure
     native static String GetLastError();
+    native static String GetRunProfile();
+    native static String GetRunBriefing();
     native static int GenerateAndLoad(int seed, String theme, int difficulty, int size);
 }

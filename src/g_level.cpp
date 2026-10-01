@@ -1573,6 +1573,17 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 	}
 
 	StatusBar->AttachToPlayer (&players[consoleplayer]);
+	if (P_IsProceduralMapName(MapName.GetChars()) && !IsReentering() && !FromSnapshot)
+	{
+		const FString& profile = FProceduralMapGenerator::GetInstance().GetRunProfile();
+		const FString& briefing = FProceduralMapGenerator::GetInstance().GetRunBriefing();
+		if (profile.IsNotEmpty() && briefing.IsNotEmpty())
+		{
+			FString message;
+			message.Format("%s\n%s", profile.GetChars(), briefing.GetChars());
+			C_MidPrint(nullptr, message.GetChars(), true);
+		}
+	}
 	// Base-map setup of a savegame load is complete; let handlers mutate again.
 	transitionScope.Disarm();
 	//      unsafe world load

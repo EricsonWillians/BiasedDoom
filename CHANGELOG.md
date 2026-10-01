@@ -4,6 +4,81 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Procedural maps now derive an automatic, deterministic **Run Blueprint** from
+  the existing recipe. Expedition, Assault, Infiltration, Circuit, and Siege
+  profiles vary cardinal route orientation, key order, branch/loop emphasis,
+  encounter beats, feature motifs, arsenal progression, rewards, finale
+  structure, and theme-local districts without adding a new menu control or
+  CVar.
+- `dumpprocmanifest` exports a schema-1 JSON run plan alongside the existing
+  UDMF dumper. It includes the visible profile/briefing, orientation, key order,
+  motifs, arsenal track, finale, two-to-four requested/realized macro stages,
+  landmark archetypes, district roles, planned/realized macro-stage counts,
+  vertical-route intent with planned and realized rise, and per-room
+  card/threat/recovery/economy/manual-interaction plan and post-emission
+  card-feasibility evidence (geometry, capacity, owned static placements, and
+  manual-action witnesses), plus an accessibility proof summary with mandatory-anchor, navigation-reservation, and keyed-door
+  approach counts.
+- `dumpprocmanifest` now also exposes the realized spatial-art contract without
+  changing schema `1`: stage material/elevation roles; room footprint grammar,
+  requested/realized contour grammar with unified-envelope/bounds evidence,
+  material family, floor altitude, clear height, and contour metrics; real
+  connection profile/width/depth/stair/alignment data plus physical-door and
+  native-art facts; and a compact
+  `visual_proof` summary for alignment, geometry, connector clearance, and
+  terrain realization.
+- Read-only ZScript accessors `ProceduralMapGenerator.GetRunProfile()` and
+  `GetRunBriefing()`, plus a one-time fresh-load profile-and-briefing notification and
+  `procmap` console summary.
+- `test_procgen.sh replayability`: a sequential deterministic corpus covering
+  all profiles, orientations, themes, motifs, arsenal tracks, finale cards, and
+  encounter cards, plus macro shapes, landmark archetypes, district roles, and
+  vertical-route intents; it also verifies manifest pacing/economy contracts,
+  critical-route vertical anchors, player/prop clearance, and a serialized-sector
+  symbolic key-inventory route to the exit.
+
+### Changed
+
+- Eligible rectangular composed rooms now emit one true, shared-sector exterior
+  envelope rather than repeated square/chamfered cell shells; the emitter
+  proves no former same-room cell-face wall remains. Complex or feature-host
+  rooms retain the conservative shell path and truthfully report the safe
+  fallback in the manifest. Techbases build airlocks, command courts, and
+  reactor wells; Industrial maps build loading bays, refinery switchbacks, and
+  foundry bastions; Hell builds blood chapels, ritual pits, and chasm bridges;
+  Gothic builds gatehouses, naves, apses, and cloisters; Corrupted Tech builds
+  containment halls, breach terraces, and hell-core finales. Infeasible
+  contours fall back before compromising portal or navigation clearance.
+- Every realized connection now selects a protected spatial profile: 96×48
+  Narrow links are optional-branch-only, 128×64 Standard links cover required
+  travel and stairs, 176×96 Galleries serve main-route landmarks, and 224×128
+  Grand links frame arenas and finales.
+- Every graph manual/keyed/secret door now preserves at least a 128×64 physical
+  aperture. Native 64- or 128-unit IWAD door art is fitted independently, so a
+  compact `DOOR` or `SPCDOOR` texture can never silently create a 64-unit route.
+- Verticality now plans a graph terrain field instead of a repeating terrace
+  cadence. Dramatic size 3–4 runs target a 128–192-unit highland or basin;
+  size 5+ runs target a 192–320-unit landmark and a reachable optional
+  district at the opposite altitude. A constrained scenic chain retries a
+  safe alternative before generation can fail. All movement remains explicit
+  8-unit stairs with no single walkable change above 64 units; critical pads,
+  doorways, and manual interactions remain level.
+- District material families now coordinate theme-safe walls, floors, ceilings,
+  trims, corridors, stairs, and landmark accents. Wall alignment uses the
+  active IWAD texture's actual logical dimensions and deliberate world or
+  architectural-run phase groups, replacing the old fixed 128-unit centering
+  assumption while retaining exact-fit door and switch art.
+- Procedural map size now has structural and runtime coverage through the
+  supported maximum of 160. Fresh-map seed reproducibility remains guaranteed
+  within one engine build and IWAD family; algorithm releases may intentionally
+  change an old seed, while savegames remain exact through archived UDMF.
+- Tagged reveal doors are now exclusively manual, one-sided switch caches.
+  `Door_Open` no longer uses key-platform or walkover activation, so
+  collecting a key cannot fire an off-screen reveal or automatic ambush; static
+  Ambush cards retain encounter variety through ordinary IWAD-safe geometry.
+
 ## [4.15.17] - 2026-09-30
 
 ### Added

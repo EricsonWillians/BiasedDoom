@@ -63,6 +63,16 @@ static const char* ZSF_GetLastError()
 	return FProceduralMapGenerator::GetInstance().GetLastError();
 }
 
+static const char* ZSF_GetRunProfile()
+{
+	return FProceduralMapGenerator::GetInstance().GetRunProfile().GetChars();
+}
+
+static const char* ZSF_GetRunBriefing()
+{
+	return FProceduralMapGenerator::GetInstance().GetRunBriefing().GetChars();
+}
+
 static int ZSF_GenerateAndLoad(int seed, const FString& theme, int diff, int size)
 {
 	FProceduralMapGenerator& gen = FProceduralMapGenerator::GetInstance();
@@ -151,6 +161,18 @@ DEFINE_ACTION_FUNCTION_NATIVE(ProceduralMapGenerator, GetLastError, ZSF_GetLastE
 {
 	PARAM_PROLOGUE;
 	ACTION_RETURN_STRING(ZSF_GetLastError());
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(ProceduralMapGenerator, GetRunProfile, ZSF_GetRunProfile)
+{
+	PARAM_PROLOGUE;
+	ACTION_RETURN_STRING(ZSF_GetRunProfile());
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(ProceduralMapGenerator, GetRunBriefing, ZSF_GetRunBriefing)
+{
+	PARAM_PROLOGUE;
+	ACTION_RETURN_STRING(ZSF_GetRunBriefing());
 }
 
 DEFINE_ACTION_FUNCTION_NATIVE(ProceduralMapGenerator, GenerateAndLoad, ZSF_GenerateAndLoad)
