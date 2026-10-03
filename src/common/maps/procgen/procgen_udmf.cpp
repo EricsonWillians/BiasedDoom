@@ -760,6 +760,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto AddThing = [&](double x, double y, int type, int angle = 0, bool ambush = false,
 		int encounterRoom = -1, int accessibilitySector = -1) -> bool
 	{
+		// Keep every static emission legal for the active stock IWAD. The
+		// planner selects family-specific tables first; this final normalization
+		// protects optional caches, decorations, and future cards as well.
+		type = ProcGenCompatibleThing(type);
 		if (!MoveThingOutOfEmittedFluid(x, y))
 		{
 			fluidThingPlacementFailed = true;
@@ -1450,9 +1454,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return false;
 	};
 
-	// Expose several landmarks to the sky. Every map receives both an outdoor
-	// finale and at least one additional open combat space; colossal maps can
-	// alternate indoor routes with a much broader courtyard cadence.
+	// The finale is always outdoors. The style/theme budget can then expose
+	// additional eligible arenas, hubs, and broad route rooms; compact Enclosed
+	// maps may deliberately keep the finale as their only courtyard.
 	TArray<bool> outdoorRooms;
 	outdoorRooms.Resize(Rooms.Size());
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++) outdoorRooms[ri] = false;
@@ -3583,7 +3587,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		// Doom II computer/special doors appear primarily in Techbase and
 		// Industrial maps, as they do in the stock campaign. They remain excluded
 		// from Ultimate Doom, whose IWAD does not define the SPCDOOR family.
-		if ((gameinfo.flags & GI_MAPxx) &&
+		if (ProcGenUsesDoom2Roster() &&
 			(themeStyle == ThemeTechbase || themeStyle == ThemeIndustrial) &&
 			(style % 5) == 0)
 			return Doom2SpecialDoors[(style / 5) % countof(Doom2SpecialDoors)];
@@ -5264,7 +5268,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		int jitter = enemyIndex +
 			(int)(StableRoomHash(room.id, 0x4d4f4e53u + (uint32_t)enemyIndex) % 3u);
-		if (!(gameinfo.flags & GI_MAPxx))
+		if (!ProcGenUsesDoom2Roster())
 		{
 			if (room.monsterTier <= 2) return DoomEarly[jitter % countof(DoomEarly)];
 			if (room.monsterTier <= 4) return DoomMid[jitter % countof(DoomMid)];
@@ -5291,7 +5295,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	{
 		static const int DoomRanged[] = { 3004, 9, 3001, 3001 };
 		static const int Doom2Ranged[] = { 3004, 9, 3001, 65, 66 };
-		if (!(gameinfo.flags & GI_MAPxx))
+		if (!ProcGenUsesDoom2Roster())
 			return DoomRanged[(room.monsterTier + salt +
 				(int)(StableRoomHash(room.id, 0x52414e47u + (uint32_t)salt) % countof(DoomRanged))) %
 				countof(DoomRanged)];
@@ -7435,7 +7439,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				room.finaleCard == PGFC_Fortress;
 			const bool hasHeavyArena = room.cellCount >= MinimumHeavyBossCells &&
 				prefersHeavyBoss;
-			if (!(gameinfo.flags & GI_MAPxx))
+			if (!ProcGenUsesDoom2Roster())
 			{
 				// Ultimate Doom does not have Doom II's visually similar Hell Knight.
 				bossType = Difficulty >= 5 && hasHeavyArena ?
@@ -7661,7 +7665,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			(room.lockStage >= 2 || room.monsterTier >= 4);
 		const bool infernalDecor = themeStyle == ThemeHell || themeStyle == ThemeGothic ||
 			corruptedInfernal;
-		const bool doom2Roster = (gameinfo.flags & GI_MAPxx) != 0;
+		const bool doom2Roster = ProcGenUsesDoom2Roster();
 		bool majorLandmark = room.hasPlayerStart || room.hasKey || room.hasExit ||
 			room.isHub || room.isArena || room.isSecret;
 		int decorationCount = majorLandmark ? std::min(8, 4 + room.cellCount / 2) :
@@ -9156,8 +9160,19 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 						128 : metric.width;
 					const int fitHeight = (line.secret || line.special != 12) ?
 						128 : metric.height;
-					side.offsetX = (int)lround(std::max(0.0,
-						((double)fitWidth - lineLength) * 0.5));
+					// Door faces narrower than their art keep the familiar centered
+					// crop.  Wider physical apertures intentionally repeat the native
+					// texture at scale 1, but they must still be centered as a pattern
+					// rather than always beginning at texture coordinate zero.  The old
+					// clamp made every 176/224-unit gallery door expose an arbitrary
+					// left-hand tile fragment, which is especially conspicuous on the
+					// asymmetric BIGDOOR/SPCDOOR faces.  A signed phase works for both
+					// cases: at the door midpoint it lands on the midpoint of a native
+					// tile, so the repeat is symmetric at both jambs.  Use the resolved
+					// active-IWAD display width rather than the historic 128-unit
+					// assumption; secret/cache panels retain their deliberate 128-wide
+					// disguised-panel contract above.
+					side.offsetX = (int)lround(((double)fitWidth - lineLength) * 0.5);
 					side.offsetY = 0;
 					scaleX = 1.0;
 					scaleY = std::min(1.0, (double)fitHeight / faceHeight);

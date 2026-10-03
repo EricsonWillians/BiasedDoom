@@ -40,6 +40,10 @@ namespace BdImGui
 	// starts posting EV_GUI_* events while ImGui wants input.
 	bool WantsGuiCapture();
 
+	// True while an ImGui text-editing widget owns text input. Platform input
+	// paths use this to avoid diverting printable shortcut keys from the field.
+	bool WantsTextInput();
+
 	// Master visibility switch, backed by the py_imgui cvar.
 	bool MasterVisible();
 	void SetMasterVisible(bool on);

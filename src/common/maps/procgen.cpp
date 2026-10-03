@@ -45,8 +45,25 @@ namespace
 	constexpr size_t MaxArchivedProceduralMapSize = 64 * 1024 * 1024;
 	FProceduralMapArchiveData CurrentProceduralMap;
 	FProceduralMapArchiveData PendingProceduralMap;
+	FProceduralMapArchiveData CompletedProceduralMap;
 	bool HasCurrentProceduralMap = false;
 	bool HasPendingProceduralMap = false;
+	bool HasCompletedProceduralMap = false;
+
+	void CopyProceduralRecipe(FProceduralMapArchiveData& destination,
+		const FProceduralMapArchiveData& source)
+	{
+		destination.Seed = source.Seed;
+		destination.Theme = source.Theme;
+		destination.Difficulty = source.Difficulty;
+		destination.Size = source.Size;
+		destination.Layout = source.Layout;
+		destination.Verticality = source.Verticality;
+		destination.Detail = source.Detail;
+		destination.Outdoors = source.Outdoors;
+		// A completion remembers the recipe, not a second 64 MiB TEXTMAP copy.
+		destination.UDMF = "";
+	}
 
 	bool IsProceduralTheme(const FString& theme)
 	{
@@ -73,6 +90,65 @@ namespace
 		value = (value ^ (value >> 16)) * 0x21f0aaadu;
 		value = (value ^ (value >> 15)) * 0x735a2d97u;
 		return value ^ (value >> 15);
+	}
+
+	int MakeProceduralMenuSeed()
+	{
+		int seed = (int)(I_MakeRNGSeed() & 0x7fffffffU);
+		return seed == 0 ? 1 : seed;
+	}
+
+	int MakeDistinctProceduralMenuSeed(int previousSeed)
+	{
+		// A collision is already very unlikely, but a menu action promising a
+		// new run must never quietly rebuild the just-completed recipe.
+		for (int attempt = 0; attempt < 8; ++attempt)
+		{
+			const int seed = MakeProceduralMenuSeed();
+			if (seed != previousSeed)
+				return seed;
+		}
+
+		uint32_t fallback = uint32_t(previousSeed) ^ 0x9e3779b9u;
+		fallback ^= fallback >> 16;
+		fallback *= 0x85ebca6bu;
+		fallback ^= fallback >> 13;
+		int seed = (int)(fallback & 0x7fffffffu);
+		if (seed == 0) seed = 1;
+		if (seed == previousSeed) seed = seed == 0x7fffffff ? 1 : seed + 1;
+		return seed;
+	}
+
+	void ApplyProceduralRecipeToCVars(const FProceduralMapArchiveData& recipe, int seed)
+	{
+		procgen_seed = seed;
+		procgen_theme = recipe.Theme.GetChars();
+		procgen_difficulty = recipe.Difficulty;
+		procgen_size = recipe.Size;
+		procgen_layout = recipe.Layout;
+		procgen_verticality = recipe.Verticality;
+		procgen_detail = recipe.Detail;
+		procgen_outdoors = recipe.Outdoors;
+	}
+
+	bool StartProceduralMapFromCurrentCVars()
+	{
+		if (netgame)
+		{
+			Printf(TEXTCOLOR_RED "Procedural games can only be started in single-player.\n");
+			return false;
+		}
+		if (D_SetStartupMap("PROCMAP"))
+			return true;
+
+		G_DeferedInitNew("PROCMAP");
+		if (gamestate == GS_FULLCONSOLE)
+		{
+			gamestate = GS_HIDECONSOLE;
+			gameaction = ga_newgame;
+		}
+		M_ClearMenus();
+		return true;
 	}
 
 	void ConfigureProceduralGenerator(FProceduralMapGenerator& gen, FCommandLine& argv)
@@ -202,6 +278,12 @@ MapData* P_OpenProceduralMapData(const char* mapname)
 		return nullptr;
 	}
 
+	// A fresh run is not eligible for the replay action until it reaches its
+	// own real Exit_Normal/Exit_Secret. This also prevents a restored save from
+	// accidentally offering a stale recipe from a previous level.
+	HasCompletedProceduralMap = false;
+	CompletedProceduralMap = FProceduralMapArchiveData();
+
 	MapData* map = new MapData;
 	map->isText = true;
 
@@ -215,6 +297,25 @@ MapData* P_OpenProceduralMapData(const char* mapname)
 const FProceduralMapArchiveData* P_GetCurrentProceduralMapArchive()
 {
 	return HasCurrentProceduralMap ? &CurrentProceduralMap : nullptr;
+}
+
+void P_MarkCurrentProceduralMapCompleted()
+{
+	if (!HasCurrentProceduralMap || CurrentProceduralMap.UDMF.IsEmpty())
+		return;
+
+	CopyProceduralRecipe(CompletedProceduralMap, CurrentProceduralMap);
+	HasCompletedProceduralMap = true;
+}
+
+bool P_PrepareNextProceduralMap()
+{
+	if (!HasCompletedProceduralMap)
+		return false;
+
+	ApplyProceduralRecipeToCVars(CompletedProceduralMap,
+		MakeDistinctProceduralMenuSeed(CompletedProceduralMap.Seed));
+	return true;
 }
 
 bool P_StageProceduralMapArchive(int seed, const char* theme, int difficulty,
@@ -263,12 +364,6 @@ CVAR(Int, procgen_verticality, 1, CVAR_ARCHIVE);
 CVAR(Int, procgen_detail, 1, CVAR_ARCHIVE);
 CVAR(Int, procgen_outdoors, 1, CVAR_ARCHIVE);
 
-static int MakeProceduralMenuSeed()
-{
-	int seed = (int)(I_MakeRNGSeed() & 0x7fffffffU);
-	return seed == 0 ? 1 : seed;
-}
-
 CCMD(procmap_randomize_seed)
 {
 	procgen_seed = MakeProceduralMenuSeed();
@@ -286,6 +381,40 @@ CCMD(procmap_restore_defaults)
 	procgen_detail = 1;
 	procgen_outdoors = 1;
 	Printf("Procedural map settings restored to defaults.\n");
+}
+
+CCMD(procmap_next)
+{
+	if (netgame)
+	{
+		Printf(TEXTCOLOR_RED "Procedural games can only be started in single-player.\n");
+		return;
+	}
+
+	if (!P_PrepareNextProceduralMap())
+	{
+		Printf(TEXTCOLOR_RED "Finish a procedural run before starting its next seed.\n");
+		return;
+	}
+
+	FProceduralMapGenerator& gen = FProceduralMapGenerator::GetInstance();
+	gen.SetSeed(procgen_seed);
+	gen.SetTheme(procgen_theme);
+	gen.SetDifficulty(procgen_difficulty);
+	gen.SetSize(procgen_size);
+	gen.SetLayout(procgen_layout);
+	gen.SetVerticality(procgen_verticality);
+	gen.SetDetail(procgen_detail);
+	gen.SetOutdoors(procgen_outdoors);
+
+	Printf("Starting next procedural run with the completed setup "
+		"(seed=%d, theme=%s, diff=%d, size=%d, layout=%d, verticality=%d, detail=%d, outdoors=%d)...\n",
+		(int)procgen_seed, (const char*)procgen_theme, (int)procgen_difficulty,
+		(int)procgen_size, (int)procgen_layout, (int)procgen_verticality,
+		(int)procgen_detail, (int)procgen_outdoors);
+	Printf("Run profile: %s\n", gen.GetRunProfile().GetChars());
+	Printf("Run briefing: %s\n", gen.GetRunBriefing().GetChars());
+	StartProceduralMapFromCurrentCVars();
 }
 
 CCMD(dumpprocudmf)
@@ -346,19 +475,5 @@ CCMD(procmap)
 	// Do NOT call Generate() here. P_OpenProceduralMapData will generate
 	// the map when the engine loads PROCMAP, ensuring a single generation
 	// and proper MapData construction.
-	if (netgame)
-	{
-		Printf(TEXTCOLOR_RED "Procedural games can only be started in single-player.\n");
-		return;
-	}
-	if (D_SetStartupMap("PROCMAP"))
-		return;
-
-	G_DeferedInitNew("PROCMAP");
-	if (gamestate == GS_FULLCONSOLE)
-	{
-		gamestate = GS_HIDECONSOLE;
-		gameaction = ga_newgame;
-	}
-	M_ClearMenus();
+	StartProceduralMapFromCurrentCVars();
 }

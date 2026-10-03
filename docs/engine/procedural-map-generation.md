@@ -1,12 +1,21 @@
 # Procedural Map Generation
 
-> **Living Document** — This page is updated whenever the procedural generator is modified. Last updated: 2026-10-01.
+> **Living Document** — This page is updated whenever the procedural generator is modified. Last updated: 2026-10-03.
 
 BiasedDoom includes a runtime procedural dungeon generator that synthesizes complete UDMF maps in memory. Maps are generated on demand when the engine loads the special map name `PROCMAP` (or any name starting with `PROC`). No WAD/PK3 editing is required.
+
+> **Scope TODO (intentionally deferred)** — This release supports only Doom and
+> Doom II IWAD families. Heretic and Hexen procedural generation will not be
+> implemented in this version: both need dedicated actor, inventory, key,
+> texture, and map-action grammars. Other non-Doom families are likewise
+> rejected clearly instead of receiving incompatible Doom content.
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Current Generation Pipeline](#current-generation-pipeline)
+- [Planning Versus Realization](#planning-versus-realization)
+- [Compatibility, Determinism, and Savegames](#compatibility-determinism-and-savegames)
 - [Console Commands](#console-commands)
 - [CVars](#cvars)
 - [ZScript API](#zscript-api)
@@ -24,18 +33,43 @@ BiasedDoom includes a runtime procedural dungeon generator that synthesizes comp
 
 Choose **Procedural Game** from Doom's main menu. The setup screen contains every generation control:
 
-- **Seed** — an exact signed integer. Reusing the same seed and settings rebuilds the same map.
+- **Seed** — an exact signed integer. Reusing the same recipe rebuilds the
+  same map within one engine build and active Doom game-data context (including
+  the IWAD family).
 - **Randomize Seed** — chooses and displays a new positive seed without starting immediately.
 - **Theme** — Techbase, Hell, Industrial, Gothic, or Corrupted Tech.
+- **IWAD-aware content** — Ultimate Doom receives its legal weapon, monster,
+  prop, and texture vocabulary; Doom II may additionally use its Super Shotgun,
+  MegaSphere, expanded bestiary, lamps, and `SPCDOOR` variants. The active IWAD
+  is part of the generated-content contract, so an unavailable Doom II item
+  always falls back to a stock Doom equivalent.
 - **Generation Difficulty** — five encounter-pressure bands from Light Resistance to Nightmare.
 - **Map Size** — an integer slider from 1 (compact) through 160 (absurd). The largest values intentionally trade generation/load time for extremely long routes and thousands of sectors. Sizes above 40 spread growth across both axes and center the emitted footprint to preserve a broad coordinate safety margin.
 - **Layout Shape** — Directed keeps a focused critical route with few side limbs and loops; Balanced is the default; Exploratory lengthens the route and substantially increases optional branches and same-stage circulation.
-- **Verticality** — Gentle uses a profile-derived stair hall, terrace overlook, or bridge approach; Varied guarantees a positive/negative dogleg pair; Dramatic plans a real highland or basin. At size 3–4 its main-route terrain target is a 128–192-unit landform; at size 5+ it targets 192–320 units and a reachable optional district at the opposite altitude. The generator reserves multi-flight stairs first and retries a different safe chain rather than failing a map. Every individual connection remains an explicit 8-unit stair run with no single walking transition over 64 units; pads, doors, keys, switches, and exits stay level.
+- **Verticality** — At size 3+, Gentle uses a profile-derived stair hall,
+  terrace overlook, or bridge approach; Varied plans a positive/negative
+  dogleg pair; Dramatic plans a highland or basin. The planner retries a
+  different protected chain when possible, but omits an unplaceable elevation
+  beat rather than compromising clearance or failing the map. A constrained
+  dogleg can also safely realize as a stair hall. At size 3–4 its
+  main-route terrain target is a 128–192-unit landform; at size 5+ it targets
+  192–320 units and plans an optional district at the opposite altitude.
+  Every emitted elevation transition is an explicit 8-unit stair run with no
+  single walking transition over 64 units; pads, doors, keys, switches, and
+  exits stay level. The manifest distinguishes the requested terrain intent
+  from the realized route.
 - **Architecture Detail** — Sparse restrains landmark growth, interactive structures, trim, and props; Detailed is the default; Lavish expands landmarks and adds more reveal caches, perches, lifts, architectural trim, and collision-checked decoration.
 - **Outdoor Spaces** — Enclosed keeps nearly all rooms roofed, Mixed alternates interior and courtyard beats, and Open-Air turns many eligible landmarks into sky spaces. The finale remains a readable outdoor landmark in every mode.
 - **Run Blueprint** — every recipe automatically derives an Expedition, Assault, Infiltration, Circuit, or Siege run identity. It changes route direction, key order, branch/loop emphasis, combat beats, feature motifs, arsenal track, rewards, and finale without adding a selector or archived setting. The generated map shows its profile and one-line briefing together once on a fresh load.
 - **Generate & Play** — starts `PROCMAP` with the displayed settings.
 - **New Random Map** — chooses a new seed and starts it in one action.
+- **Next Random Run (Same Setup)** — after you exit a procedural map through
+  its normal or secret exit,
+  starts a fresh single-player run from that completed map's theme, difficulty,
+  size, and style settings while choosing a guaranteed-different seed. It is a
+  quick endless-play loop, not a savegame/hub shortcut: inventory and world
+  state are reset exactly as with **Generate & Play**, and saves still restore
+  their archived map unchanged.
 - **Restore Defaults** — returns to seed `0`, Techbase, Classic Doom difficulty, size `3`, and the Balanced/Varied/Detailed/Mixed style defaults.
 
 All eight settings are archived, so the setup survives a restart. The blueprint is a pure result of those settings, not an additional saved control. The entry is restored after mod MENUDEF processing, remains present in classic and localized text-only layouts, and oversized replacement main menus scroll with the wheel, arrows, Page Up/Down, Home, and End.
@@ -91,7 +125,7 @@ All examples assume your binary is at `./build/biaseddoom` and IWAD is at `~/.co
     +dumpprocudmf 42 techbase 3 4 \
     +quit
 
-# --- Full autonomous headless run (no sound, no GUI) ---
+# --- Full autonomous non-interactive export (no sound, no GUI) ---
 ./build/biaseddoom -nosound -nomusic -nogui \
     -iwad ~/.config/biaseddoom/doom2.wad \
     +dumpprocudmf 99 hell 5 5 \
@@ -121,6 +155,215 @@ done
 | `detail` | Landmark, interactive-feature, trim, and prop density | `0` Sparse, `1` Detailed, `2` Lavish |
 | `outdoors` | Eligible sky-courtyard cadence | `0` Enclosed, `1` Mixed, `2` Open-Air |
 
+The C++ and ZScript setters clamp numeric inputs to these ranges. Theme names
+are normalized to lowercase and unknown values safely become `techbase`.
+
+---
+
+## Current Generation Pipeline
+
+This is the canonical description of the shipping generator. The longer
+[Algorithm Overview](#algorithm-overview) below explains individual systems in
+more depth; historical benchmark sections do not define current behavior.
+
+```mermaid
+flowchart TD
+    A[Eight-field recipe] --> B[Pure 32-bit RunBlueprint]
+    A --> C[Restarted layout RNG]
+    B --> D[Stage plan, profile, key order,<br/>motifs, arsenal, finale]
+    C --> E[Mission graph and grid embedding]
+    D --> E
+    E --> F[Rooms, landmarks, connectors,<br/>terrain, beats, rewards]
+    F --> G[Static UDMF emission]
+    J[Active Doom-family IWAD] --> G
+    G --> H[Serialized geometry, collision,<br/>and key-state proofs]
+    H --> I[Load PROCMAP or export UDMF/manifest]
+```
+
+### 1. Recipe and run identity
+
+The complete player-facing recipe is the archived tuple
+`seed`, `theme`, `difficulty`, `size`, `layout`, `verticality`, `detail`, and
+`outdoors`. The setters normalize those values; a fresh `Generate()` then
+clears all realization state, rebuilds a pure 32-bit hash from the tuple, and
+restarts its shared layout RNG from the seed. The pure hash is deliberately
+separate from the mutable layout RNG: inspecting the profile or adding a
+blueprint field does not shift later room, monster, or geometry draws.
+
+The hash creates an automatic `RunBlueprint`. It chooses one of five profiles
+(Expedition, Assault, Infiltration, Circuit, or Siege), a cardinal route
+orientation, a blue/red/yellow key permutation, two feature motifs on normal
+maps or three at size 5+, an arsenal track, a finale card, bounded stage
+weights, and terrain/vertical-route intents. It also plans two macro stages at
+sizes 1–2, three at sizes 3–4, and four at size 5+. The blueprint is visible
+through `procmap`, `GetRunProfile()`, `GetRunBriefing()`, and
+`dumpprocmanifest`, but it is not a selectable profile or saved CVar.
+The active IWAD is deliberately an emission context rather than a blueprint
+hash input: it changes legal resources, texture metrics, and the final UDMF,
+not the profile selected from the eight-field recipe.
+
+### 2. Mission graph before geometry
+
+The coarse grid is only an embedding surface. The generator first creates a
+private randomized spanning-tree scaffold, then selects a critical route that
+travels in the blueprint's chosen direction. It adds optional limbs,
+landmarks, same-stage loops, and route variation according to the requested
+layout style and the profile. Only accepted graph cells become map space; it
+does not serialize a filled rectangular grid.
+
+Progression is planned on that graph:
+
+- Each required key is placed before its matching keyed boundary, usually on a
+  dedicated side limb.
+- A progression boundary has exactly one keyed crossing. All extra loops stay
+  in one lock stage, so they improve circulation but cannot bypass a key.
+- Each stage requests one feasible macro shape—Spine, Fork-Rejoin, Ring,
+  Switchback, or Courtyard-Spokes—and a district role/landmark. A compact or
+  constrained embedding deterministically falls back to a safe spine rather
+  than violating the gate rule.
+- Planned room beats and geometry-qualified encounter cards give the route
+  pauses, skirmishes, crossfires, pincers, ambushes, cache challenges, holding
+  lines, and set pieces without runtime spawning or an adaptive director.
+
+### 3. Spatial composition and terrain
+
+Compatible cells merge only within the same lock stage. The room pass assigns
+each result a role, a theme-led footprint grammar, a material family, a floor
+altitude, clear height, encounter/recovery plan, and optional landmark status.
+It uses asymmetric octagons, tapered bays, apses, stepped compounds, courtyard
+cuts, and fractured wedges where they fit; critical thresholds retain a safe
+shell. Eligible rectangular compounds can serialize as one shared exterior
+envelope, while complex contours use a conservative emitted shell with an
+explicit proof witness.
+
+Every graph edge also receives a physical connector contract before UDMF is
+written. Narrow 96×48 links are restricted to deep optional branches.
+Required travel, locks, and stairs are at least Standard (128×64); routine
+landmark transitions can become Gallery (176×96), and major landmarks/finales
+can become Grand (224×128). Those dimensions describe player clearance, not
+the dimensions of the door artwork.
+
+Verticality is a graph field, not a repeating distance formula. Critical
+start/key/exit pads, manual switches, normal doors, keyed doors, and their
+approaches stay level. Required changes are emitted as real 8-unit stair
+chains, with no single walking change greater than 64 units. At normal sizes,
+the blueprint plans one Gentle route stair beat, a Varied ascent/descent pair,
+or three Dramatic beats plus a highland/basin. Dramatic runs target 128–192
+units at sizes 3–4; at size 5+ the target is 192–320 units and the plan also
+targets an optional district at the opposite altitude. The manifest reports both
+requested and realized vertical intent. If an intended scenic chain cannot fit
+the protected route, the generator tries another eligible chain and then omits
+that planned connector or optional scenery before it would compromise
+progression or access. A manifest's realized fields, rather than its terrain
+target, describe the vertical route actually emitted.
+
+### 4. Static emission, visual grammar, and combat economy
+
+`BuildUDMF()` emits closed ZDoom-namespace sectors, vertices, sidedefs,
+linedefs, and things. Theme-local material families coordinate walls, floors,
+ceilings, trims, corridors, stairs, and landmark accents across each district.
+The active IWAD supplies the logical width and height used for texture
+transforms: continuous walls use world phase, architectural runs use a shared
+run phase, and isolated trim is centered deliberately. Each sidedef part has
+its own transform so two-sided height boundaries and reversed faces remain
+aligned.
+
+Doors are recessed 16-unit moving slabs inside protected approaches. A compact
+door face is a centered crop; if the physical aperture is wider than the
+native door art, the art repeats at native horizontal scale with a signed,
+centered phase. In practical terms, the middle of a 176- or 224-unit door now
+lands on the middle of a texture tile instead of exposing an arbitrary
+left-anchored repeat. Front and back faces are independently aligned using the
+active IWAD's metric, while tracks, keyed trims, and switch panels retain their
+separate fitting contracts.
+
+The content pass then emits only static, IWAD-legal things. The starting
+shotgun and mandatory-route viability remain guaranteed. Ballistic,
+Demolition, and Energy tracks change the timing of chaingun, rocket, plasma,
+and optional armory choices; Doom II may add the Super Shotgun and MegaSphere,
+while Ultimate Doom receives stock equivalents. Threat/recovery planning
+prohibits more than two high-pressure main-route beats in a row, provides a
+recovery or meaningful choice after major fights, and maintains emergency
+ammo/health floors. Feature motifs can reserve watercourses, vertical
+pressure, remote manual-switch caches, shrine/secret systems, and sightline
+reconnaissance before decoration claims the space.
+
+### 5. Accessibility is a release gate, not a decoration preference
+
+Before props, pickups, and combat dressing are placed, the emitter reserves
+collision-clear lanes for mandatory portals, both keyed-door approaches,
+stairs, start/key/exit pads, required pickups, and manual switches. Solid props
+use conservative radii and are rejected from locked transitions, one-cell
+connectors, stair/door approaches, landmark lanes, and any candidate that
+would create a player-blocking pinch. The fallback policy is intentionally
+one-way: drop optional decoration or features before compromising a route.
+
+After serialization, a collision-aware navigation proof uses the actual
+sectors, anchors, and clear corridors—not just logical grid adjacency. It
+proves a route from the start through every required key and both sides of each
+keyed door to the exit; it also checks ordinary rooms and non-secret optional
+rewards in their valid key state. Manual switch caches are proved unreachable
+until their explicit `playeruse` action opens the tagged cache, then reachable
+afterward. A separate symbolic key-inventory solver validates the same
+start → keys → matching gates → exit sequence. Failed geometry, clearance, or
+key-state proof rejects the generation rather than loading an inaccessible
+map.
+
+### 6. Load, replay, and inspection
+
+`P_OpenProceduralMapData()` owns fresh runtime generation when the engine
+loads `PROCMAP` (or a `PROC...` map name). It reconfigures the singleton from
+the archived CVars immediately before generating, then exposes the resulting
+text as an in-memory `TEXTMAP` to the ordinary map loader and node builder. A
+fresh load shows the profile and briefing once; savegame and hub restoration
+reuse the archived UDMF and intentionally suppress that repeat notification.
+
+Exiting a real procedural map records its recipe in runtime-only state. The
+Procedural Game menu's **Next Random Run (Same Setup)** action (and
+`procmap_next`) copies the seven non-seed fields, chooses a guaranteed-different
+positive seed, and starts a fresh single-player game. It deliberately does not
+modify a savegame or a hub restoration. `dumpprocudmf` exports the emitted
+TEXTMAP; `dumpprocmanifest` exports the recipe-derived plan plus realized
+geometry, material, resource, visual, and accessibility witnesses used by
+tests and external tooling.
+
+## Planning Versus Realization
+
+The generator deliberately distinguishes what the recipe requests from what a
+particular grid and serialized map can safely realize. That distinction keeps a
+seed deterministic without letting a decorative goal make a run invalid.
+
+| Layer | Deterministic decision | Safe realization rule |
+|---|---|---|
+| Run blueprint | Profile, direction, key order, stage weights/shapes, motifs, arsenal, finale, and terrain intent | Derived only from the recipe hash; it never consumes layout RNG. |
+| Mission graph | Critical route, key limbs, lock stages, loops, landmark candidates, and vertical anchors | A stage may fall back to a Spine; detours stay within their lock stage and cannot bypass a keyed crossing. |
+| Spatial composition | Room mergers, footprint/material family, connector profile, floor field, cards, and recovery | Protected pads, door approaches, and stair chains take priority over organic contours, props, and optional features. |
+| UDMF emission | Concrete sectors, portals, doors, stairs, surfaces, things, and texture transforms | A complex footprint may use a safe shell, a tight planned dogleg may become a stair hall, and an unplaceable planned elevation connector may be omitted; no fallback may narrow required travel. |
+| Post-serialization proof | Actual collision lanes, anchors, key states, switch states, texture witnesses, and geometry | Generation fails instead of loading an unproven route; optional scenery is dropped first. |
+
+`dumpprocmanifest` makes both sides inspectable: requested and realized stage
+shape, landmark, footprint, vertical intent, connector, and proof fields are
+reported separately where a safe fallback is possible. Treat the realized
+fields as the description of the map that was actually emitted.
+
+## Compatibility, Determinism, and Savegames
+
+Procedural generation currently supports only the Doom-family `GAME_Doom`
+path: Doom/Ultimate Doom and Doom II IWADs. The active map family is recorded
+as `iwad_roster` (`doom1` or `doom2`) in the manifest. Doom II-only actors,
+weapons, powerups, lamps, and `SPCDOOR` art are gated by that roster, with
+stock Doom replacements at the final thing-emission boundary as a defensive
+fallback. Heretic and Hexen support is intentionally deferred for this
+release; all non-Doom game families fail clearly rather than receiving
+incompatible Doom content.
+
+Within one engine build and active Doom game-data context (including the IWAD
+family), the same eight-field recipe produces byte-identical UDMF and manifest
+output. A later generator release may intentionally change an old seed; this is
+why a procedural savegame archives both the complete recipe and the exact
+generated UDMF. Loading such a save restores that historical base map even when
+current CVars—or the generator itself—have changed.
+
 ---
 
 ## Console Commands
@@ -133,17 +376,33 @@ Generates a procedural map using the current CVars and loads it immediately.
 - The actual generation happens inside `P_OpenProceduralMapData()` when the engine loads `PROCMAP`, ensuring a single deterministic generation per map load.
 - The console prints the selected run profile and briefing. A fresh map load shows them together once as a mid-screen notification; savegame and hub restoration deliberately do not repeat it.
 
+### `procmap_next`
+
+After completing a procedural map through its normal or secret exit, prepares
+and starts the next endless-play run. It copies the completed map's theme,
+difficulty, size, layout, verticality, detail, and outdoor settings, then
+chooses a different positive seed. The action intentionally starts a fresh
+single-player game instead of modifying a save or hub restoration. Before a
+procedural map has been completed, it safely explains that no completed recipe
+is available.
+
 ### Menu helper commands
 
 - `procmap_randomize_seed` updates the archived seed without launching a map.
 - `procmap_restore_defaults` restores every procedural CVar to its menu default.
+- `procmap_next` is the menu's post-completion **Next Random Run (Same
+  Setup)** action; it preserves the last completed recipe except for its new
+  seed.
 - Startup `+procmap` invocations enter the engine's normal autostart path; live menu/console invocations defer a new single-player game on the next tick.
 
 ### `dumpprocudmf <seed> [theme] [difficulty] [size] [layout] [verticality] [detail] [outdoors] [output]`
 
 Generates a map and writes the raw UDMF TEXTMAP to `/tmp/procmap_test.udmf`.
 The optional final argument selects a different output path. Useful for
-debugging and inspection.
+debugging and inspection. Omitted positional arguments use the command's
+fixed diagnostic defaults (`0`, `techbase`, difficulty `3`, size `3`, and
+style values `1`), not the current procedural CVars; pass all eight recipe
+fields when reproducing an active menu setup exactly.
 
 Example:
 ```
@@ -154,8 +413,9 @@ dumpprocudmf 42 hell 5 5 2 2 2 2
 
 Generates the same recipe and writes its run-plan manifest to
 `/tmp/procmap_manifest.json` by default. The optional final argument selects a
-different output path. The JSON schema is currently `1` and records the
-difficulty, profile, briefing, route orientation, shuffled key order, feature
+different output path. As with `dumpprocudmf`, omitted positional arguments
+use the fixed diagnostic defaults rather than current CVars. The JSON schema is currently `1` and records the
+difficulty, active `iwad_roster`, profile, briefing, route orientation, shuffled key order, feature
 motifs, arsenal track, finale card, post-emission accessibility proof, and the
 planned/realized macro-stage counts. Each stage records requested/realized
 shape, landmark archetype, district role, `material_family`, `elevation_role`,
@@ -205,7 +465,7 @@ All CVars are archived (`CVAR_ARCHIVE`), so they persist across sessions.
 
 | CVar | Type | Default | Description |
 |------|------|---------|-------------|
-| `procgen_seed` | `int` | `0` | RNG seed. Same seed + same parameters produces the same map and Run Blueprint within one engine build and IWAD family. |
+| `procgen_seed` | `int` | `0` | RNG seed. The same recipe produces the same map and Run Blueprint within one engine build and active Doom game-data/IWAD context. |
 | `procgen_theme` | `string` | `"techbase"` | Visual theme: `"techbase"`, `"hell"`, `"industrial"`, `"gothic"`, or `"corrupted"`. Unknown names safely fall back to Techbase. |
 | `procgen_difficulty` | `int` | `3` | Difficulty level (1–5). Affects enemy count, enemy tiers, and boss selection. |
 | `procgen_size` | `int` | `3` | Map size (1–160). Controls route length, canvas dimensions, keys, branches, landmarks, and encounter budget. Values above 20 are intentionally extreme. |
@@ -292,7 +552,7 @@ class MyEventHandler : EventHandler
 }
 ```
 
-### `GenerateAndLoad` (convenience)
+### `GenerateAndLoad` (legacy one-shot generator)
 
 ```zscript
 int ok = ProceduralMapGenerator.GenerateAndLoad(
@@ -303,7 +563,12 @@ int ok = ProceduralMapGenerator.GenerateAndLoad(
 );
 ```
 
-Returns `1` on success, `0` on failure.
+Despite its historical name, this native currently configures the singleton
+and calls `Generate()` only; it does **not** transition to `PROCMAP`. It also
+resets Layout, Verticality, Detail, and Outdoors to their neutral value (`1`).
+For a styled runtime map, call the individual setters, call `Generate()` if a
+preflight result is needed, then use the normal `procmap`/`map PROCMAP` loading
+path. It returns `1` on successful UDMF generation and `0` on failure.
 
 `GetRunProfile()` and `GetRunBriefing()` are read-only static accessors. They
 derive the same automatic blueprint from the current recipe before generation,
@@ -353,7 +618,7 @@ arsenal pacing; and Duel, Siege, Gauntlet, or Fortress finale language. It
 then divides the run into two to four visible macro stages. Each stage records
 a requested and safely realized shape (`spine`, `fork_rejoin`, `ring`,
 `switchback`, or `courtyard_spokes`), a district role, a landmark archetype,
-and a mandatory vertical-route intent. The profile and briefing are
+and a planned vertical-route intent. The profile and briefing are
 deliberately visible from `procmap`, the ZScript accessors, and
 `dumpprocmanifest`, so a run's identity can be inspected rather than inferred
 from a seed.
@@ -407,13 +672,19 @@ The reservation pass protects the full connection depth, stair chain, door appro
 
 - Recipe-hashed material families are selected per theme-local district rather than from a topology-only wall sequence. Each family owns coordinated walls, floors, ceilings, trims, corridors, stairs, and landmark accents. District boundaries use deliberate architectural returns and trim transitions; bounded room-local variants prevent same-family rooms from becoming strip-randomized or repetitive.
 - Neighboring rooms use broad material clusters keyed to their district, role, and family. Every continuous chamber perimeter keeps one coherent wall language. Accent/detail materials appear only at corners with depth, platforms, jambs, or reveal pavilions, and connector materials sit behind architectural returns so a texture never changes halfway through a flat wall.
-- The elevation field is hash-planned over the room graph rather than derived from distance modulo a cadence. Door thresholds, start/key/exit pads, required switches, and both sides of a keyed door remain level. Dramatic routes build their highland/basin through multiple exact 8-unit stair runs; no walkable connection rises or drops more than 64 units at once, and an infeasible scenic chain is replaced or omitted before it can fail the map.
+- The elevation field is hash-planned over the room graph rather than derived from distance modulo a cadence. Door thresholds, start/key/exit pads, required switches, and both sides of a keyed door remain level. Realized Dramatic routes build their highland/basin through multiple exact 8-unit stair runs; no walkable connection rises or drops more than 64 units at once, and an infeasible scenic chain is replaced or omitted before it can fail the map.
 - Ceiling height follows room role: compact connectors start at 144 units, general halls at 160, hubs at 192, arenas at 240, and exit chambers at 288.
 - Lighting darkens through progression and on deep branches, while starts, keys, hubs, and exits receive readable highlights. Emission clamps every playable sector to at least 160 to prevent accidental black rooms.
 - Every coarse chamber has bounded, independently varied corner cuts and shoulder slopes. The local offsets include non-45-degree diagonals, producing a substantial angled vocabulary without allowing perimeter shaping to cross into the void or disturb a portal.
-- Wall alignment uses the logical display width and height of the active IWAD texture, with a role-safe fallback selected before transforms are calculated. Ordinary wall bands retain a continuous world phase; corridors, stairs, and landmark loops use an architectural-run phase; isolated trim and diagonal detail use a centered native-size phase. Top, middle, and bottom parts receive their own safe transforms, including reversed backs and height boundaries, while doors and switches keep their exact-fit contracts.
+- Wall alignment uses the logical display width and height of the active IWAD texture, with a role-safe fallback selected before transforms are calculated. Ordinary wall bands retain a continuous world phase; corridors, stairs, and landmark loops use an architectural-run phase; isolated trim and diagonal detail use a centered native-size phase. Top, middle, and bottom parts receive their own safe transforms, including reversed backs and height boundaries. Doors use a native-scale centered crop-or-repeat phase; switches retain the separate exact-fit single-panel contract.
 - Large landmarks use support-textured corner cuts, role-specific floor pads, ceiling coffers, and small light accents rather than applying detail uniformly to every room.
-- Every map exposes the finale and at least one additional combat landmark to `F_SKY1`; the outdoor budget is `2 + size / 2`, so long maps alternate enclosed routes with multiple bright courtyards instead of reserving open air for the exit alone.
+- The exit is always an outdoor finale. The outdoor budget is `1 + size / 12`
+  for Enclosed, `2 + size / 2` for Mixed, and `3 + size` for Open-Air, then
+  receives theme adjustments (Hell/Gothic/Corrupted add opportunities;
+  Industrial reduces them). After the exit consumes one slot, eligible arenas,
+  hubs, and large main-route rooms are considered in that order. A compact
+  Enclosed map may therefore contain only its outdoor finale, while larger
+  Mixed/Open-Air maps develop a broader courtyard cadence.
 - Techbase landmarks use lamps in Doom II and shared tech pillars/columns in Ultimate Doom. Hell and Gothic landmarks use progression-colored torches, key-colored shrine markers, candelabras, evil eyes, and torch trees. When a solid key-room marker would compromise a reserved route or interaction pad, the matching `DOORRED`/`DOORBLU`/`DOORYEL` keyed-door trim remains the color-readable landmark instead. When a solid Hell finale or outdoor marker cannot fit, a non-solid hanging infernal marker preserves the visual evidence. Visual dressing never overrides navigation clearance. Industrial adds denser machinery clutter, while Corrupted Tech changes its prop language with the architectural infection.
 - Every ordinary room attempts one to three decorations and major landmarks attempt four to eight. Twelve wall/corner bays distribute them without forming a repetitive four-corner pattern. Solid decorations are rejected when they overlap an actor or pickup or enter the 112-unit approach rectangle around a portal, door, lift, full stair route, or manual switch panel. Shallow landmark tiers use a separate 40-unit exclusion so semantic shrine markers remain possible without occupying the route. The serialized validator also reserves player-turning clearance at starts, keys, the opening shotgun, and switch-use points. Combat rooms can add non-solid corpses without affecting collision.
 
@@ -435,7 +706,12 @@ The reservation pass protects the full connection depth, stair chain, door appro
 - Pre-emission fluid descriptors shape shallow animated liquids as central, trench, paired, or irregular reservoirs; whole flooded rooms; and straight, staggered, or right-angle multi-cell watercourses. One safe noncritical room of at least three cells is preferentially converted into a liquid floor with a dry chamfered island that retains the room's actors and rewards. Other macro systems use uneven multi-segment shorelines, 80-unit dry circulation bands, and 64-unit bridges or causeways, so the liquid divides or frames combat space instead of reading as an inserted floor decal. Starts, keys, exits, bosses, locks, secrets, reveals, perches, lifts, triggers, and mandatory passages remain protected. Techbase and Industrial use water/nukage, Hell uses blood/lava, Gothic mixes blood/water with occasional lava, and Corrupted Tech progresses from water/nukage toward blood/lava. Water and blood are harmless. Nukage deals 5 Slime damage every 32 tics; lava deals 5 Fire damage every 16 tics, ignores radiation-suit protection, and enables terrain damage effects. The descriptor footprint is reserved before thing placement, hazardous forms always retain a dry bypass, and liquid frequency scales with map size so large layouts form a regional motif rather than diluting a few small pools across the automap.
 - Adjacent, same-progression-stage rooms that are deliberately not connected can receive 64–80-unit framed sightline windows. Their sill is 48 units above the higher floor and the opening retains at least 64 units of height. These previews add crossfire, future-area views, and route comprehension without adding a traversable edge or weakening key progression.
 - Selected arenas and broad halls contain 48–64-unit raised ranged positions in three profiles: a square stair platform, a chamfered turret, or a wall-backed balcony. Straight, offset, and dogleg approaches use exact 16-unit risers, so players and monsters can always reach the high ground. Only exposed retaining sides use `blockmonsters`; the entry, every riser, and the platform connection remain open.
-- Every map contains at least one optional 80-unit lift raised 32 units above its room. All four faces run repeatable `Plat_DownWaitUpStay`, the center carries a visible reward, monsters cannot jam the platform, and a validated 96-unit bypass keeps the main route usable in either lift state.
+- Eligible maps may contain one or more optional 80-unit lifts raised 32 units
+  above their rooms. Each realized lift has four repeatable
+  `Plat_DownWaitUpStay` faces, a visible central reward, and a validated
+  96-unit bypass that keeps the main route usable in either lift state. A
+  compact or constrained recipe may omit lifts rather than weaken that bypass
+  proof.
 - The exit uses a bright level-224 `GATE1` pad with four `EXITDOOR` borders inside its open finale courtyard, making the walkover destination visually distinct from ordinary landmark platforms.
 
 ### 7. Encounters and Resources
@@ -526,6 +802,33 @@ This ensures the Doom renderer never sees reversed or void-facing walls.
 | `src/p_openmap.cpp` | Map loading hook: `P_OpenMapData()` calls `P_OpenProceduralMapData()` for `PROCMAP` |
 | `test_procgen.sh` | Automated validation script |
 
+### One run, source by source
+
+1. The menu and console commands in `procgen.cpp` write the eight archived
+   CVars. `procmap` reports the hash-derived identity, then asks the normal
+   new-game path to load `PROCMAP`; it deliberately does not generate a second
+   preview map.
+2. `P_OpenMapData()` reaches `P_OpenProceduralMapData()`, which re-applies the
+   current recipe to the singleton, runs `Generate()`, and presents the emitted
+   string as an in-memory `TEXTMAP`. The normal parser and node builder then
+   own map loading.
+3. `procgen_core.cpp` rebuilds the pure `RunBlueprint`, re-seeds `FRandom`,
+   constructs the graph scaffold, selects the critical route/keys/gates,
+   allocates same-stage loops and landmarks, and assigns protected connector
+   contracts.
+4. `procgen_rooms.cpp` merges compatible cells without crossing a lock stage,
+   assigns room-owned spatial/material identities, solves the floor field and
+   stair constraints, then plans cards, weapons, recovery, rewards, and
+   optional features.
+5. `procgen_udmf.cpp` emits the concrete geometry and static things, reserves
+   collision lanes before decoration, then validates the serialized result.
+   It records the visual and accessibility evidence later returned by
+   `GetRunManifest()`.
+6. `procgen.cpp` retains the fresh UDMF for the save archive; `g_game.cpp`
+   serializes and restores that archive rather than regenerating an old save.
+   `g_level.cpp` marks a completed run at a normal or secret exit and shows the
+   briefing only on a fresh load.
+
 ### Key Classes & Functions
 
 ```cpp
@@ -535,6 +838,14 @@ class FProceduralMapGenerator {
     void SetTheme(const char* theme);
     void SetDifficulty(int difficulty);  // 1-5
     void SetSize(int size);              // 1-160
+    void SetLayout(int layout);          // 0=Directed, 1=Balanced, 2=Exploratory
+    void SetVerticality(int verticality);// 0=Gentle, 1=Varied, 2=Dramatic
+    void SetDetail(int detail);          // 0=Sparse, 1=Detailed, 2=Lavish
+    void SetOutdoors(int outdoors);      // 0=Enclosed, 1=Mixed, 2=Open-Air
+    int GetLayout() const;
+    int GetVerticality() const;
+    int GetDetail() const;
+    int GetOutdoors() const;
     bool Generate();                     // builds grid + UDMF
     const FString& GetUDMFText() const;
     const FString& GetRunProfile() const;
@@ -564,7 +875,7 @@ bool P_IsProceduralMapName(const char* mapname);
 - **Raised-platform edges**: `blockmonsters` is intentionally limited to exposed retaining sides and never appears on the stair route. It prevents sideways AI drops without intercepting player movement, hitscan, or projectile fire, while the 16-unit tiers make the high area reachable from the room floor.
 - **Lift edges**: special 62 targets a unique 3000–3999 sector ID from every face. Lifts are never the only route through a room and retain a full bypass while raised.
 - **Door pegging**: stock Doom door tracks are one-sided middle textures with flags `blocking + dontpegbottom` (17). Generated tracks reproduce that contract; door faces deliberately omit `dontpegtop` so they rise with the ceiling.
-- **Texture alignment**: ordinary wall transforms are calculated from the active IWAD texture's logical metrics, never a hard-coded 128-unit motif. World-phase groups span ordinary walls and portal shoulders; architectural-run groups span corridors, stairs, and landmark loops; isolated trim is intentionally centered at native size. `dumpprocmanifest` keeps a bounded post-serialization metric/phase witness set so tests can recompute the final UDMF transforms against the active family. Switches retain a separate exact-fit contract: one 64-unit panel, zero origin offsets, horizontal scale 1, and `scaley_mid = 128 / wallHeight`.
+- **Texture alignment**: ordinary wall transforms are calculated from the active IWAD texture's logical metrics, never a hard-coded 128-unit motif. World-phase groups span ordinary walls and portal shoulders; architectural-run groups span corridors, stairs, and landmark loops; isolated trim is intentionally centered at native size. `dumpprocmanifest` keeps a bounded post-serialization metric/phase witness set so tests can recompute the final UDMF transforms against the active family. Switches retain a separate exact-fit contract: one 64-unit panel, zero origin offsets, horizontal scale 1, and vertical scale equal to the resolved logical texture height divided by the panel height.
 
 ---
 
@@ -598,7 +909,8 @@ bool P_IsProceduralMapName(const char* mapname);
 # Prove both-IWAD liquid availability and every pool/river/flooded-room, reveal, cue, perch, and stair family
 ./test_procgen.sh features
 
-# Prove native-width door faces, stock height variation, recess topology, and runtime texture availability
+# Prove active-IWAD native-scale door faces, centered repeated phases, stock
+# height variation, recess topology, and runtime texture availability
 ./test_procgen.sh doors
 
 # Prove active-IWAD native metrics and final world/two-sided/stair/portal phase witnesses in Doom I and Doom II
@@ -639,9 +951,11 @@ bool P_IsProceduralMapName(const char* mapname);
 ./test_procgen.sh udmf
 ```
 
-### 4.15.6 release verification
+### Historical 4.15.6 release verification
 
-The 2026-07-18 release candidate passed the structural, determinism, feature,
+The following 2026-07-18 release-candidate measurements are retained as
+historical context, not as a claim about the current generator's exact output.
+The 4.15.6 candidate passed the structural, determinism, feature,
 theme, settings, menu, music, door, reward, balance, runtime-load, Ultimate Doom,
 maximum-settings, extreme-size, huge-map, seed-sweep, and size-sweep regressions.
 The fixed determinism case produced the same SHA-256 hash twice:
@@ -706,7 +1020,7 @@ head -50 /tmp/procmap_test.udmf
 - Every 1-sided line is blocking; no 2-sided line masquerades as a solid wall.
 - No pair of linedefs is geometrically coincident; every sector boundary vertex has exactly one incoming and outgoing edge, every loop closes with nonzero area, and developer-level runtime logs contain no synthetic hole subsectors.
 - Every door sector starts closed and every door face uses `Door_Raise` with use/repeat activation and valid arguments.
-- Every graph door has exactly two faces separated by a 16-unit slab, a contained room/lintel approach on both sides, a physical aperture of at least 128 units wide, native fitted 64- or 128-unit art, matching 72/96/112/128-unit lintel clearance, non-repeating texture alignment, and two bottom-pegged track walls; keyed track colors must match the lock.
+- Every graph door has exactly two faces separated by a 16-unit slab, a contained room/lintel approach on both sides, a physical aperture of at least 128 units wide, native 64- or 128-unit art, matching 72/96/112/128-unit lintel clearance, and two bottom-pegged track walls; keyed track colors must match the lock. Compact slabs use a centered crop, while wider Gallery/Grand slabs repeat at native horizontal scale with the complete pattern centered at the physical door midpoint.
 - Every present key color appears on at least six door-border segments, not only on the two narrow moving tracks.
 - Removing every keyed door sector must disconnect the two approaches to each gate even when all normal doors are considered openable; no two locks may duplicate one progression cut.
 - Every serialized usable `Door_Open` switch targets a real closed cache sector ID in the 1500–1999 range. Every `Door_Open` is one-sided, use activated, and explicitly rejects `playercross`; each switch appears once on an exact 64-unit panel with no horizontal or vertical repetition. A constrained recipe may omit this optional cache rather than weakening its clearance proof.
@@ -716,7 +1030,7 @@ head -50 /tmp/procmap_test.udmf
 - Every liquid sector uses an IWAD-common animated flat, contains no initial thing, and is only 8 or 16 units below its host floor. Inset reservoirs retain at least 80 units of median dry-bank clearance, watercourses provide a 64-unit causeway or wholly dry bypass, and flooded rooms preserve a dry island containing the original gameplay placement budget. Nukage and lava must serialize their exact damage contract; water and blood must serialize none. The fixed-seed feature matrix covers central, trench, paired, irregular, and flooded-room profiles; straight, staggered, and bend rivers; harmless/hazardous mixes; broad grottos; and long watercourses.
 - Procedural soundtrack selection must be stable for identical seeds, differ for the fixed differentiation seeds, name a map marker physically present in the active Doom/Ultimate Doom/Doom II IWAD, and open successfully through the FluidSynth/OpenAL streaming path without `AL_INVALID_ENUM` or music-start errors.
 - At least one ranged platform stands 48 or 64 units above its surrounding room, contains a ranged enemy, and descends through a complete sequence of 16-unit tiers with no monster-blocked access edge. The square/straight, chamfered/offset, and wall-backed/dogleg profiles are validated independently and multi-perch maps must vary them.
-- At least one 32-unit lift has an 80-unit footprint, four valid use/repeat faces, 64 units of raised-state headroom, a reward, and at least 96 units of bypass clearance.
+- Every emitted 32-unit lift has an 80-unit footprint, four valid use/repeat faces, 64 units of raised-state headroom, a reward, and at least 96 units of bypass clearance. Compact or constrained maps may omit this optional feature.
 - Ordinary two-sided traversal—including every raised-platform access route—retains at least 56 units of headroom and no floor discontinuity above 24 units; intentional retaining sides, closed doors, and operable lifts are checked separately.
 - The exit trigger belongs to a `GATE1` sector with four `EXITDOOR` borders and two complete 8-unit stair tiers, and every map contains at least two open-sky sectors.
 - The start shotgun is within 40 units and in front of the player, the start retains at least 160 units of wall clearance, Cyberdemons retain 144, random Arch-Viles are forbidden, and monster/ammo/direct-health/bonus/weapon budgets remain within size-scaled bounds.
@@ -726,16 +1040,16 @@ head -50 /tmp/procmap_test.udmf
 - At least one real `SECRET_MASK` (`special = 1024`) reward sector and wall-aligned secret door are generated; raw untranslated special 9 is rejected, every counted secret contains a tangible pickup, and a powerup lies physically inside a counted secret.
 - At least one `F_SKY1` sector exists, no sector is darker than 160, and the emitted sector graph is connected.
 - Meaningful gameplay sectors occupy independently measured small, medium, and large area bands; the largest must exceed five times the median and the 90th percentile must exceed twice the median. Non-45-degree linedefs and multiple aspect/length classes keep chamber silhouettes from regressing to a pure square grid, while standard-size maps must contain a raised cross-room sightline.
-- Standard and larger maps must retain at least eight non-track wall textures, eight floor textures, and six non-sky ceiling textures across independently sized and shaped rooms. No pair of collinear solid segments may change texture at a shared point on an otherwise continuous flat wall; every serialized wall transform must be finite and positively scaled, while doors and switches retain their exact-fit checks. The focused `alignment` suite independently recomputes native-metric world, two-sided, stair, and portal phase witnesses from the emitted UDMF in both Doom I and Doom II, including a shared texture whose native dimensions differ between the families.
+- Standard and larger maps must retain at least eight non-track wall textures, eight floor textures, and six non-sky ceiling textures across independently sized and shaped rooms. No pair of collinear solid segments may change texture at a shared point on an otherwise continuous flat wall; every serialized wall transform must be finite and positively scaled. Doors retain native-scale centered crop-or-repeat checks, while switches retain their exact-fit single-panel checks. The focused `alignment` suite independently recomputes native-metric world, two-sided, stair, and portal phase witnesses from the emitted UDMF in both Doom I and Doom II, including a shared texture whose native dimensions differ between the families.
 - Every current schema-1 `dumpprocmanifest` records a proven alignment/geometry/connector/elevation summary, per-stage material/elevation roles, per-room requested/realized contour and height data, UDMF-backed unified-envelope facts, and every real connection profile plus physical-door/art facts. Its alignment summary includes active-IWAD metrics and bounded final-transform witnesses. Its additive collision-navigation summary reconciles pad and corridor reservations, records only physically proven route edges, exposes a physical lane witness for every non-unified room merge, and supplies stable start/key/exit/keyed-door/switch/cache-reward witnesses. The replayability corpus requires these fields, includes them in structural signatures, cross-checks all graph-door apertures against serialized `Door_Raise` slabs, verifies collision anchors and cache action faces against independently dumped UDMF geometry and solid-prop clearance, requires actual unified envelopes and realized non-safe grammars, and rejects narrow profiles on main, keyed, required, or stair routes.
-- Repeating the same seed/theme/difficulty/size/layout/verticality/detail/outdoors recipe produces byte-identical UDMF and `dumpprocmanifest` JSON within the same build and IWAD family. A later generator release may intentionally change the result for an old seed; savegames remain exact because they archive their UDMF.
+- Repeating the same seed/theme/difficulty/size/layout/verticality/detail/outdoors recipe produces byte-identical UDMF and `dumpprocmanifest` JSON within the same build and active Doom game-data/IWAD context. A later generator release may intentionally change the result for an old seed; savegames remain exact because they archive their UDMF.
 - The determinism gate also repeats a manifest dump through the same live generator singleton, so a geometry feasibility fallback cannot alter the cached recipe plan used by the next run.
 - The sequential `replayability` corpus proves every profile, cardinal orientation, theme grammar, arsenal track, finale card, feature motif, encounter card, requested/realized macro shape, landmark archetype, district role, and non-flat vertical intent is represented; each profile has at least two distinct player-visible structural/beat signatures. It validates post-emission card-feasibility evidence (geometry role, capacity, static placements, and required switch use), recovery/choice cadence, weapon-before-ammo availability, optional armory safety, finale reserves, an easy-to-hard threat increase, a main-route anchor for every planned vertical stage, the additive post-emission accessibility proof, and a serialized-sector key-inventory route from start through matching gates to exit.
 - A one-variable-at-a-time settings matrix proves that Exploratory produces more topology than Directed, Dramatic exceeds Gentle floor range, Lavish adds interactive structures and props over Sparse, and Open-Air emits more sky sectors than Enclosed. Both all-low and all-high recipes must also pass real node construction.
 - An identical-recipe theme matrix proves five distinct outputs plus authored differences in sky cadence, lift machinery, average clear height, mixed texture vocabulary, and at least three light colors per theme.
 - The door matrix requires Standard-plus physical apertures, all four stock art-height classes, at least eight ordinary door textures, Doom II `SPCDOOR`, and real runtime/node loading. The reward matrix requires backpack, megasphere, soulsphere, invulnerability, berserk, partial invisibility, computer map, and light amplification in a high-difficulty Doom II mission.
 - A fixed-size difficulty sweep must increase the emitted finale-room floor area at every step; the Nightmare reference arena must exceed 1,500,000 map-unit².
-- Timed headless `+map PROCMAP` runs cover all five themes through the size-80 `extreme` matrix, plus selected Corrupted Tech and Techbase recipes at the supported size-160 maximum (`./test_procgen.sh load`, `huge`, and `maxsettings`). They reach `PROCMAP - Unnamed` and report no map or node-builder errors. The `extreme`, `huge`, and `maxsettings` suites additionally enable developer diagnostics and reject unclosed loops or any `Adding dummy subsector` repair; `maxsettings` audits size 160 with Exploratory, Dramatic, Lavish, and Open-Air all selected together.
+- Timed non-interactive `+map PROCMAP` runs cover all five themes through the size-80 `extreme` matrix, plus selected Corrupted Tech and Techbase recipes at the supported size-160 maximum (`./test_procgen.sh load`, `huge`, and `maxsettings`). They reach `PROCMAP - Unnamed` and report no map or node-builder errors. The `extreme`, `huge`, and `maxsettings` suites additionally enable developer diagnostics and reject unclosed loops or any `Adding dummy subsector` repair; `maxsettings` audits size 160 with Exploratory, Dramatic, Lavish, and Open-Air all selected together.
 
 ---
 

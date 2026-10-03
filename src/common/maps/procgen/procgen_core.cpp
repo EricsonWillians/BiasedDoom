@@ -848,6 +848,8 @@ const FString& FProceduralMapGenerator::GetRunManifest() const
 	RefreshBlueprint();
 	RunManifestText = "{\n";
 	RunManifestText.AppendFormat("  \"schema\": 1,\n");
+	RunManifestText.AppendFormat("  \"iwad_roster\": \"%s\",\n",
+		ProcGenIwadRosterName());
 	RunManifestText.AppendFormat("  \"difficulty\": %d,\n", Difficulty);
 	RunManifestText.AppendFormat("  \"profile\": \"%s\",\n", RunProfileName(Blueprint.Profile));
 	RunManifestText.AppendFormat("  \"briefing\": \"%s\",\n", RunBriefingFor(Blueprint.Profile));
@@ -1236,6 +1238,17 @@ bool FProceduralMapGenerator::Generate()
 	UDMFBuffer = "";
 	Grid.Clear();
 	Rooms.Clear();
+	// TODO(procgen): Heretic and Hexen need their own weapon, inventory, key,
+	// monster, texture, and map-action grammars. They are intentionally out of
+	// scope for this release. The same is true of every non-Doom game family:
+	// fail clearly instead of emitting Doom things into an incompatible IWAD.
+	if (gameinfo.gametype != GAME_Doom)
+	{
+		LastError = (gameinfo.gametype == GAME_Heretic || gameinfo.gametype == GAME_Hexen) ?
+			"Heretic and Hexen procedural generation is not supported in this release." :
+			"Procedural generation currently supports Doom and Doom II IWADs only.";
+		return false;
+	}
 	// A generation may relocate a beat after testing the concrete grid. Rebuild
 	// the recipe-only blueprint here so that no realization state can affect a
 	// later call on this singleton, even when every recipe field is unchanged.

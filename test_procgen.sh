@@ -705,15 +705,20 @@ for index, door in enumerate(doors):
         # their compact 64-unit shell; every ordinary Door_Raise face has a full
         # Standard physical aperture and uses native art fitting independently.
         errors.append(f'door {index} has only {face_width:.1f}-unit physical clearance')
-    expected_crop = round(max(0.0, (native_width - face_width) * 0.5))
+    # Door art is never horizontally scaled.  A compact face receives a
+    # centered crop, while a gallery/grand face repeats at native scale with a
+    # signed centered phase.  In both cases the physical door midpoint maps to
+    # the midpoint of a native tile; clamping the old crop at zero left every
+    # wider-than-a-tile door visibly biased toward one jamb.
+    expected_phase = round((native_width - face_width) * 0.5)
     front_x = effective_part_offset(sides[front], front, 'x', 'top')
     back_x = effective_part_offset(sides[back], back, 'x', 'top')
     front_y = effective_part_offset(sides[front], front, 'y', 'top')
     back_y = effective_part_offset(sides[back], back, 'y', 'top')
-    if front_x is not None and abs(front_x - expected_crop) > 0.01:
-        errors.append(f'door {index} does not contain {face_texture} inside its jambs')
-    if back_x is not None and abs(back_x - expected_crop) > 0.01:
-        errors.append(f'door {index} has a mismatched back-face horizontal fit')
+    if front_x is not None and abs(front_x - expected_phase) > 0.01:
+        errors.append(f'door {index} does not center {face_texture} across its jambs')
+    if back_x is not None and abs(back_x - expected_phase) > 0.01:
+        errors.append(f'door {index} has a mismatched back-face horizontal phase')
     if front_y is not None and abs(front_y) > 0.01:
         errors.append(f'door {index} has an unexpected front-face vertical top-band offset')
     if back_y is not None and abs(back_y) > 0.01:
@@ -2262,6 +2267,8 @@ def optional_nonempty_string(record, field, context):
                f'{context} has an empty or non-string {field}')
 
 expect(manifest.get('schema') == 1, f'manifest schema must be 1, got {manifest.get("schema")!r}')
+expect(manifest.get('iwad_roster') in {'doom1', 'doom2'},
+       f'manifest must identify its active Doom-family IWAD roster, got {manifest.get("iwad_roster")!r}')
 expect(manifest.get('difficulty') == difficulty,
        f'manifest difficulty must be {difficulty}, got {manifest.get("difficulty")!r}')
 profiles = {'expedition', 'assault', 'infiltration', 'circuit', 'siege'}
@@ -4325,12 +4332,70 @@ if require_all_kinds:
     if missing:
         errors.append(f'focused alignment fixture lacks witness kinds: {", ".join(missing)}')
 
+# Moving door art is a separate alignment contract from ordinary wall bands.
+# It must use the metric resolved by this exact IWAD, remain at native
+# horizontal scale, and center the *whole repeated pattern* over the physical
+# slab.  Checking the midpoint phase catches the old `max(0, crop)` behavior:
+# it happened to work for a compact door, but left a 176/224-wide opening
+# anchored to an arbitrary tile edge whenever its texture repeated.
+door_sides = 0
+repeating_door_sides = 0
+for line_index, line in enumerate(lines):
+    if as_int(line.get('special')) != 12:
+        continue
+    v1, v2 = as_int(line.get('v1')), as_int(line.get('v2'))
+    if v1 is None or v2 is None or not (0 <= v1 < len(vertices) and 0 <= v2 < len(vertices)):
+        errors.append(f'door line {line_index} has invalid vertices')
+        continue
+    x1, y1 = as_float(vertices[v1].get('x')), as_float(vertices[v1].get('y'))
+    x2, y2 = as_float(vertices[v2].get('x')), as_float(vertices[v2].get('y'))
+    if None in (x1, y1, x2, y2):
+        errors.append(f'door line {line_index} has nonnumeric vertices')
+        continue
+    face_width = math.hypot(x2 - x1, y2 - y1)
+    secret = line.get('secret') == 'true'
+    side_indices = (as_int(line.get('sidefront')), as_int(line.get('sideback')))
+    if None in side_indices or any(not 0 <= side_index < len(sides) for side_index in side_indices):
+        errors.append(f'door line {line_index} has incomplete front/back faces')
+        continue
+    for side_index in side_indices:
+        side = sides[side_index]
+        texture = side.get('texturetop')
+        metric = metric_by_texture.get(texture)
+        if metric is None:
+            errors.append(f'door line {line_index} texture {texture!r} has no active-IWAD metric')
+            continue
+        native_width = 128 if secret else metric[0]
+        shared_x = as_float(side.get('offsetx', '0'))
+        part_x = as_float(side.get('offsetx_top', '0'))
+        scale_x = as_float(side.get('scalex_top', '1'))
+        if None in (shared_x, part_x, scale_x):
+            errors.append(f'door line {line_index} has nonnumeric horizontal transform')
+            continue
+        expected_phase = llround((native_width - face_width) * 0.5)
+        actual_phase = shared_x + part_x
+        if abs(actual_phase - expected_phase) > 0.01:
+            errors.append(f'door line {line_index} does not center {texture} across its {face_width:.1f}-unit face')
+        if abs(scale_x - 1.0) > 0.001:
+            errors.append(f'door line {line_index} horizontally scales {texture} instead of repeating natively')
+        midpoint_phase = positive_mod(actual_phase + face_width * 0.5, native_width)
+        if abs(midpoint_phase - native_width * 0.5) > 0.501:
+            errors.append(f'door line {line_index} does not place {texture}\'s native center at the slab midpoint')
+        door_sides += 1
+        if face_width > native_width + 0.01:
+            repeating_door_sides += 1
+if door_sides == 0:
+    errors.append('alignment fixture has no Door_Raise texture faces')
+if require_all_kinds and repeating_door_sides == 0:
+    errors.append('focused alignment fixture has no natively repeating door faces')
+
 for error in errors:
     print(f'    {error}')
 if errors:
     raise SystemExit(1)
 print('  native-metric UDMF phase proof passed: ' +
-      ', '.join(f'{kind}={kind_counts[kind]}' for kind in sorted(kind_counts)))
+      ', '.join(f'{kind}={kind_counts[kind]}' for kind in sorted(kind_counts)) +
+      f', door_faces={door_sides}, repeating_door_faces={repeating_door_sides}')
 PY
 }
 
@@ -5040,12 +5105,14 @@ validate_dump() {
 	elif [ "$theme" = "gothic" ]; then
 		if ! grep -q 'texturemiddle = "WOOD1"' /tmp/procmap_test.udmf ||
 				! grep -Eq 'texturemiddle = "MARBLE[123]"' /tmp/procmap_test.udmf ||
-				! grep -q '^\s*type = 35;' /tmp/procmap_test.udmf ||
-				! grep -q '^\s*type = 45;' /tmp/procmap_test.udmf ||
-				! grep -q '^\s*type = 43;' /tmp/procmap_test.udmf; then
-            echo "    gothic theme is missing marble/wood architecture or candelabra/tall-torch rhythm"
-            failures=$((failures + 1))
-        fi
+				! grep -q '^\s*type = 35;' /tmp/procmap_test.udmf; then
+			# Tall torches and TorchTree are optional solid props. They are
+			# intentionally skipped whenever their conservative collision radius
+			# would compromise an accessible landmark lane, so the enduring Gothic
+			# grammar witness is its material pairing plus a safe candelabra.
+			echo "    gothic theme is missing marble/wood architecture or safe candelabra rhythm"
+			failures=$((failures + 1))
+		fi
     elif [ "$theme" = "corrupted" ]; then
         if ! grep -Eq 'texturemiddle = "(STARTAN[23]|BROWN1|BROWN96|BROWNGRN|TEKWALL[14]|COMPSPAN|METAL1)"' \
                     /tmp/procmap_test.udmf ||
@@ -6103,6 +6170,7 @@ PY
 			'"procgen_outdoors", "ProcGenOutdoors"'
             '"procmap", 1, 1'
             '"procmap random", 1, 1'
+			'"procmap_next", 1, 1'
             '"procmap_restore_defaults"'
         )
         for pattern in "${required_menu_patterns[@]}"; do
@@ -6160,6 +6228,35 @@ PY
             echo "Procedural briefing is not gated to a fresh PROCMAP load"
             exit 1
         fi
+
+		# The endless-run action is intentionally available only after the map's
+		# real exit. It copies the completed archive recipe (without copying its
+		# large UDMF), forces a distinct random seed, and starts a fresh game;
+		# save/hub restoration must never be repurposed as a replay request.
+		procgen_source="$ROOT/src/common/maps/procgen.cpp"
+		procgen_header="$ROOT/src/common/maps/procgen.h"
+		required_endless_run_patterns=(
+			'void P_MarkCurrentProceduralMapCompleted()'
+			'bool P_PrepareNextProceduralMap()'
+			'CopyProceduralRecipe(CompletedProceduralMap, CurrentProceduralMap);'
+			'MakeDistinctProceduralMenuSeed(CompletedProceduralMap.Seed)'
+			'ApplyProceduralRecipeToCVars(CompletedProceduralMap,'
+			'CCMD(procmap_next)'
+			'StartProceduralMapFromCurrentCVars();'
+			'Finish a procedural run before starting its next seed.'
+		)
+		for pattern in "${required_endless_run_patterns[@]}"; do
+			if ! grep -Fq "$pattern" "$procgen_source"; then
+				echo "Procedural endless-run flow is missing: $pattern"
+				exit 1
+			fi
+		done
+		if ! grep -Fq 'void P_MarkCurrentProceduralMapCompleted();' "$procgen_header" ||
+				! grep -Fq 'bool P_PrepareNextProceduralMap();' "$procgen_header" ||
+				[ "$(grep -Fc 'P_MarkCurrentProceduralMapCompleted();' "$level_source")" -lt 2 ]; then
+			echo "Procedural exit does not arm the post-completion replay action"
+			exit 1
+		fi
 
         # MENUDEF lumps from gameplay mods may replace MainMenu after the
         # engine definition. Verify that the native post-parse reconciliation
@@ -6225,6 +6322,19 @@ PY
             echo "Procedural menu seed randomization failed"
             exit 1
         fi
+
+		# A menu command must not fabricate an endless chain from a title-screen
+		# configuration. It becomes available only after ExitLevel/SecretExitLevel
+		# records the completed procedural recipe.
+		if ! run_menu_command "$menu_log" 'Finish a procedural run before starting its next seed' '' \
+				+procmap_next +quit; then
+			echo "Procedural endless-run action was not safely gated before completion"
+			exit 1
+		fi
+		if ! grep -q "^procgen_seed=${random_seed}$" "$menu_config"; then
+			echo "Procedural endless-run action changed the recipe before completion"
+			exit 1
+		fi
 
         status=0
         # Stop after the map reaches its title rather than waiting on the
@@ -6324,7 +6434,7 @@ PY
                 if [ ! -s "$manifest" ] ||
                         ! validate_manifest "$manifest" "$size" "$difficulty" "$verticality" ||
 						! validate_manifest_udmf_collision_navigation "$manifest" "$udmf" ||
-                        ! validate_manifest_udmf_alignment "$manifest" "$udmf"; then
+						! validate_manifest_udmf_alignment "$manifest" "$udmf" 1; then
                     echo "$output" | grep -E 'Generation failed|Dumped.*manifest' || true
                     echo "Native-metric alignment manifest validation failed for $family/$seed"
                     exit 1
@@ -6356,6 +6466,8 @@ for family in ('doom1', 'doom2'):
     metrics_by_texture = {}
     non_128 = False
     for manifest in manifests:
+        if manifest.get('iwad_roster') != family:
+            errors.append(f'{family} manifest reports iwad_roster={manifest.get("iwad_roster")!r}')
         alignment = manifest.get('visual_proof', {}).get('alignment', {})
         metrics = alignment.get('metrics', [])
         witnesses = alignment.get('witnesses', [])
@@ -6432,6 +6544,10 @@ PY
                 echo "Ultimate Doom map contains Doom II-only tech lamps"
                 exit 1
             fi
+			if grep -Eq '^\s*texture(top|middle|bottom) = "SPCDOOR' /tmp/procmap_test.udmf; then
+				echo "Ultimate Doom map contains a Doom II-only SPCDOOR texture"
+				exit 1
+			fi
         done
         for spec in "${specs[@]}"; do
             read -r seed theme difficulty size <<<"$spec"

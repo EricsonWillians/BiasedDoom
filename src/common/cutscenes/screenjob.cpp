@@ -199,18 +199,25 @@ void EndScreenJob()
 
 bool ScreenJobResponder(event_t* ev)
 {
-	if (ev->type == EV_KeyDown)
+	if (ev->type == EV_KeyDown || ev->type == EV_KeyUp)
 	{
-		// We never reach the key binding checks in G_Responder, so for the console we have to check for ourselves here.
-		auto binding = Bindings.GetBinding(ev->data1);
-		if (binding.CompareNoCase("toggleconsole") == 0)
+		// We never reach the key binding checks in G_Responder, so handle the
+		// console and capture shortcuts here.
+		if (ev->type == EV_KeyDown)
 		{
-			C_ToggleConsole();
-			return true;
+			auto binding = Bindings.GetBinding(ev->data1);
+			if (binding.CompareNoCase("toggleconsole") == 0)
+			{
+				C_ToggleConsole();
+				return true;
+			}
 		}
-		if (binding.CompareNoCase("screenshot") == 0)
+		if (C_IsCaptureKey(ev->data1))
 		{
-			C_DoCommand("screenshot");
+			// Use C_DoKey rather than running the normal binding directly: that
+			// preserves double-tap bindings and consumes the first tap so it
+			// cannot also advance a cutscene screen.
+			C_DoKey(ev, &Bindings, &DoubleBindings);
 			return true;
 		}
 	}
@@ -402,6 +409,4 @@ CCMD(testcutscene)
 		Printf(TEXTCOLOR_RED "Unable to play cutscene: %s\n", err.what());
 	}
 }
-
-
 

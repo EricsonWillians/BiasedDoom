@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Lossless capture and recording workflow:** Options → System → Recording &
+  Export now provides a typeable or pasteable shared export folder for video
+  and demo takes, output-folder copy/open/reset actions, collision-safe output
+  families (including interrupted PNG/AVI remnants), native ZDEM start/stop
+  controls, and a focused shortcut-binding page.
+  Final composited frames can be recorded as an exact PNG image sequence or
+  uncompressed RGB AVI at 24–240 wall-clock FPS, independent of game speed;
+  an active capture finalizes before graphics shutdown, and AVI parts roll
+  safely for resolution changes or large files. Demo recording normalizes game
+  speed before a take begins. `startvideorecording [name]`, `stopvideorecording`,
+  `togglevideorecording [name]`, `recorddemo [name] [map]`,
+  `stopdemorecording`, and `toggledemorecording` expose the same workflow to
+  the console and configurable controls. Video capture is intentionally
+  visual-only; native demos remain the compact replayable-recording format.
 - Procedural maps now derive an automatic, deterministic **Run Blueprint** from
   the existing recipe. Expedition, Assault, Infiltration, Circuit, and Siege
   profiles vary cardinal route orientation, key order, branch/loop emphasis,
@@ -32,6 +46,20 @@ All notable changes to this project will be documented in this file.
 - Read-only ZScript accessors `ProceduralMapGenerator.GetRunProfile()` and
   `GetRunBriefing()`, plus a one-time fresh-load profile-and-briefing notification and
   `procmap` console summary.
+- **Next Random Run (Same Setup)** in the Procedural Game menu, backed by the
+  `procmap_next` command. After a real procedural-map exit it copies the
+  completed recipe's theme, difficulty, size, and style settings, selects a
+  distinct seed, and starts a fresh single-player run without changing
+  savegame or hub restoration behavior.
+- Active-IWAD procedural content compatibility: Ultimate Doom now receives
+  normalized stock-Doom replacements for every Doom II-only thing type emitted
+  by the procedural generator, while Doom II retains its expanded roster. The
+  manifest records the active `iwad_roster` (`doom1` or `doom2`) for
+  inspection.
+- **TODO / intentionally deferred:** Heretic and Hexen procedural generation
+  is not part of this release. Those games require their own actor, inventory,
+  key, texture, and map-action grammars; generation now reports that clearly
+  rather than emitting incompatible Doom content.
 - `test_procgen.sh replayability`: a sequential deterministic corpus covering
   all profiles, orientations, themes, motifs, arsenal tracks, finale cards, and
   encounter cards, plus macro shapes, landmark archetypes, district roles, and
@@ -41,6 +69,16 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Refreshed the procedural-generation documentation around the current
+  recipe-to-blueprint-to-UDMF pipeline, including active-IWAD emission,
+  collision/key-state proof, savegame behavior, and the endless-run flow. The
+  research paper now labels its benchmark data as historical context and keeps
+  its formulas aligned with current route, combat, terrain, cache, and door
+  behavior.
+- Wide procedural door slabs now retain native-scale door art with a
+  centered repeat phase derived from the active IWAD's texture metrics. This
+  keeps 176- and 224-unit Gallery/Grand doors symmetric at both jambs instead
+  of anchoring repeated art at an arbitrary edge.
 - Eligible rectangular composed rooms now emit one true, shared-sector exterior
   envelope rather than repeated square/chamfered cell shells; the emitter
   proves no former same-room cell-face wall remains. Complex or feature-host
@@ -60,20 +98,22 @@ All notable changes to this project will be documented in this file.
   compact `DOOR` or `SPCDOOR` texture can never silently create a 64-unit route.
 - Verticality now plans a graph terrain field instead of a repeating terrace
   cadence. Dramatic size 3–4 runs target a 128–192-unit highland or basin;
-  size 5+ runs target a 192–320-unit landmark and a reachable optional
-  district at the opposite altitude. A constrained scenic chain retries a
-  safe alternative before generation can fail. All movement remains explicit
+  size 5+ runs target a 192–320-unit landmark and plan an optional district at
+  the opposite altitude. A constrained scenic chain retries a safe alternative
+  before generation can fail. All movement remains explicit
   8-unit stairs with no single walkable change above 64 units; critical pads,
   doorways, and manual interactions remain level.
 - District material families now coordinate theme-safe walls, floors, ceilings,
   trims, corridors, stairs, and landmark accents. Wall alignment uses the
   active IWAD texture's actual logical dimensions and deliberate world or
   architectural-run phase groups, replacing the old fixed 128-unit centering
-  assumption while retaining exact-fit door and switch art.
+  assumption while retaining native-scale centered crop-or-repeat door art and
+  exact-fit switch art.
 - Procedural map size now has structural and runtime coverage through the
   supported maximum of 160. Fresh-map seed reproducibility remains guaranteed
-  within one engine build and IWAD family; algorithm releases may intentionally
-  change an old seed, while savegames remain exact through archived UDMF.
+  within one engine build and active Doom game-data/IWAD context; algorithm
+  releases may intentionally change an old seed, while savegames remain exact
+  through archived UDMF.
 - Tagged reveal doors are now exclusively manual, one-sided switch caches.
   `Door_Open` no longer uses key-platform or walkover activation, so
   collecting a key cannot fire an off-screen reveal or automatic ambush; static

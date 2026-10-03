@@ -130,6 +130,7 @@ CVAR (Bool, cl_waitforsave, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR (Bool, enablescriptscreenshot, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR (Bool, cl_restartondeath, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 EXTERN_CVAR (Float, con_midtime);
+EXTERN_CVAR (Float, i_timescale);
 EXTERN_CVAR(Int, net_disablepause)
 EXTERN_CVAR(Bool, net_limitsaves)
 
@@ -1079,6 +1080,16 @@ bool G_Responder (event_t *ev)
 	{
 		if (chatmodeon) chatmodeon = 0;
 
+		// A capture command is allowed during title/demo screens. Route both
+		// edges through the normal binding resolver so double-tap capture
+		// shortcuts retain their timing state and their first press cannot open
+		// the main menu instead.
+		if ((ev->type == EV_KeyDown || ev->type == EV_KeyUp) && C_IsCaptureKey(ev->data1))
+		{
+			C_DoKey(ev, &Bindings, &DoubleBindings);
+			return true;
+		}
+
 		const char *cmd = Bindings.GetBind (ev->data1);
 
 		if (ev->type == EV_KeyDown)
@@ -1095,7 +1106,7 @@ bool G_Responder (event_t *ev)
 				stricmp (cmd, "chase") &&
 				stricmp (cmd, "+showscores") &&
 				stricmp (cmd, "bumpgamma") &&
-				stricmp (cmd, "screenshot")))
+				!C_IsCaptureCommand(cmd)))
 			{
 				M_StartControlPanel(true);
 				M_SetMenu(NAME_MainMenu, -1);
@@ -2738,9 +2749,20 @@ void G_ReadDemoTiccmd (usercmd_t *cmd, int player)
 
 bool stoprecording;
 
+void G_StopDemoRecording()
+{
+	// `stop` is also exposed through a menu entry. Do not let an idle use of
+	// that entry poison the next recording: G_CheckDemoStatus() observes this
+	// flag on the first recorded tic and would otherwise immediately finish it.
+	if (demorecording)
+	{
+		stoprecording = true;
+	}
+}
+
 CCMD (stop)
 {
-	stoprecording = true;
+	G_StopDemoRecording();
 }
 
 extern uint8_t *streamPos;
@@ -2791,6 +2813,14 @@ void G_WriteDemoTiccmd (usercmd_t *cmd, int player, int buf)
 //
 void G_RecordDemo (const char* name)
 {
+	// Demo commands are recorded per game tic and replay at normal time. Make
+	// every recording entry point safe, including the menu-driven workflow and
+	// legacy callers that start with a non-default game-speed setting.
+	if (*i_timescale != 1.0f)
+	{
+		Printf("Resetting game speed to normal before demo recording.\n");
+		i_timescale = 1.0f;
+	}
 	usergame = false;
 	demoname = name;
 	FixPathSeperator (demoname);

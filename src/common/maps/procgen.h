@@ -744,5 +744,13 @@ MapData* P_OpenProceduralMapData(const char* mapname);
 bool P_IsProceduralMapName(const char* mapname);
 FString P_GetProceduralMusic();
 const FProceduralMapArchiveData* P_GetCurrentProceduralMapArchive();
+
+// A completed procedural map can be replayed from the menu with a fresh seed
+// while retaining its exact seven non-seed recipe settings. The completion
+// marker is deliberately runtime-only: savegames continue to restore their
+// archived TEXTMAP rather than silently turning a restore into a new run.
+void P_MarkCurrentProceduralMapCompleted();
+bool P_PrepareNextProceduralMap();
+
 bool P_StageProceduralMapArchive(int seed, const char* theme, int difficulty,
 	int size, int layout, int verticality, int detail, int outdoors, FString udmf);

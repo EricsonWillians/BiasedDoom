@@ -2826,6 +2826,7 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 	auto GiveWeapon = [&](int roomId, int type)
 	{
 		if (roomId < 0 || roomId >= (int)Rooms.Size() || Rooms[roomId].hasExit) return;
+		type = ProcGenCompatibleThing(type);
 		Rooms[roomId].hasWeapon = true;
 		Rooms[roomId].weaponType = type;
 	};
@@ -2864,7 +2865,7 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 	};
 
 	if (startRoom >= 0) GiveWeapon(startRoom, 2001); // shotgun: immediate agency
-	const bool doom2Roster = (gameinfo.flags & GI_MAPxx) != 0;
+	const bool doom2Roster = ProcGenUsesDoom2Roster();
 	const int routeJitter = (int)((blueprint.RecipeHash >> 13) % 3u) - 1;
 	auto RouteIndex = [&](int numerator, int denominator) -> int
 	{
@@ -3181,6 +3182,7 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 	auto AddSecretPowerup = [&](int roomIndex, int type)
 	{
 		if (secretRooms.Size() == 0) return;
+		type = ProcGenCompatibleThing(type);
 		roomIndex = clamp(roomIndex, 0, (int)secretRooms.Size() - 1);
 		RoomInfo& room = Rooms[secretRooms[roomIndex]];
 		for (unsigned int item = 0; item < room.powerups.Size(); item++)

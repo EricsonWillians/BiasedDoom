@@ -1262,6 +1262,10 @@ void D_Display ()
 void D_ErrorCleanup ()
 {
 	savegamerestore = false;
+	if (M_IsVideoRecording())
+	{
+		M_StopVideoRecording();
+	}
 	primaryLevel->BotInfo.RemoveAllBots (primaryLevel, true);
 	D_QuitNetGame ();
 	if (demorecording || demoplayback)
@@ -4199,6 +4203,10 @@ int GameMain()
 
 void D_Cleanup()
 {
+	if (M_IsVideoRecording())
+	{
+		M_StopVideoRecording();
+	}
 	if (debugServer)
 	{
 		debugServer->Stop();

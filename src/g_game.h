@@ -72,6 +72,7 @@ void G_DoQuickSave ();
 void G_RecordDemo (const char* name);
 
 void G_BeginRecording (const char *startmap);
+void G_StopDemoRecording();
 
 void G_PlayDemo (char* name);
 void G_TimeDemo (const char* name);

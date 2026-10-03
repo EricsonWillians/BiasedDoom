@@ -42,6 +42,7 @@
 #include "d_eventbase.h"
 #include "c_bind.h"
 #include "c_console.h"
+#include "common/imgui/bd_imgui.h"
 #include "i_mainwindow.h"
 #include "menu.h"
 
@@ -94,15 +95,17 @@ protected:
 extern LPDIRECTINPUT8 g_pdi;
 extern bool GUICapture;
 
-// The screenshot bypass in PostKeyEvent is only appropriate while no text
-// field owns the keyboard: with the console input line, chat, or a menu
-// text field active, a printable screenshot key must stay a GUI event or it
-// would fire a screenshot and swallow the typed character.
-static bool ScreenshotKeyMayBypassGUICapture()
+// The capture-shortcut bypass in PostKeyEvent is only appropriate while no text
+// field owns the keyboard: with the console input line, chat, menu text
+// field, or ImGui text input active, a printable capture key must stay a GUI
+// event or it would fire a capture command and swallow the typed character.
+static bool CaptureKeyMayBypassGUICapture()
 {
 	if (ConsoleState == c_down || ConsoleState == c_falling || chatmodeon)
 		return false;
 	if (CurrentMenu != nullptr && CurrentMenu->IsKindOf("TextEnterMenu"))
+		return false;
+	if (BdImGui::WantsTextInput())
 		return false;
 	return true;
 }
@@ -275,12 +278,12 @@ void FKeyboard::PostKeyEvent(int key, INTBOOL down, bool foreground)
 	// Generate the event, if appropriate.
 	if (down)
 	{
-		if (!foreground || (GUICapture && !(C_IsScreenshotKey(key) && ScreenshotKeyMayBypassGUICapture())))
+		if (!foreground || (GUICapture && !(C_IsCaptureKey(key) && CaptureKeyMayBypassGUICapture())))
 		{ // Do not generate key down events if we are in the background
-		  // or in "GUI Capture" mode. Keys bound to the screenshot command
-		  // are exempt so screenshots also work while a menu is open, except
+		  // or in "GUI Capture" mode. Capture shortcuts are exempt so they
+		  // also work while a menu is open, except
 		  // while a text field owns the keyboard (console, chat, menu text
-		  // entry) so typing is not swallowed by a screenshot.
+		  // entry) so typing is not swallowed by a capture command.
 			return;
 		}
 		ev.type = EV_KeyDown;
@@ -597,4 +600,3 @@ void I_StartupKeyboard()
 		delete Keyboard;
 	}
 }
-

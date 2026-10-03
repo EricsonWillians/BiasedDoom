@@ -6,6 +6,14 @@
 
 **Implementation paper — October 2026**
 
+> **Current-status note (2026-10-03).** The companion
+> [procedural map generation guide](procedural-map-generation.md) is the
+> canonical operational reference for the shipping generator: it documents the
+> automatic RunBlueprint, current accessibility proof, active-IWAD behavior,
+> endless-run flow, and current test commands. This paper explains the design
+> and retains historical benchmark tables; those tables are not a promise that
+> a modern engine build will reproduce their exact sector counts or hashes.
+
 ## Abstract
 
 BiasedDoom generates complete, playable Doom levels at runtime without selecting
@@ -71,7 +79,8 @@ sizes. It reconstructs serialized sector topology, measures small/medium/large
 floor-area bands, requires a dominant room at least five times the median,
 checks all liquid/reveal/perch families, validates dry hazardous bypasses and
 actor-free liquid, verifies exactly two locked faces per key, and performs real
-runtime/node-builder loading. Repeated generation of the same input produces
+runtime/node-builder loading. Repeated generation in the same engine build and
+active Doom game-data context (including the IWAD family) produces
 byte-identical UDMF.
 
 ## 1. Problem statement
@@ -197,17 +206,19 @@ spawning—uses the ordinary map path.
 This boundary gives the generator the following observable contract:
 
 ```text
-(seed, theme, difficulty, size, layout, verticality, detail, outdoors,
- IWAD family, engine build)
-                         -> RunBlueprint -> UDMF TEXTMAP + manifest
+eight-field recipe -> RunBlueprint
+RunBlueprint + restarted layout RNG + active IWAD/game data
+                  -> UDMF TEXTMAP + manifest
+(the engine build fixes the implementation used for both stages)
 ```
 
-The IWAD family is part of the effective input because Ultimate Doom and Doom
-II have different actors. Reproducibility is guaranteed within the same engine
-implementation and game-data context: identical input produces byte-identical
-UDMF and manifest artifacts. It is not promised across generator algorithm
-revisions; an old shared seed may intentionally produce a new run in a later
-release.
+Only the eight-field recipe feeds the pure `RunBlueprint`; the active IWAD
+affects later content emission because Ultimate Doom and Doom II have different
+actors, textures, and metrics. Reproducibility is guaranteed within the same
+engine implementation and game-data context: identical input produces
+byte-identical UDMF and manifest artifacts. It is not promised across generator
+algorithm revisions; an old shared seed may intentionally produce a new run in
+a later release.
 
 Savegames preserve a stronger contract than seed reproducibility. `info.json`
 records all eight recipe fields, while `procmap.json` stores the exact generated
@@ -262,8 +273,9 @@ The generator owns an `FRandom`, which derives from the engine's SFMT random
 implementation. `SetSeed` initializes it from the requested 32-bit seed.
 Parameterless calls return the low eight bits of a newly generated 32-bit value;
 modular selection uses `GenRand32() % n`. No wall-clock value is consulted by
-the generation passes. Wall-clock entropy appears only in the explicit
-“Randomize Seed” user action, which writes a new seed before generation.
+the generation passes. Wall-clock entropy appears only when the player
+explicitly requests a new seed—**Randomize Seed**, `procmap random`, or the
+post-completion **Next Random Run** action—before a new run is generated.
 
 Determinism depends on a stable order of decisions. The implementation therefore
 uses row-major grid scans, ordered room arrays, fixed direction arrays, and
@@ -315,9 +327,12 @@ arenas consume nearby empty cells.
 
 ### 6.2 Randomized spanning-tree substrate
 
-The start coordinate is `(1, sy)`, where `sy` is randomly selected inside the
-border. A depth-first traversal visits every interior cell. At each step, every
-unvisited cardinal neighbor receives
+The start lies on the interior border opposite the blueprint's forward
+direction. For eastbound runs it is `(1, sy)`; westbound runs use
+`(W - 2, sy)`; northbound runs use `(sx, H - 2)`; and southbound runs use
+`(sx, 1)`. The perpendicular coordinate is selected inside the border. A
+depth-first traversal visits every interior cell. At each step, every unvisited
+cardinal neighbor receives
 
 ```text
 score = U[0,99]
@@ -336,15 +351,23 @@ private route reservoir, not the final map.
 The desired route length is
 
 ```text
-L_target = (9 + 4S) × bounded blueprint route-length factor.
+L_target = max(8, LayoutScale(9 + 4S)
+                  × blueprint route-length factor).
 ```
 
-Every visited cell of depth at least seven is scored as an exit candidate:
+`LayoutScale` is 78%, 100%, or 122% for Directed, Balanced, or Exploratory
+layout respectively; the profile factor adds its own bounded recipe-derived
+route-length variation.
+
+Every visited cell of depth at least seven is scored as an exit candidate. Let
+`forward` be the coordinate measured in the selected route direction, `perp`
+the coordinate perpendicular to it, `A` the route-axis length, and `B` the
+perpendicular-axis length:
 
 ```text
-exitScore = 28x - 8|depth - L_target|
-          + 100 if x >= W - 3
-          +  18 if |y - sy| >= H/3.
+exitScore = 28 × forward - 8|depth - L_target|
+          + 100 if forward >= A - 3
+          +  18 if |perp - startPerp| >= B/3.
 ```
 
 Thus the exit tends to lie at the opposite edge selected by the blueprint, near
@@ -388,15 +411,21 @@ The requested number of keys depends on size and realized route length:
 | otherwise | 1 |
 
 The blueprint's hash-shuffled permutation of blue, red, and yellow supplies the
-key order. For key index `k` out of `K`, the initial gate rank is approximately
+key order. Its profile-selected stage weights replace a fixed even cadence. For
+zero-based key index `k` out of `K`, with `w_i` the weights of the `K + 1`
+stages, the nominal gate rank is
 
 ```text
-gateRank(k) = clamp(|P|(k + 1)/(K + 1), 3, |P| - 2).
+nominal(k) = round((|P| - 1) × sum(w_0 ... w_k) / sum(w_0 ... w_K))
+             + recipe-global jitter + recipe-local gate jitter
+gateRank(k) = clamp(nominal(k), previousGate + 3,
+                   |P| - 2 - 3 × remainingGates).
 ```
 
 Its branch anchor is selected several ranks before the gate. Up to eight nearby
-anchors are attempted, and the key is placed at the tip of a limb of roughly
-`2 + floor(S/2)` cells. The tip becomes a key arena.
+anchors are attempted, and the key is placed at the tip of a limb whose
+size-derived baseline is scaled by the selected layout and the blueprint's
+profile-derived branch factor. The tip becomes a key arena.
 
 The lock is not a property of every wall around a “locked room.” It belongs to
 the single directed boundary between critical-path ranks `gateRank - 1` and
@@ -485,14 +514,17 @@ emitted; an infeasible candidate falls back deterministically without
 consuming layout RNG. Two to four macro stages then select requested and safely
 realized route shapes (`spine`, `fork_rejoin`, `ring`, `switchback`, or
 `courtyard_spokes`), landmark archetypes, district roles, and vertical-route
-intents. Each non-flat stage is anchored on the critical route, so the planned
-vertical beat cannot disappear into an optional branch. At normal size and
-above, Gentle plans a profile-derived stair hall, terrace overlook, or bridge
+intents. Each realized non-flat stage is anchored on the critical route, so an
+emitted vertical beat cannot disappear into an optional branch. At normal size
+and above, Gentle plans a profile-derived stair hall, terrace overlook, or bridge
 approach; Varied plans positive and negative doglegs; and Dramatic combines
-those doglegs with a scenic form, including a 48–64-unit rise. Two or three
-theme-local districts select compatible materials, light accents, and props
-around the route, giving a theme internal location changes without introducing
-non-IWAD assets.
+those plans with a scenic form, including a 48–64-unit rise. When the concrete
+connector cannot preserve a dogleg's clearance, the emitter realizes and
+records a stair hall; when no protected connector is feasible after retries,
+it omits that planned beat rather than weakening the route or failing the map.
+Two or three theme-local districts select compatible materials, light accents,
+and props around the route, giving a theme internal location changes without
+introducing non-IWAD assets.
 
 ## 7. Semantic room composition
 
@@ -666,15 +698,16 @@ mandatory, keyed, and stair routes.
 
 The terrain pass assigns a hash-planned elevation field over the room graph;
 it does not derive floor height from distance modulo a fixed cadence. Floors
-remain multiples of eight. Gentle preserves one meaningful required stair beat,
-Varied preserves an ascent and descent, and Dramatic targets a 128–192-unit
-main-route highland/basin at size 3–4 or a 192–320-unit one at size 5+. A
-reachable optional district targets the opposite extreme on large Dramatic
-runs. The target is kept separately from realized floors so a constrained
-recipe can retry a safe scenic chain rather than make an otherwise playable
-map fail. Room clearances vary by role:
+remain multiples of eight. At size 3+, Gentle plans one meaningful stair beat,
+Varied plans an ascent and descent, and Dramatic targets a 128–192-unit
+main-route highland/basin at size 3–4 or a 192–320-unit one at size 5+. The
+plan also targets an optional district at the opposite extreme on large
+Dramatic runs. The target is kept separately from realized floors so a constrained
+recipe can retry a safe scenic chain and, if necessary, omit that planned beat
+rather than make an otherwise playable map fail. Base clearances vary by role
+before theme adjustments:
 
-| Role | Typical clear height |
+| Role | Base clear height |
 |---|---:|
 | compact ordinary room | 144–176 |
 | general room | 160–208 |
@@ -684,10 +717,11 @@ map fail. Room clearances vary by role:
 
 The start is fixed at floor 0 and ceiling 192. Components that require a moving
 door—start staging, keyed stage cuts, and key-shrine thresholds—share one floor,
-as do start/key/exit pads and required switches. Every individual connection
-changes by at most 64 units and the UDMF emitter converts it into spatially
-ordered 8-unit stair sectors. A failed scenic chain retries another eligible
-route and then drops the optional feature rather than failing generation.
+as do start/key/exit pads and required switches. Every elevation-changing
+connection changes by at most 64 units and the UDMF emitter converts it into
+spatially ordered 8-unit stair sectors. A failed scenic or planned vertical
+chain retries another eligible route and then omits that planned beat or
+optional feature rather than failing generation.
 
 ### 9.6 Lighting and outdoors
 
@@ -696,10 +730,13 @@ branches darken; hubs, arenas, starts, keys, and exits brighten. Values are
 quantized to multiples of eight and clamped to 160–208. The lower bound is a
 deliberate readability policy rather than an engine limit.
 
-Every map makes the exit and at least one additional combat landmark outdoor.
-Larger maps select more multi-cell arenas, hubs, and broad main-route rooms.
-The budget begins from a size-scaled baseline and is then adjusted by the
-outdoors setting and theme. Outdoor sectors use at least light 192. Validation
+The exit is always outdoors. The baseline outdoor budget is `1 + size / 12`
+for Enclosed, `2 + size / 2` for Mixed, and `3 + size` for Open-Air, then is
+adjusted by theme (Hell/Gothic/Corrupted add opportunities; Industrial reduces
+them). After the exit consumes one slot, eligible arenas, hubs, and broad
+main-route rooms are selected in that order. Compact Enclosed maps can
+therefore retain only the outdoor finale. Outdoor sectors use at least light
+192. Validation
 requires at least two sky sectors and a sky courtyard spanning
 at least 400 units on one axis, preventing a token sky closet from satisfying
 the open-area contract.
@@ -744,18 +781,23 @@ combat circulation or doorway approaches.
 
 ### 10.1 Per-room pressure
 
-The start has zero enemies. For an ordinary room, initial pressure is
+The start has zero enemies. For an ordinary room, the pressure baseline is
 
 ```text
 pressure = floor((difficulty - 1)/2)
+         + [difficulty >= 4]
          + [phase >= 2]
-         + [difficulty >= 4 and main path and phase > 0]
+         + [difficulty >= 5 and main path and phase > 0]
          - deepBranchRelief
-         + U[0,1].
+         + roomThreatBudget + profileThreatCurve.
 ```
 
 Difficulty 2 receives a sparse deterministic extra point so it remains
-distinguishable from difficulty 1. Counts are then bounded by semantic role:
+distinguishable from difficulty 1. The encounter card then supplies a floor,
+bonus, and cap before a final one-bit seeded variation; Breather can be empty,
+while Crossfire, Pincer, Holding Line, and Set Piece raise the floor and/or
+cap. Hubs, arenas, keys, locks, exits, and boss support use their own
+role-specific pressure bounds. Counts are then bounded by semantic role:
 
 | Room role | Encounter cap/range |
 |---|---:|
@@ -777,7 +819,8 @@ Monster tier is
 ```text
 tier = clamp(1 + phase
                + [difficulty >= 4]
-               + [boss room and difficulty >= 5], 1, 5).
+               + [boss room and difficulty >= 5]
+               + [Holding Line card], 1, 5).
 ```
 
 Heavy rosters therefore arrive primarily through progression and only receive a
@@ -813,17 +856,17 @@ unrestricted ordinary encounter roll.
 
 ### 10.4 Manual caches, fluids, and elevated ranged pressure
 
-Every map selects at least one optional supply reveal. A one-sided,
-player-use `SW1COMP` or `SW1GARG` panel invokes `Door_Open` on a
-uniquely tagged closed cache slab. No `Door_Open` linedef has `playercross`:
-collecting a key and ordinary route traversal can never reveal a chamber or
-start a surprise encounter automatically. Key progression remains exclusively
-on the normal keyed `Door_Raise` crossings. Ambushes are still available, but
-as geometry-qualified static encounter cards placed in ordinary rooms rather
-than as trigger closets.
+Eligible maps may select one or more optional supply reveals. Each realized
+cache uses a one-sided, player-use `SW1COMP` or `SW1GARG` panel to invoke
+`Door_Open` on a uniquely tagged closed cache slab. No `Door_Open` linedef has
+`playercross`: collecting a key and ordinary route traversal can never reveal a
+chamber or start a surprise encounter automatically. Key progression remains
+exclusively on the normal keyed `Door_Raise` crossings. Ambushes are still
+available, but as geometry-qualified static encounter cards placed in ordinary
+rooms rather than as trigger closets.
 
-Pre-emission descriptors reserve a compatible feature cell or perimeter face
-for every cache. The family selector cycles among a freestanding clipped
+For every selected cache, pre-emission descriptors reserve a compatible feature
+cell or perimeter face. The family selector cycles among a freestanding clipped
 pavilion, a framed wall-aligned alcove backed 12 units from an exposed wall,
 and a false-wall chamber extruded into a uniquely reserved, verified empty
 in-bounds neighboring coarse cell. The three moving slabs are 80, 64, and 96
@@ -907,9 +950,10 @@ rocket -> rocket box
 cell   -> cell pack.
 ```
 
-Ammo is guaranteed for weapon rooms, major fights, and every difficulty 4–5
-room with at least three enemies; it appears on 60% of other main-route rooms.
-Major encounters emit a second pack.
+Ammo is guaranteed for weapon rooms, major fights, sustained difficulty-4/5
+fights, planned reserves, and recovery beats; it has a 48% fallback roll in
+other main-route rooms. Major encounters and planned reserves emit a second
+pack.
 
 ### 11.3 Recovery and rewards
 
@@ -920,9 +964,10 @@ finale. Dry rooms may instead carry small health-bonus trails.
 Keys and bosses receive armor, while deep dead ends have a 40% armor chance.
 Boss rooms use the strongest armor type in the current table.
 
-The generator reserves `max(2, 1 + floor(S/3))` deep optional rooms as survival
-caches. These favor dead ends and contain two medikits, health bonuses, two
-large ammunition packs, and periodic armor. One or more deep optional dead ends
+The generator reserves `max(2, 1 + floor(S/3))`, plus one when a Shrine Secrets
+motif is present, as deep optional survival caches. These favor dead ends and
+contain two medikits, health bonuses, two large ammunition packs, and periodic
+armor. One or more deep optional dead ends
 become real engine-counted secrets by setting the room sector to the canonical
 `SECRET_MASK` (`0x0400`) required by the ZDoom UDMF namespace. Raw Doom special
 9 is intentionally not used because this namespace does not translate it.
@@ -998,8 +1043,9 @@ Every exposed wall is emitted through `AddWall`, which enforces:
 These constraints eliminate hall-of-mirrors failures from missing middle
 textures and stop wall motifs from restarting at every split segment or
 slipping vertically when floors and ceilings change. Isolated trim and diagonal
-detail intentionally use a centered native-size phase; stock doors and switches
-retain their separate exact-fit transform contracts.
+detail intentionally use a centered native-size phase; stock doors retain a
+native-scale centered crop-or-repeat contract, while switches retain an exact
+single-panel transform.
 
 `AddWall` also indexes unordered vertex pairs. Two opposite one-sided faces in
 the same sector describe an internal chamber/corridor seam, so they collapse to
@@ -1077,25 +1123,28 @@ aperture. Every graph manual/keyed/secret door retains a Standard-or-wider
 Locked doors remain 128×128 and use their key-colored `BIGDOOR` face. Techbase,
 Industrial, Hell, Gothic, and Corrupted Tech select different ordinary subsets;
 the Doom II-only `SPCDOOR` family is never emitted for Ultimate Doom.
-For native width `tw` and emitted face width `w`, the horizontal crop is only
-needed when `w < tw`; wider physical slabs retain unit horizontal art scale:
+For native width `tw` and emitted face width `w`, a compact face is centered
+as a crop and a wider physical slab retains unit horizontal art scale with the
+whole repeat pattern centered:
 
 ```text
-offsetX = round(max(0, (tw - w)/2)),
+offsetX = round((tw - w)/2),
 ```
 
-which centers the recognizable motif rather than cropping only one edge. For a
-door with native texture height `th` and visible vertical span `h`, both face
+This signed phase places the center of a repeated 176- or 224-unit door at the
+center of a native tile rather than anchoring the first repeat at one jamb. For
+a door with native texture height `th` and visible vertical span `h`, both face
 sidedefs use
 
 ```text
 scaley_top = min(1, th/h).
 ```
 
-The ordinary face width equals `tw`, so compact motifs end at their jamb rather
-than overlapping the wall shoulders. Secret doors use a 64-unit hidden panel of
-the adjacent 128-unit wall material and the same physical slab, while setting
-the linedef secret flag.
+The physical face keeps its planned aperture width; compact normal doors can
+therefore end a native motif at their jamb, while wider Gallery/Grand doors use
+the centered native-scale repeat described above. Secret doors use a 64-unit
+hidden panel of the adjacent 128-unit wall material and the same physical slab,
+while setting the linedef secret flag.
 
 Door selection is bounded. Locks and secrets always request a door; the start
 is closed off as a safe staging area; requested reward/deep-transition doors
@@ -1121,10 +1170,11 @@ sector bridges each opening. Tags 1500–1999 identify manual switch caches;
 `Door_Open` special 11 targets those IDs at speed 16. Switch-use lines are
 one-sided and occupy an exact centered 64-unit segment with the
 64×128 `SW1COMP` or `SW1GARG` texture. Their zero origin, unit horizontal
-scale, and `scaley_mid = 128 / wallHeight` show one switch motif in each axis;
-they explicitly omit `playercross`. Hidden moving faces inherit the room wall
-texture and mark the exterior line secret; framed variants use progressively
-stronger accent materials. Raised platform sectors use IDs 2000–2999. Their
+scale, and vertical scale of resolved logical texture height divided by panel
+height show one switch motif in each axis; they explicitly omit `playercross`.
+Hidden moving faces inherit the room wall texture and mark the exterior line
+secret; framed variants use progressively stronger accent materials. Raised
+platform sectors use IDs 2000–2999. Their
 square, chamfered, or wall-backed perimeters join two or three untagged stair
 sectors, and every 16-unit stair transition remains monster-open.
 
@@ -1207,7 +1257,7 @@ The pipeline is organized around the following invariants.
    has exactly two stationary track walls plus two contained approach/lintel
    sectors.
 6. Each door face uses the correct special, activation flags, lock, texture
-   native width/height, crop, and vertical scale.
+   native width/height, centered crop-or-repeat phase, and vertical scale.
 7. There is exactly one player start and one player-cross exit trigger.
 8. Every generated map has a readable room-scale sky landmark and at least one
    `SECRET_MASK` room behind a hidden door, with a tangible reward in every
@@ -1241,9 +1291,10 @@ The pipeline is organized around the following invariants.
     64 units above an adjacent room, contains a ranged actor, and reaches that
     room through a complete sequence of 16-unit sectors with no
     `blockmonsters` flag on the access route.
-16. At least one 80-unit lift rises exactly 32 units, owns four valid use/repeat
-    action edges, has 64 units of headroom, contains a reward, and retains a
-    96-unit bypass.
+16. Every emitted 80-unit lift rises exactly 32 units, owns four valid
+    use/repeat action edges, has 64 units of headroom, contains a reward, and
+    retains a 96-unit bypass. Compact or constrained maps may omit this
+    optional feature.
 17. Ordinary traversable sector boundaries, including raised-platform stairs,
     have at least 56 units of headroom and no floor step above 24 units;
     retaining sides, closed doors, and lifts are validated separately.
@@ -1260,8 +1311,10 @@ The pipeline is organized around the following invariants.
 21. No two serialized linedefs occupy the same geometric segment; every sector
     boundary vertex has one incoming and one outgoing edge, and every boundary
     loop closes with nonzero signed area.
-22. Playable floors span at least 96 units and contain at least eight distinct
-    levels; full-width 8-unit route risers meet a size-scaled minimum count.
+22. Playable floors span at least 64, 96, or 128 units and contain at least 6,
+    8, or 10 distinct levels for Gentle, Varied, or Dramatic verticality
+    respectively; full-width 8-unit route risers meet a size-scaled minimum
+    count.
 23. Size-5 and larger maps contain a raised same-stage sightline window with at
     least 64 units of opening height, monster-blocking aperture edges, and no
     new traversable progression connection.
@@ -1291,8 +1344,8 @@ The pipeline is organized around the following invariants.
     geometry/capacity/static-placement evidence and a required manual switch
     action when it is a switch cache. Stages expose requested/realized shape, landmark
     archetype, district role, vertical intent, planned `vertical_rise`, realized
-    `realized_vertical_rise`, and gate timing; every
-    non-flat stage has a matching main-route vertical anchor.
+    `realized_vertical_rise`, and gate timing; every realized non-flat stage
+    has a matching main-route vertical anchor.
 11. On the ordered main path, no more than two high-pressure cards are
     consecutive; Holding Line and Set Piece cards are followed by recovery or
     a meaningful weapon/reward choice.
@@ -1300,11 +1353,12 @@ The pipeline is organized around the following invariants.
 ## 15. Validation methodology
 
 The primary regression driver is `test_procgen.sh`. It launches the actual
-engine headlessly, requests a UDMF dump, parses the serialized document, and
-also enters `PROCMAP` through the normal runtime loader. This is stronger than a
-test that reads only internal room objects: serialization mistakes, unknown
-textures, node-builder failures, and map-loader integration errors remain
-observable.
+engine non-interactively (the dump and runtime cases use `-nogui`; the menu
+smoke also exercises `-headless`), requests a UDMF dump, parses the serialized
+document, and also enters `PROCMAP` through the normal runtime loader. This is
+stronger than a test that reads only internal room objects: serialization
+mistakes, unknown textures, node-builder failures, and map-loader integration
+errors remain observable.
 
 `test_procgen.sh replayability` is intentionally sequential. Its curated
 recipe corpus runs each recipe twice for UDMF and twice for the schema-1
@@ -1635,7 +1689,6 @@ Start the same map through the normal loader:
 | `src/common/maps/procgen.h` | cell/room state, `RunBlueprint`, and generator interface |
 | `src/common/maps/procgen.cpp` | CVars, UDMF/manifest console commands, and in-memory `MapData` factory |
 | `src/g_game.cpp` | exact procedural-map save archive and staged restoration |
-| `src/m_misc.cpp` | final-frame screenshot request processing |
 | `src/common/maps/procgen/procgen_core.cpp` | recipe hash, RunBlueprint, mission graph, embedding, branches, keys, locks, loops, landmarks |
 | `src/common/maps/procgen/procgen_rooms.cpp` | room composition, graph analysis, visual grammar, pacing, economy, secrets |
 | `src/common/maps/procgen/procgen_udmf.cpp` | sectors, chambers, corridors, doors, things, UDMF serialization |

@@ -156,10 +156,30 @@ FKeyBindings Bindings;
 FKeyBindings DoubleBindings;
 FKeyBindings AutomapBindings;
 
+static bool BindIsCommand(const char *bind, const char *command, size_t commandLength)
+{
+	return bind != nullptr && strnicmp(bind, command, commandLength) == 0 &&
+		(bind[commandLength] == '\0' || bind[commandLength] == ' ');
+}
+
 static bool BindIsScreenshotCommand(const char *bind)
 {
-	return bind != nullptr && strnicmp(bind, "screenshot", 10) == 0 &&
-		(bind[10] == '\0' || bind[10] == ' ');
+	return BindIsCommand(bind, "screenshot", sizeof("screenshot") - 1);
+}
+
+bool C_IsCaptureCommand(const char *command)
+{
+	return BindIsScreenshotCommand(command) ||
+		BindIsCommand(command, "togglevideorecording", sizeof("togglevideorecording") - 1) ||
+		BindIsCommand(command, "toggledemorecording", sizeof("toggledemorecording") - 1);
+}
+
+bool C_IsCaptureKey(int key)
+{
+	if (key < 0 || key >= NUM_KEYS)
+		return false;
+	return C_IsCaptureCommand(Bindings.GetBind(key)) ||
+		C_IsCaptureCommand(DoubleBindings.GetBind(key));
 }
 
 bool C_IsScreenshotKey(int key)
@@ -921,4 +941,3 @@ bool C_DoKey (event_t *ev, FKeyBindings *binds, FKeyBindings *doublebinds)
 	}
 	return false;
 }
-

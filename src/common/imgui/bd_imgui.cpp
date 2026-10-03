@@ -871,6 +871,13 @@ bool WantsGuiCapture()
 	return io.WantCaptureMouse || io.WantCaptureKeyboard || sDemoVisible;
 }
 
+bool WantsTextInput()
+{
+	if (!MasterVisible() || sContext == nullptr) return false;
+	ImGui::SetCurrentContext(sContext);
+	return ImGui::GetIO().WantTextInput;
+}
+
 } // namespace BdImGui
 
 CCMD(py_imgui_demo)
@@ -899,6 +906,7 @@ namespace BdImGui
 	void Frame(double) {}
 	bool HandleEvent(const event_t*) { return false; }
 	bool WantsGuiCapture() { return false; }
+	bool WantsTextInput() { return false; }
 	bool MasterVisible() { return false; }
 	void SetMasterVisible(bool) {}
 	bool NavEnabled() { return false; }

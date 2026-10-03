@@ -31,6 +31,8 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <time.h>
+#include <chrono>
+#include <utility>
 
 #include "r_defs.h"
 
@@ -54,6 +56,8 @@
 #include "i_video.h"
 #include "v_video.h"
 #include "i_system.h"
+#include "g_input.h"
+#include "fs_findfile.h"
 
 // Data.
 #include "m_misc.h"
@@ -73,6 +77,18 @@ FGameConfigFile *GameConfig;
 CVAR(Bool, screenshot_quiet, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 CVAR(String, screenshot_type, "png", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 CVAR(String, screenshot_dir, "", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
+
+// Recording deliberately shares one destination with demos and video captures.
+// A blank value is resolved to screenshots/captures, which keeps old screenshot
+// preferences untouched while still giving captures a predictable home.
+CVAR(String, capture_export_dir, "", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
+CVAR(String, vid_record_name, "", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
+CUSTOM_CVAR(Int, vid_record_fps, 60, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+{
+	if (self < 1) self = 1;
+	else if (self > 240) self = 240;
+}
+CVAR(Int, vid_record_format, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 EXTERN_CVAR(Bool, longsavemessages);
 
 static FString PendingScreenShotName;
@@ -666,6 +682,791 @@ void M_ScreenShot (const char *filename)
 	}
 }
 
+//---------------------------------------------------------------------------
+//
+// Recording export paths
+//
+//---------------------------------------------------------------------------
+
+static FString MakeCapturePathUnique(FString filename)
+{
+	if (!FileExists(filename.GetChars()))
+	{
+		return filename;
+	}
+
+	const ptrdiff_t slash = filename.LastIndexOfAny(":/\\");
+	const ptrdiff_t dot = filename.LastIndexOf('.');
+	const FString stem = dot > slash ? filename.Left(dot) : filename;
+	const FString extension = dot > slash ? filename.Mid(dot) : "";
+
+	for (unsigned int index = 1; index <= 9999; ++index)
+	{
+		FString candidate;
+		candidate.Format("%s_%03u%s", stem.GetChars(), index, extension.GetChars());
+		if (!FileExists(candidate.GetChars()))
+		{
+			return candidate;
+		}
+	}
+	return FString();
+}
+
+FString M_GetCaptureExportPath()
+{
+	FString path;
+	path = capture_export_dir;
+	path.StripLeftRight();
+	if (path.IsEmpty())
+	{
+		path = M_GetScreenshotsPath();
+		path += "captures";
+	}
+	path = NicePath(path.GetChars());
+	if (path.IsNotEmpty() && path.Back() != '/' && path.Back() != '\\')
+	{
+		path += '/';
+	}
+	CreatePath(path.GetChars());
+	return path;
+}
+
+FString M_MakeCaptureFileName(const char *requestedName, const char *extension, const char *defaultStem)
+{
+	FString filename = requestedName ? requestedName : "";
+	filename.StripLeftRight();
+	if (filename.IsEmpty())
+	{
+		time_t now;
+		time(&now);
+		tm *local = localtime(&now);
+		if (local != nullptr)
+		{
+			filename.Format("%s%s_%s_%04d%02d%02d_%02d%02d%02d%s",
+				M_GetCaptureExportPath().GetChars(), defaultStem, gameinfo.ConfigName.GetChars(),
+				local->tm_year + 1900, local->tm_mon + 1, local->tm_mday,
+				local->tm_hour, local->tm_min, local->tm_sec, extension);
+		}
+		else
+		{
+			filename.Format("%s%s_%s%s", M_GetCaptureExportPath().GetChars(),
+				defaultStem, gameinfo.ConfigName.GetChars(), extension);
+		}
+	}
+	else
+	{
+		filename = NicePath(filename.GetChars());
+		if (filename.LastIndexOfAny(":/\\") < 0)
+		{
+			filename = M_GetCaptureExportPath() + filename;
+		}
+	}
+
+	const ptrdiff_t slash = filename.LastIndexOfAny(":/\\");
+	const ptrdiff_t dot = filename.LastIndexOf('.');
+	if (dot > slash)
+	{
+		filename.Truncate(dot);
+	}
+	filename += extension;
+	if (slash > 0)
+	{
+		CreatePath(filename.Left(slash + 1).GetChars());
+	}
+	return MakeCapturePathUnique(filename);
+}
+
+//---------------------------------------------------------------------------
+//
+// Lossless final-frame video capture
+//
+//---------------------------------------------------------------------------
+
+namespace
+{
+	enum EVideoRecordingFormat
+	{
+		VIDEO_RECORDING_PNG_SEQUENCE = 0,
+		VIDEO_RECORDING_RGB_AVI = 1,
+	};
+
+	// Recording rate is a delivery property, not a gameplay simulation property.
+	// I_nsTime() deliberately follows i_timescale, so use a raw monotonic clock
+	// here to keep a 60 FPS capture at 60 frames per wall-clock second even when
+	// the player slows down or fast-forwards the game.
+	static uint64_t CaptureWallClockNS()
+	{
+		using namespace std::chrono;
+		return (uint64_t)duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+	}
+
+	static FString IndexedCaptureStem(const FString &original, unsigned int index)
+	{
+		if (index == 0)
+		{
+			return original;
+		}
+		FString candidate;
+		candidate.Format("%s_%03u", original.GetChars(), index);
+		return candidate;
+	}
+
+	static bool CaptureFamilyHasFiles(const FString &stem, const char *prefixSuffix, const char *extension)
+	{
+		FString directory = ExtractFilePath(stem.GetChars());
+		if (directory.IsEmpty())
+		{
+			directory = ".";
+		}
+		FString prefix = ExtractFileBase(stem.GetChars(), true);
+		prefix += prefixSuffix;
+		const size_t extensionLength = strlen(extension);
+		FileSys::FileList matches;
+		// This is an explicit collision-safety scan, so include dotfiles as well:
+		// a user may intentionally name a capture family ".take".
+		if (!FileSys::ScanDirectory(matches, directory.GetChars(), "*", true, true))
+		{
+			return false;
+		}
+		for (const auto &entry : matches)
+		{
+			const size_t length = entry.FileName.size();
+			if (!entry.isDirectory && length >= prefix.Len() + extensionLength &&
+				strnicmp(entry.FileName.c_str(), prefix.GetChars(), prefix.Len()) == 0 &&
+				strnicmp(entry.FileName.c_str() + length - extensionLength, extension, extensionLength) == 0)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	static bool SequenceStemAvailable(const FString &stem)
+	{
+		FString baseFile = stem;
+		baseFile += ".png";
+		return !FileExists(baseFile.GetChars()) &&
+			!CaptureFamilyHasFiles(stem, "_frame", ".png") &&
+			!CaptureFamilyHasFiles(stem, "_part", ".png");
+	}
+
+	static bool AviStemAvailable(const FString &stem)
+	{
+		FString baseFile = stem;
+		baseFile += ".avi";
+		return !FileExists(baseFile.GetChars()) && !CaptureFamilyHasFiles(stem, "_part", ".avi");
+	}
+
+	// RIFF and idx1 offsets are 32-bit, and FileWriter uses the platform C
+	// stream seek API. Leave enough headroom for the header/index and signed
+	// 32-bit seek implementations before continuing in a sibling part.
+	constexpr uint64_t AVI_PART_LIMIT = 1900ull * 1024ull * 1024ull;
+	constexpr uint64_t VIDEO_CATCHUP_SECONDS = 10;
+
+	struct FAviIndexEntry
+	{
+		uint32_t Offset;
+		uint32_t Size;
+	};
+
+	class FVideoRecorder
+	{
+	public:
+		bool Start(const char *requestedName)
+		{
+			if (mActive)
+			{
+				Printf("Video recording is already active.\n");
+				return false;
+			}
+			if (I_IsHeadless())
+			{
+				Printf("Video recording is unavailable in headless mode.\n");
+				return false;
+			}
+
+			mFormat = vid_record_format == VIDEO_RECORDING_RGB_AVI ? VIDEO_RECORDING_RGB_AVI : VIDEO_RECORDING_PNG_SEQUENCE;
+			mFrameRate = vid_record_fps;
+			if (mFrameRate < 1) mFrameRate = 1;
+			if (mFrameRate > 240) mFrameRate = 240;
+			FString configuredName;
+			configuredName = vid_record_name;
+			const char *name = requestedName != nullptr && requestedName[0] != '\0' ? requestedName : configuredName.GetChars();
+			mBaseFile = M_MakeCaptureFileName(name, mFormat == VIDEO_RECORDING_RGB_AVI ? ".avi" : ".png", "Video");
+			if (mBaseFile.IsEmpty())
+			{
+				Printf("Could not find an unused video capture filename.\n");
+				return false;
+			}
+
+			mSequenceStem = StripExtension(mBaseFile);
+			if (mFormat == VIDEO_RECORDING_PNG_SEQUENCE)
+			{
+				if (!SelectUnusedSequenceStem())
+				{
+					Printf("Could not find an unused PNG sequence name.\n");
+					return false;
+				}
+			}
+			else if (!SelectUnusedAviFamily())
+			{
+				Printf("Could not find an unused AVI recording name.\n");
+				return false;
+			}
+			mPart = 1;
+			mStartTime = CaptureWallClockNS();
+			mTotalFrames = 0;
+			mOutputOpen = false;
+			mLagNoticeShown = false;
+			mLastFrame.Clear();
+			mActive = true;
+
+			if (mFormat == VIDEO_RECORDING_PNG_SEQUENCE)
+			{
+				Printf("Lossless PNG recording armed at %d FPS: %s_frame000001.png\n", mFrameRate, mSequenceStem.GetChars());
+			}
+			else
+			{
+				Printf("Lossless RGB AVI recording armed at %d FPS: %s\n", mFrameRate, mBaseFile.GetChars());
+			}
+			return true;
+		}
+
+		void Stop()
+		{
+			if (!mActive)
+			{
+				Printf("Video recording is not active.\n");
+				return;
+			}
+
+			bool finished = true;
+			if (mFormat == VIDEO_RECORDING_RGB_AVI && mFile != nullptr)
+			{
+				finished = FinishAviPart();
+			}
+			if (!finished)
+			{
+				// Do not leave an open, unindexed AVI behind when its final header
+				// patch fails. Completed earlier parts remain usable; the failed
+				// current part is removed by Abort().
+				Abort("could not finalize the AVI output file");
+				return;
+			}
+			if (finished && mTotalFrames > 0)
+			{
+				if (mFormat == VIDEO_RECORDING_PNG_SEQUENCE)
+				{
+					Printf("Video recording stopped: %llu lossless PNG frames at %d FPS (%s_frame%%06d.png).\n",
+						(unsigned long long)mTotalFrames, mFrameRate, mSequenceStem.GetChars());
+				}
+				else
+				{
+					Printf("Video recording stopped: %llu lossless RGB AVI frames in %d part%s.\n",
+						(unsigned long long)mTotalFrames, mPart, mPart == 1 ? "" : "s");
+				}
+			}
+			else if (finished)
+			{
+				Printf("Video recording stopped before a composited frame was available.\n");
+			}
+			Reset();
+		}
+
+		bool IsActive() const
+		{
+			return mActive;
+		}
+
+		void CaptureFrame()
+		{
+			if (!mActive || screen == nullptr)
+			{
+				return;
+			}
+
+			const uint64_t now = CaptureWallClockNS();
+			const uint64_t elapsed = now >= mStartTime ? now - mStartTime : 0;
+			uint64_t wantedFrames = elapsed * (uint64_t)mFrameRate / 1000000000ull + 1;
+			if (wantedFrames <= mTotalFrames)
+			{
+				return;
+			}
+			const uint64_t maximumCatchup = (uint64_t)mFrameRate * VIDEO_CATCHUP_SECONDS;
+			if (wantedFrames - mTotalFrames > maximumCatchup)
+			{
+				wantedFrames = mTotalFrames + maximumCatchup;
+				if (!mLagNoticeShown)
+				{
+					Printf("Video capture fell behind; limiting duplicate-frame catch-up to %llu seconds.\n",
+						(unsigned long long)VIDEO_CATCHUP_SECONDS);
+					mLagNoticeShown = true;
+				}
+			}
+
+			int pitch = 0;
+			ESSType colorType = SS_RGB;
+			float gamma = 1.0f;
+			auto screenshot = screen->GetScreenshotBuffer(pitch, colorType, gamma);
+			const int width = screen->GetWidth();
+			const int height = screen->GetHeight();
+			if (screenshot.Size() == 0 || colorType != SS_RGB || pitch < width * 3)
+			{
+				Abort("the active renderer could not provide an RGB final frame");
+				return;
+			}
+			if (!EnsureOutput(width, height))
+			{
+				return;
+			}
+			if (!CopyFinalFrame(screenshot, pitch, gamma))
+			{
+				Abort("the final frame buffer was incomplete");
+				return;
+			}
+
+			while (mTotalFrames + 1 < wantedFrames && mLastFrame.Size() != 0)
+			{
+				if (!WriteFrame(mLastFrame, mLastFrameGamma))
+				{
+					return;
+				}
+			}
+			if (!WriteFrame(mCurrentFrame, mCurrentFrameGamma))
+			{
+				return;
+			}
+			mLastFrame = std::move(mCurrentFrame);
+			mLastFrameGamma = mCurrentFrameGamma;
+		}
+
+	private:
+		static FString StripExtension(const FString &filename)
+		{
+			const ptrdiff_t slash = filename.LastIndexOfAny(":/\\");
+			const ptrdiff_t dot = filename.LastIndexOf('.');
+			return dot > slash ? filename.Left(dot) : filename;
+		}
+
+		bool SelectUnusedSequenceStem()
+		{
+			const FString original = mSequenceStem;
+			for (unsigned int index = 0; index <= 9999; ++index)
+			{
+				FString candidate = IndexedCaptureStem(original, index);
+				if (SequenceStemAvailable(candidate))
+				{
+					mSequenceStem = candidate;
+					return true;
+				}
+			}
+			return false;
+		}
+
+		bool SelectUnusedAviFamily()
+		{
+			const FString original = StripExtension(mBaseFile);
+			for (unsigned int index = 0; index <= 9999; ++index)
+			{
+				const FString candidate = IndexedCaptureStem(original, index);
+				if (AviStemAvailable(candidate))
+				{
+					mBaseFile = candidate + ".avi";
+					return true;
+				}
+			}
+			return false;
+		}
+
+		FString SequenceStemForPart() const
+		{
+			if (mPart == 1) return mSequenceStem;
+			FString result;
+			result.Format("%s_part%03d", mSequenceStem.GetChars(), mPart);
+			return result;
+		}
+
+		FString AviFileForPart() const
+		{
+			if (mPart == 1) return mBaseFile;
+			FString result;
+			result.Format("%s_part%03d.avi", StripExtension(mBaseFile).GetChars(), mPart);
+			return result;
+		}
+
+		bool EnsureOutput(int width, int height)
+		{
+			if (!mOutputOpen)
+			{
+				mWidth = width;
+				mHeight = height;
+				mOutputOpen = true;
+				if (mFormat == VIDEO_RECORDING_RGB_AVI && !OpenAviPart())
+				{
+					Abort("could not create the AVI output file");
+					return false;
+				}
+				return true;
+			}
+			if (mWidth == width && mHeight == height)
+			{
+				return true;
+			}
+
+			if (mFormat == VIDEO_RECORDING_RGB_AVI && !FinishAviPart())
+			{
+				Abort("could not finalize the AVI part after a resolution change");
+				return false;
+			}
+			++mPart;
+			mWidth = width;
+			mHeight = height;
+			mLastFrame.Clear();
+			if (mFormat == VIDEO_RECORDING_RGB_AVI && !OpenAviPart())
+			{
+				Abort("could not create the next AVI part after a resolution change");
+				return false;
+			}
+			Printf("Video capture resolution changed; continuing in part %d at %dx%d.\n", mPart, mWidth, mHeight);
+			return true;
+		}
+
+		bool CopyFinalFrame(const TArray<uint8_t> &screenshot, int pitch, float gamma)
+		{
+			const uint64_t frameSize = (uint64_t)mWidth * (uint64_t)mHeight * 3ull;
+			const uint64_t sourceSize = (uint64_t)pitch * (uint64_t)mHeight;
+			if (frameSize > 0xffffffffull || sourceSize > screenshot.Size())
+			{
+				return false;
+			}
+			mCurrentFrame.Resize((unsigned int)frameSize);
+			for (int y = 0; y < mHeight; ++y)
+			{
+				memcpy(mCurrentFrame.Data() + (size_t)y * mWidth * 3,
+					screenshot.Data() + (size_t)y * pitch, (size_t)mWidth * 3);
+			}
+			// Screenshot backends report the image gamma for PNG metadata. Keep
+			// it with the frame so HDR/fullscreen captures retain the same color
+			// interpretation as an ordinary engine screenshot.
+			mCurrentFrameGamma = gamma > 0.0f ? gamma : 1.0f;
+			return true;
+		}
+
+		bool WriteFrame(const TArray<uint8_t> &rgb, float gamma)
+		{
+			const bool written = mFormat == VIDEO_RECORDING_PNG_SEQUENCE ? WritePngFrame(rgb, gamma) : WriteAviFrame(rgb);
+			if (written)
+			{
+				++mTotalFrames;
+			}
+			return written;
+		}
+
+		bool WritePngFrame(const TArray<uint8_t> &rgb, float gamma)
+		{
+			FString filename;
+			filename.Format("%s_frame%06llu.png", SequenceStemForPart().GetChars(), (unsigned long long)(mTotalFrames + 1));
+			if (FileExists(filename.GetChars()))
+			{
+				Abort("would overwrite an existing PNG frame");
+				return false;
+			}
+			auto file = FileWriter::Open(filename.GetChars());
+			if (file == nullptr)
+			{
+				Abort("could not create a PNG frame");
+				return false;
+			}
+			const bool written = M_CreatePNG(file, rgb.Data(), nullptr, SS_RGB, mWidth, mHeight, mWidth * 3, gamma) && M_FinishPNG(file);
+			delete file;
+			if (!written)
+			{
+				RemoveFile(filename.GetChars());
+				Abort("could not write a PNG frame");
+			}
+			return written;
+		}
+
+		bool WriteBytes(const void *data, size_t size)
+		{
+			return mFile != nullptr && mFile->Write(data, size) == size;
+		}
+
+		bool WriteU16(uint16_t value)
+		{
+			const uint8_t bytes[2] = { uint8_t(value), uint8_t(value >> 8) };
+			return WriteBytes(bytes, sizeof(bytes));
+		}
+
+		bool WriteU32(uint32_t value)
+		{
+			const uint8_t bytes[4] = { uint8_t(value), uint8_t(value >> 8), uint8_t(value >> 16), uint8_t(value >> 24) };
+			return WriteBytes(bytes, sizeof(bytes));
+		}
+
+		bool WriteFourCC(const char *fourCC)
+		{
+			return WriteBytes(fourCC, 4);
+		}
+
+		bool PatchU32(ptrdiff_t position, uint32_t value)
+		{
+			const ptrdiff_t restore = mFile->Tell();
+			if (restore < 0 || mFile->Seek(position, SEEK_SET) != 0 || !WriteU32(value) || mFile->Seek(restore, SEEK_SET) != 0)
+			{
+				return false;
+			}
+			return true;
+		}
+
+		bool OpenAviPart()
+		{
+			const uint64_t rowBytes = (uint64_t)mWidth * 3ull;
+			const uint64_t stride = (rowBytes + 3ull) & ~3ull;
+			const uint64_t frameBytes = stride * (uint64_t)mHeight;
+			if (frameBytes == 0 || frameBytes > 0xffffffffull || mWidth > 0x7fffffff || mHeight > 0x7fffffff)
+			{
+				return false;
+			}
+			mAviStride = (uint32_t)stride;
+			mAviFrameBytes = (uint32_t)frameBytes;
+			mBgrFrame.Resize(mAviFrameBytes);
+			mCurrentFile = AviFileForPart();
+			if (FileExists(mCurrentFile.GetChars()))
+			{
+				return false;
+			}
+			mFile = FileWriter::Open(mCurrentFile.GetChars());
+			if (mFile == nullptr)
+			{
+				return false;
+			}
+			mAviIndex.Clear();
+			mAviPayloadBytes = 0;
+			mAviPartFrames = 0;
+
+			const uint64_t maximumBytesPerSecond = (uint64_t)mAviFrameBytes * (uint64_t)mFrameRate;
+			const uint32_t bytesPerSecond = maximumBytesPerSecond > 0xffffffffull ? 0xffffffffu : (uint32_t)maximumBytesPerSecond;
+			if (!WriteFourCC("RIFF")) return false;
+			mRiffSizePosition = mFile->Tell();
+			if (!WriteU32(0) || !WriteFourCC("AVI ") || !WriteFourCC("LIST")) return false;
+			const ptrdiff_t hdrlSizePosition = mFile->Tell();
+			if (!WriteU32(0)) return false;
+			const ptrdiff_t hdrlStart = mFile->Tell();
+			if (!WriteFourCC("hdrl") || !WriteFourCC("avih") || !WriteU32(56)) return false;
+			if (!WriteU32((uint32_t)(1000000 / mFrameRate)) || !WriteU32(bytesPerSecond) || !WriteU32(0) || !WriteU32(0x10)) return false;
+			mAvihFrameCountPosition = mFile->Tell();
+			if (!WriteU32(0) || !WriteU32(0) || !WriteU32(1) || !WriteU32(mAviFrameBytes) || !WriteU32((uint32_t)mWidth) || !WriteU32((uint32_t)mHeight)) return false;
+			for (int index = 0; index < 4; ++index) if (!WriteU32(0)) return false;
+
+			if (!WriteFourCC("LIST")) return false;
+			const ptrdiff_t strlSizePosition = mFile->Tell();
+			if (!WriteU32(0)) return false;
+			const ptrdiff_t strlStart = mFile->Tell();
+			if (!WriteFourCC("strl") || !WriteFourCC("strh") || !WriteU32(56) || !WriteFourCC("vids") || !WriteU32(0)) return false;
+			if (!WriteU32(0) || !WriteU16(0) || !WriteU16(0) || !WriteU32(0) || !WriteU32(1) || !WriteU32((uint32_t)mFrameRate) || !WriteU32(0)) return false;
+			mStrhFrameCountPosition = mFile->Tell();
+			if (!WriteU32(0) || !WriteU32(mAviFrameBytes) || !WriteU32(0xffffffffu) || !WriteU32(0)) return false;
+			for (int index = 0; index < 4; ++index) if (!WriteU16(0)) return false;
+
+			if (!WriteFourCC("strf") || !WriteU32(40) || !WriteU32(40) || !WriteU32((uint32_t)mWidth) || !WriteU32((uint32_t)mHeight)) return false;
+			if (!WriteU16(1) || !WriteU16(24) || !WriteU32(0) || !WriteU32(mAviFrameBytes) || !WriteU32(0) || !WriteU32(0) || !WriteU32(0) || !WriteU32(0)) return false;
+
+			const ptrdiff_t afterStrl = mFile->Tell();
+			if (afterStrl < strlSizePosition + 4 || !PatchU32(strlSizePosition, (uint32_t)(afterStrl - strlSizePosition - 4))) return false;
+			const ptrdiff_t afterHdrl = mFile->Tell();
+			if (afterHdrl < hdrlSizePosition + 4 || !PatchU32(hdrlSizePosition, (uint32_t)(afterHdrl - hdrlSizePosition - 4))) return false;
+
+			if (!WriteFourCC("LIST")) return false;
+			mMoviSizePosition = mFile->Tell();
+			if (!WriteU32(0) || !WriteFourCC("movi")) return false;
+			mMoviDataStart = mFile->Tell();
+			return mMoviDataStart >= 0;
+		}
+
+		bool WriteAviFrame(const TArray<uint8_t> &rgb)
+		{
+			const uint64_t chunkBytes = 8ull + mAviFrameBytes + (mAviFrameBytes & 1u);
+			const uint64_t indexBytes = ((uint64_t)mAviIndex.Size() + 1ull) * 16ull;
+			if (mAviPartFrames != 0 && mAviPayloadBytes + chunkBytes + indexBytes + 4096ull > AVI_PART_LIMIT)
+			{
+				if (!FinishAviPart())
+				{
+					Abort("could not finalize an AVI part");
+					return false;
+				}
+				++mPart;
+				if (!OpenAviPart())
+				{
+					Abort("could not create the next AVI part");
+					return false;
+				}
+				Printf("Lossless RGB AVI reached its safe RIFF limit; continuing in part %d.\n", mPart);
+			}
+
+			for (int y = 0; y < mHeight; ++y)
+			{
+				const uint8_t *source = rgb.Data() + (size_t)(mHeight - y - 1) * mWidth * 3;
+				uint8_t *destination = mBgrFrame.Data() + (size_t)y * mAviStride;
+				for (int x = 0; x < mWidth; ++x)
+				{
+					destination[x * 3 + 0] = source[x * 3 + 2];
+					destination[x * 3 + 1] = source[x * 3 + 1];
+					destination[x * 3 + 2] = source[x * 3 + 0];
+				}
+				if (mAviStride > (uint32_t)mWidth * 3)
+				{
+					memset(destination + (size_t)mWidth * 3, 0, mAviStride - (uint32_t)mWidth * 3);
+				}
+			}
+
+			const ptrdiff_t chunkStart = mFile->Tell();
+			// AVI idx1 offsets are relative to the `movi` list type (not its
+			// first payload byte), so a first frame begins at offset four. This
+			// convention is required by strict AVI readers such as ffmpeg.
+			const ptrdiff_t moviTypeStart = mMoviDataStart - 4;
+			if (moviTypeStart < 0 || chunkStart < mMoviDataStart || (uint64_t)(chunkStart - moviTypeStart) > 0xffffffffull ||
+				!WriteFourCC("00db") || !WriteU32(mAviFrameBytes) || !WriteBytes(mBgrFrame.Data(), mAviFrameBytes))
+			{
+				Abort("could not write an AVI frame");
+				return false;
+			}
+			if ((mAviFrameBytes & 1u) != 0)
+			{
+				const uint8_t padding = 0;
+				if (!WriteBytes(&padding, 1))
+				{
+					Abort("could not pad an AVI frame");
+					return false;
+				}
+			}
+			mAviIndex.Push({ (uint32_t)(chunkStart - moviTypeStart), mAviFrameBytes });
+			mAviPayloadBytes += chunkBytes;
+			++mAviPartFrames;
+			return true;
+		}
+
+		bool FinishAviPart()
+		{
+			if (mFile == nullptr)
+			{
+				return true;
+			}
+			if (mAviPartFrames == 0)
+			{
+				delete mFile;
+				mFile = nullptr;
+				RemoveFile(mCurrentFile.GetChars());
+				return true;
+			}
+
+			const ptrdiff_t moviEnd = mFile->Tell();
+			if (moviEnd < mMoviSizePosition + 4 || !PatchU32(mMoviSizePosition, (uint32_t)(moviEnd - mMoviSizePosition - 4)) ||
+				!WriteFourCC("idx1") || (uint64_t)mAviIndex.Size() * 16ull > 0xffffffffull || !WriteU32((uint32_t)mAviIndex.Size() * 16u))
+			{
+				return false;
+			}
+			for (const auto &entry : mAviIndex)
+			{
+				if (!WriteFourCC("00db") || !WriteU32(0x10) || !WriteU32(entry.Offset) || !WriteU32(entry.Size))
+				{
+					return false;
+				}
+			}
+			const ptrdiff_t fileEnd = mFile->Tell();
+			if (fileEnd < 8 || !PatchU32(mAvihFrameCountPosition, mAviPartFrames) || !PatchU32(mStrhFrameCountPosition, mAviPartFrames) ||
+				!PatchU32(mRiffSizePosition, (uint32_t)(fileEnd - 8)))
+			{
+				return false;
+			}
+			delete mFile;
+			mFile = nullptr;
+			return true;
+		}
+
+		void Abort(const char *reason)
+		{
+			Printf("Video recording stopped: %s.\n", reason);
+			if (mFile != nullptr)
+			{
+				delete mFile;
+				mFile = nullptr;
+				if (mCurrentFile.IsNotEmpty()) RemoveFile(mCurrentFile.GetChars());
+			}
+			Reset();
+		}
+
+		void Reset()
+		{
+			// All normal AVI paths close their writer before resetting. Keep this
+			// guard for failed header/index writes so an error never leaks a file
+			// handle through shutdown.
+			if (mFile != nullptr)
+			{
+				delete mFile;
+				mFile = nullptr;
+			}
+			mActive = false;
+			mOutputOpen = false;
+			mFile = nullptr;
+			mLastFrame.Clear();
+			mCurrentFrame.Clear();
+			mLastFrameGamma = 1.0f;
+			mCurrentFrameGamma = 1.0f;
+			mBgrFrame.Clear();
+			mAviIndex.Clear();
+			mCurrentFile = "";
+		}
+
+		bool mActive = false;
+		bool mOutputOpen = false;
+		bool mLagNoticeShown = false;
+		int mFormat = VIDEO_RECORDING_PNG_SEQUENCE;
+		int mFrameRate = 60;
+		int mPart = 1;
+		int mWidth = 0;
+		int mHeight = 0;
+		uint64_t mStartTime = 0;
+		uint64_t mTotalFrames = 0;
+		FString mBaseFile;
+		FString mSequenceStem;
+		FString mCurrentFile;
+		TArray<uint8_t> mLastFrame;
+		TArray<uint8_t> mCurrentFrame;
+		float mLastFrameGamma = 1.0f;
+		float mCurrentFrameGamma = 1.0f;
+		TArray<uint8_t> mBgrFrame;
+		FileWriter *mFile = nullptr;
+		TArray<FAviIndexEntry> mAviIndex;
+		uint32_t mAviStride = 0;
+		uint32_t mAviFrameBytes = 0;
+		uint32_t mAviPartFrames = 0;
+		uint64_t mAviPayloadBytes = 0;
+		ptrdiff_t mRiffSizePosition = 0;
+		ptrdiff_t mAvihFrameCountPosition = 0;
+		ptrdiff_t mStrhFrameCountPosition = 0;
+		ptrdiff_t mMoviSizePosition = 0;
+		ptrdiff_t mMoviDataStart = 0;
+	};
+
+	FVideoRecorder VideoRecorder;
+}
+
+bool M_StartVideoRecording(const char *requestedName)
+{
+	return VideoRecorder.Start(requestedName);
+}
+
+void M_StopVideoRecording()
+{
+	VideoRecorder.Stop();
+}
+
+bool M_IsVideoRecording()
+{
+	return VideoRecorder.IsActive();
+}
+
 void M_RequestScreenShot(const char *filename)
 {
 	PendingScreenShotName = filename ? filename : "";
@@ -674,11 +1475,75 @@ void M_RequestScreenShot(const char *filename)
 
 void M_ProcessPendingScreenShot()
 {
-	if (!PendingScreenShot) return;
-	PendingScreenShot = false;
-	FString filename = PendingScreenShotName;
-	PendingScreenShotName = "";
-	M_ScreenShot(filename.GetChars());
+	VideoRecorder.CaptureFrame();
+	if (PendingScreenShot)
+	{
+		PendingScreenShot = false;
+		FString filename = PendingScreenShotName;
+		PendingScreenShotName = "";
+		M_ScreenShot(filename.GetChars());
+	}
+}
+
+CCMD(startvideorecording)
+{
+	if (argv.argc() > 2)
+	{
+		Printf("Usage: startvideorecording [base name]\n");
+		return;
+	}
+	M_StartVideoRecording(argv.argc() > 1 ? argv[1] : nullptr);
+}
+
+CCMD(stopvideorecording)
+{
+	M_StopVideoRecording();
+}
+
+CCMD(togglevideorecording)
+{
+	if (M_IsVideoRecording()) M_StopVideoRecording();
+	else
+	{
+		if (argv.argc() > 2)
+		{
+			Printf("Usage: togglevideorecording [base name]\n");
+			return;
+		}
+		M_StartVideoRecording(argv.argc() > 1 ? argv[1] : nullptr);
+	}
+}
+
+CCMD(pastecapturepath)
+{
+	FString clipboard = I_GetFromClipboard(false);
+	clipboard.StripLeftRight();
+	if (clipboard.IsEmpty())
+	{
+		Printf("The clipboard does not contain an export folder.\n");
+		return;
+	}
+	capture_export_dir = clipboard.GetChars();
+	Printf("Capture export folder set to %s\n", M_GetCaptureExportPath().GetChars());
+}
+
+CCMD(copycapturepath)
+{
+	const FString path = M_GetCaptureExportPath();
+	I_PutInClipboard(path.GetChars());
+	Printf("Capture export folder copied to the clipboard.\n");
+}
+
+CCMD(resetcapturepath)
+{
+	capture_export_dir = "";
+	Printf("Capture export folder reset to %s\n", M_GetCaptureExportPath().GetChars());
+}
+
+CCMD(opencaptures)
+{
+	const FString path = M_GetCaptureExportPath();
+	I_OpenShellFolder(path.GetChars());
 }
 
 UNSAFE_CCMD (screenshot)

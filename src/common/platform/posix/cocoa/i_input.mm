@@ -39,6 +39,7 @@
 #include "c_cvars.h"
 #include "c_dispatch.h"
 #include "c_bind.h"
+#include "common/imgui/bd_imgui.h"
 #include "d_eventbase.h"
 #include "c_buttons.h"
 #include "d_gui.h"
@@ -61,15 +62,17 @@ extern int paused;
 extern bool ToggleFullscreen;
 bool GUICapture;
 
-// The screenshot bypass in ProcessKeyboardEvent is only appropriate while no
-// text field owns the keyboard: with the console input line, chat, or a menu
-// text field active, a printable screenshot key must stay a GUI event or it
-// would fire a screenshot and swallow the typed character.
-static bool ScreenshotKeyMayBypassGUICapture()
+// The capture-shortcut bypass in ProcessKeyboardEvent is only appropriate while no
+// text field owns the keyboard: with the console input line, chat, menu text
+// field, or ImGui text input active, a printable capture key must stay a GUI
+// event or it would fire a capture command and swallow the typed character.
+static bool CaptureKeyMayBypassGUICapture()
 {
 	if (ConsoleState == c_down || ConsoleState == c_falling || chatmodeon)
 		return false;
 	if (CurrentMenu != nullptr && CurrentMenu->IsKindOf("TextEnterMenu"))
+		return false;
+	if (BdImGui::WantsTextInput())
 		return false;
 	return true;
 }
@@ -529,12 +532,12 @@ void ProcessKeyboardEvent(NSEvent* theEvent)
 
 	if (GUICapture)
 	{
-		// Keys bound to the screenshot command bypass GUI capture so the
+		// Capture shortcuts bypass GUI capture so the
 		// binding still fires while a menu is open, except while a text field
 		// owns the keyboard (console, chat, menu text entry) so typing is not
-		// swallowed by a screenshot.
+		// swallowed by a capture command.
 		const uint8_t dik = KEYCODE_TO_DIK[ keyCode ];
-		if (dik != 0 && C_IsScreenshotKey(dik) && ScreenshotKeyMayBypassGUICapture())
+		if (dik != 0 && C_IsCaptureKey(dik) && CaptureKeyMayBypassGUICapture())
 		{
 			if (!isARepeat)
 			{

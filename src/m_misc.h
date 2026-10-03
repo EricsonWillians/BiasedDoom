@@ -41,6 +41,17 @@ void M_ScreenShot (const char *filename);
 void M_RequestScreenShot(const char *filename);
 void M_ProcessPendingScreenShot();
 
+// Shared destination helpers for the recording UI. A blank configured folder
+// resolves to the per-user screenshots/captures directory.
+FString M_GetCaptureExportPath();
+FString M_MakeCaptureFileName(const char *requestedName, const char *extension, const char *defaultStem);
+
+// Lossless final-frame video capture. Capture is completed before graphics
+// shutdown so a stopped or normally exited recording remains playable.
+bool M_StartVideoRecording(const char *requestedName = nullptr);
+void M_StopVideoRecording();
+bool M_IsVideoRecording();
+
 void M_LoadDefaults ();
 
 bool M_SaveDefaults (const char *filename);

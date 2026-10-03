@@ -31,7 +31,8 @@ BiasedDoom keeps GZDoom's WAD/PK3, DECORATE, ZScript, ACS, MD2, MD3, voxel, and 
 | Lighting | Dynamic light shaping, falloff controls, shadows, GI-style ambient, specular/emissive tuning |
 | Post-processing | Searchable graphics/lighting/fog preset browsers (64 graphics, 38 lighting, 16 fog), atmosphere/fog, overhauled bloom with threshold/soft-knee/intensity controls, tonemapping, color grading, CRT/VHS/NTSC, SSAO, FXAA |
 | Camera | Menu-driven third-person camera with presets, shoulder offsets, collision padding, pitch modes, and projected crosshair |
-| Procedural levels | Deterministic mission graphs, five architectural themes, hierarchical Doom-style spaces, macro liquids, staged keys, reachable landmarks, and map sizes from 1 to 80 |
+| Procedural levels | Recipe-derived run blueprints, five architectural themes, staged keys with collision-proven access, extreme-but-walkable terrain, and map sizes from 1 to 160 |
+| Capture and demos | Lossless PNG-frame or raw RGB-AVI capture, a configurable export folder, native ZDEM takes, and menu-bindable recording shortcuts |
 | Player customization | Mod-resistant player skins plus independently configurable horizontal and vertical autoaim |
 | HUD customization | Runtime mugshot scale and position controls for stock ZScript and legacy SBARINFO status bars |
 | Scripting | Opt-in embedded CPython alongside unchanged ACS and ZScript support |
@@ -157,13 +158,45 @@ Gameplay-facing fixes and details:
 
 ### Procedural Missions
 
-Choose `Procedural Game` from the Doom main menu to build a deterministic UDMF mission without an external map WAD. The setup menu exposes the seed; Techbase, Hell, Industrial, Gothic, and Corrupted Tech themes; generation difficulty; map size from 1 (compact) through 80 (absurd); layout shape; verticality; architectural detail; and outdoor-space cadence.
+Choose **Procedural Game** from the Doom main menu to build a deterministic
+UDMF mission without an external map WAD. The eight-field recipe is the seed,
+Techbase/Hell/Industrial/Gothic/Corrupted Tech theme, difficulty, size (1
+through 160), layout shape, verticality, architectural detail, and outdoor
+cadence. It is currently a Doom-family feature: Ultimate Doom and Doom II use
+their own legal content vocabularies; Heretic and Hexen procedural generation
+is intentionally deferred.
 
-The generator builds progression before geometry: staged keys and doors, safe same-stage loops, secrets, weapon milestones, hubs, arenas, and a distinct finale. Its room compositor deliberately mixes narrow connectors, small chambers, medium combat rooms, and major compound halls with L-, T-, cross-, stepped, axial, and asymmetric silhouettes. Longer foldback loops and raised windows preview or revisit nearby areas without bypassing progression.
+Each recipe derives an automatic **Run Blueprint**—Expedition, Assault,
+Infiltration, Circuit, or Siege—without adding another menu choice. The
+blueprint chooses a route orientation, key order, macro-stage topology,
+landmark/district language, feature motifs, combat/recovery rhythm, arsenal
+track, and finale. The generator then builds the mission graph before
+geometry: every key precedes its matching manual keyed door, same-stage loops
+improve circulation without bypassing a lock, and optional content yields to a
+safe fallback when a layout cannot prove it.
 
-Theme-aware water, blood, nukage, and lava are macro-layout features rather than decorative puddles. A mission can contain a flooded room with a dry island, irregular reservoirs, trenches, paired basins, or straight, staggered, and bending multi-cell watercourses crossed by dry causeways. Reveals vary among pavilions, framed wall alcoves, and false-wall chambers; elevated ranged positions vary among stair platforms, turrets, and wall-backed balconies. All variation remains deterministic for a given recipe and uses IWAD-safe assets.
+The spatial pass turns that plan into themed footprints, landmark compounds,
+protected portal widths, material districts, and a graph-planned elevation
+field. Every emitted critical-route height change is a real 8-unit stair chain;
+critical pads and door approaches stay level. Water, blood, nukage, lava,
+manual switch caches,
+view windows, perches, lifts, rewards, and static encounters are all planned
+as map geometry rather than runtime spawning. Before load, the emitted UDMF is
+checked for geometry, texture/door fitting, IWAD legality, collision-clear
+navigation, and symbolic key-state progression. The resulting map is then
+loaded through the ordinary node builder and map runtime.
 
-See the [player and mod-author guide](docs/engine/procedural-map-generation.md) and the [implementation and evaluation paper](docs/engine/procedural-generation-research-paper.md).
+Identical recipes are byte-identical within one engine build and active Doom
+game-data context (including the IWAD family); a later generator release may
+intentionally reinterpret an old seed. Saves remain stable because they archive
+the exact generated UDMF. After a normal or secret exit, **Next Random Run
+(Same Setup)** keeps the completed setup while choosing a different seed for a
+fresh run.
+
+See the [player and mod-author guide](docs/engine/procedural-map-generation.md)
+for the complete interface and contracts, and the
+[implementation and evaluation paper](docs/engine/procedural-generation-research-paper.md)
+for the source-level design.
 
 ### Player, Autoaim, And Mugshot Customization
 

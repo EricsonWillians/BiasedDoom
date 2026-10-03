@@ -988,11 +988,18 @@ bool DIntermissionController::Responder (FInputEvent *ev)
 	{
 		if (ev->Type == EV_KeyDown)
 		{
+			// Let the game responder evaluate capture bindings, including a
+			// double-tap binding with no normal binding. Do this before looking
+			// up the normal table so the first tap cannot advance this screen.
+			if (C_IsCaptureKey(ev->KeyScan))
+			{
+				return false;
+			}
 			const char *cmd = Bindings.GetBind (ev->KeyScan);
 
 			if (cmd != nullptr)
 			{
-				if (!stricmp(cmd, "toggleconsole") || !stricmp(cmd, "screenshot"))
+				if (!stricmp(cmd, "toggleconsole"))
 				{
 					return false;
 				}

@@ -91,9 +91,17 @@ extern FKeyBindings AutomapBindings;
 
 bool C_DoKey (event_t *ev, FKeyBindings *binds, FKeyBindings *doublebinds);
 
+// Returns true if a binding invokes a capture command (screenshot, video
+// recording toggle, or demo recording toggle), with or without arguments.
+bool C_IsCaptureCommand(const char *command);
+
+// Returns true if the key is bound to a capture command. Used to let capture
+// shortcuts work even while a menu or other GUI capture is active.
+bool C_IsCaptureKey(int key);
+
 // Returns true if the key is bound to the screenshot command (with or
-// without arguments). Used to let screenshots work even while a menu or
-// other GUI capture is active.
+// without arguments). Kept for callers that specifically need screenshot
+// semantics.
 bool C_IsScreenshotKey(int key);
 
 // Stuff used by the customize controls menu
@@ -117,4 +125,3 @@ struct FKeySection
 extern TArray<FKeySection> KeySections;
 
 #endif //__C_BINDINGS_H__
-

@@ -40,6 +40,7 @@
 #include "s_sound.h"
 #include "d_event.h"
 #include "m_random.h"
+#include "m_misc.h"
 #include "engineerrors.h"
 #include "doomstat.h"
 #include "wi_stuff.h"
@@ -111,6 +112,12 @@ EXTERN_CVAR (Float, sv_gravity)
 EXTERN_CVAR (Float, sv_aircontrol)
 EXTERN_CVAR (Int, disableautosave)
 EXTERN_CVAR (String, playerclass)
+
+// These are intentionally separate from recordmap's explicit arguments so
+// menu and key bindings can start a reproducible fresh demo without opening
+// an unsafe command context or asking the player to type console arguments.
+CVAR(String, demo_record_name, "", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
+CVAR(String, demo_record_map, "*", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 
 extern uint8_t globalfreeze, globalchangefreeze;
 int startpos = 0; // [RH] Support for multiple starts per level
@@ -357,6 +364,128 @@ CCMD (map)
 //
 //
 //==========================================================================
+
+static void StartConfiguredDemoRecording(const char *requestedName = nullptr, const char *requestedMap = nullptr)
+{
+	if (netgame)
+	{
+		Printf("You cannot record a new game while in a netgame.\n");
+		return;
+	}
+	if (demorecording || gameaction == ga_recordgame)
+	{
+		Printf("A demo recording is already active or queued.\n");
+		return;
+	}
+
+	FString mapName;
+	if (requestedMap != nullptr)
+	{
+		mapName = requestedMap;
+	}
+	else
+	{
+		mapName = demo_record_map;
+	}
+	mapName.StripLeftRight();
+	if (mapName.IsEmpty() || mapName.Compare("*") == 0)
+	{
+		if (gamestate != GS_LEVEL || primaryLevel == nullptr)
+		{
+			Printf("Choose a map to record, or start this command while playing a map.\n");
+			return;
+		}
+		mapName = primaryLevel->MapName.GetChars();
+	}
+
+	try
+	{
+		if (!P_CheckMapData(mapName.GetChars()))
+		{
+			Printf("No map %s\n", mapName.GetChars());
+			return;
+		}
+		FString configuredName;
+		if (requestedName != nullptr)
+		{
+			configuredName = requestedName;
+		}
+		else
+		{
+			configuredName = demo_record_name;
+		}
+		const FString demoName = M_MakeCaptureFileName(configuredName.GetChars(), ".lmp", "Demo");
+		if (demoName.IsEmpty())
+		{
+			Printf("Could not find an unused demo filename.\n");
+			return;
+		}
+
+		deathmatch = false;
+		multiplayernext = false;
+		G_DeferedInitNew(mapName.GetChars());
+		gameaction = ga_recordgame;
+		newdemoname = demoName;
+		newdemomap = mapName;
+		Printf("Demo recording queued for %s.\n", mapName.GetChars());
+	}
+	catch (CRecoverableError &error)
+	{
+		if (error.GetMessage())
+		{
+			Printf("%s", error.GetMessage());
+		}
+	}
+}
+
+CCMD(recorddemo)
+{
+	if (argv.argc() > 3)
+	{
+		Printf("Usage: recorddemo [base name] [map]\n");
+		return;
+	}
+	StartConfiguredDemoRecording(argv.argc() > 1 ? argv[1] : nullptr, argv.argc() > 2 ? argv[2] : nullptr);
+}
+
+static void StopConfiguredDemoRecording()
+{
+	if (demorecording)
+	{
+		Printf("Finishing demo recording...\n");
+		G_StopDemoRecording();
+	}
+	else if (gameaction == ga_recordgame)
+	{
+		// A shortcut can be pressed again before the next ticker has begun the
+		// fresh run. Treat that as a real toggle and cancel the queued take.
+		gameaction = ga_nothing;
+		newdemoname = "";
+		newdemomap = "";
+		Printf("Queued demo recording cancelled.\n");
+	}
+	else
+	{
+		Printf("Demo recording is not active.\n");
+	}
+}
+
+CCMD(stopdemorecording)
+{
+	StopConfiguredDemoRecording();
+}
+
+CCMD(toggledemorecording)
+{
+	if (demorecording || gameaction == ga_recordgame)
+	{
+		StopConfiguredDemoRecording();
+	}
+	else
+	{
+		StartConfiguredDemoRecording();
+	}
+}
 
 UNSAFE_CCMD(recordmap)
 {
@@ -914,6 +1043,8 @@ const char *FLevelLocals::GetSecretExitMap()
 void FLevelLocals::ExitLevel (int position, bool keepFacing)
 {
 	flags3 |= LEVEL3_EXITNORMALUSED;
+	if (isPrimaryLevel() && P_IsProceduralMapName(MapName.GetChars()))
+		P_MarkCurrentProceduralMapCompleted();
 	ChangeLevel(NextMap.GetChars(), position, keepFacing ? CHANGELEVEL_KEEPFACING : 0);
 }
 
@@ -934,6 +1065,8 @@ DEFINE_ACTION_FUNCTION_NATIVE(FLevelLocals, ExitLevel, LevelLocals_ExitLevel)
 void FLevelLocals::SecretExitLevel (int position)
 {
 	flags3 |= LEVEL3_EXITSECRETUSED;
+	if (isPrimaryLevel() && P_IsProceduralMapName(MapName.GetChars()))
+		P_MarkCurrentProceduralMapCompleted();
 	ChangeLevel(GetSecretExitMap(), position, 0);
 }
 

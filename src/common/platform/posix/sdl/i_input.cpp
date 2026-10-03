@@ -41,6 +41,7 @@
 #include "c_bind.h"
 #include "c_console.h"
 #include "c_cvars.h"
+#include "common/imgui/bd_imgui.h"
 #include "d_gui.h"
 #include "dikeys.h"
 #include "engineerrors.h"
@@ -56,15 +57,17 @@
 bool GUICapture;
 static bool NativeMouse = true;
 
-// The screenshot bypass below is only appropriate while no text field owns
-// the keyboard: with the console input line, chat, or a menu text field
-// active, a printable screenshot key must stay a GUI event or it would fire
-// a screenshot and swallow the typed character.
-static bool ScreenshotKeyMayBypassGUICapture()
+// The capture-shortcut bypass below is only appropriate while no text field owns
+// the keyboard: with the console input line, chat, menu text field, or ImGui
+// text input active, a printable capture key must stay a GUI event or it
+// would fire a capture command and swallow the typed character.
+static bool CaptureKeyMayBypassGUICapture()
 {
 	if (ConsoleState == c_down || ConsoleState == c_falling || chatmodeon)
 		return false;
 	if (CurrentMenu != nullptr && CurrentMenu->IsKindOf("TextEnterMenu"))
+		return false;
+	if (BdImGui::WantsTextInput())
 		return false;
 	return true;
 }
@@ -474,11 +477,11 @@ void MessagePump (const SDL_Event &sev)
 		}
 		else
 		{
-			// Keys bound to the screenshot command bypass GUI capture and are
+			// Capture shortcuts bypass GUI capture and are
 			// delivered as normal game key events, so the binding still fires
 			// while a menu is open (menus translate and eat GUI key events).
 			// Text-entry contexts are exempt: there the key must remain a GUI
-			// event so typing is not swallowed by a screenshot.
+			// event so typing is not swallowed by a capture command.
 			if (!sev.key.repeat)
 			{
 				uint8_t dik = 0;
@@ -486,7 +489,7 @@ void MessagePump (const SDL_Event &sev)
 					dik = *mapped;
 				else if (const uint8_t *mapped = KeyScanToDIK.CheckKey (sev.key.keysym.scancode))
 					dik = *mapped;
-				if (dik != 0 && C_IsScreenshotKey (dik) && ScreenshotKeyMayBypassGUICapture())
+				if (dik != 0 && C_IsCaptureKey (dik) && CaptureKeyMayBypassGUICapture())
 				{
 					event_t shotev = {};
 					shotev.type = sev.type == SDL_KEYDOWN ? EV_KeyDown : EV_KeyUp;
