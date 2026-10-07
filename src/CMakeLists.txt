@@ -978,6 +978,7 @@ set (PCH_SOURCES
 
 	common/audio/sound/i_sound.cpp
 	common/audio/sound/oalsound.cpp
+	common/audio/sound/video_capture_audio.cpp
 	common/audio/sound/s_environment.cpp
 	common/audio/sound/s_sound.cpp
 	common/audio/sound/s_reverbedit.cpp

@@ -44,6 +44,12 @@ enum EChatType
 	CHAT_GLOBAL,
 };
 
+// The largest special-event record that Net_WriteEventAtomic can accept
+// before considering bytes already queued for this tic. Keep writers that
+// build variable-length records from allocating/retrying records that can
+// never fit on the normal UDP command path.
+constexpr size_t NetAtomicEventMaxSize = 5 * 1024;
+
 enum EClientFlags
 {
 	CF_NONE = 0,
@@ -142,6 +148,10 @@ void TryRunTics (void);
 // [RH] Functions for making and using special "ticcmds"
 void Net_NewClientTic();
 void Net_Initialize();
+// The event stream is shared by all simulated tics in the current client tic.
+// Protocol senders use this to limit themselves to one atomic record per
+// stream when tic duplication or catch-up simulation is active.
+int Net_GetCurrentEventTic();
 void Net_WriteInt8(uint8_t);
 void Net_WriteInt16(int16_t);
 void Net_WriteInt32(int32_t);
@@ -150,6 +160,15 @@ void Net_WriteFloat(float);
 void Net_WriteDouble(double);
 void Net_WriteString(const char *);
 void Net_WriteBytes(const uint8_t *, int len);
+
+// Appends one complete special-event record or leaves the current tic's
+// stream untouched. This is for protocols whose sender must not advance a
+// sequence counter when a crowded tic cannot accept the whole record.
+// Records are deliberately kept below the conservative special-event budget
+// so they still leave room for user commands in the outgoing packet. If later
+// legacy writes overflow that packet, the sender preserves the valid prefix
+// through the last accepted atomic record instead of dropping it as well.
+bool Net_WriteEventAtomic(const uint8_t *, int len);
 
 void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player);
 void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream);

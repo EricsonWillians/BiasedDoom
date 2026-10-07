@@ -288,6 +288,65 @@ public:
 	// points to the last row in the buffer, which will be the first row output.
 	virtual TArray<uint8_t> GetScreenshotBuffer(int &pitch, ESSType &color_type, float &gamma) { return TArray<uint8_t>(); }
 
+	// Returns the dimensions that a continuous video readback will actually
+	// produce. Most backends capture their framebuffer dimensions. Backends that
+	// read a native presentation viewport (for example a HiDPI OpenGL window)
+	// override this so the recorder reserves the real RGBA queue budget before
+	// it submits GPU work.
+	virtual void GetVideoCaptureDimensions(int &width, int &height) const
+	{
+		width = GetWidth();
+		height = GetHeight();
+	}
+
+	// Video recording is a continuous workload, unlike an ordinary screenshot.
+	// Backends that support asynchronous readback override this to issue and poll
+	// bounded GPU transfers without stalling the render thread. `pending` means a
+	// request is still in flight and is not an error; default backends retain the
+	// established synchronous screenshot behavior for correctness. `issueNext`
+	// is false only while finalizing a take: it polls already-issued asynchronous
+	// work without starting another transfer, so a normal stop can retain its
+	// final frame(s) without waiting for the GPU.
+	virtual TArray<uint8_t> GetVideoCaptureBuffer(int &width, int &height, int &pitch, ESSType &color_type, float &gamma,
+		uint64_t requestTimeNS, uint64_t &captureTimeNS, bool &pending, bool &bottomUp, bool issueNext = true)
+	{
+		GetVideoCaptureDimensions(width, height);
+		captureTimeNS = requestTimeNS;
+		pending = false;
+		bottomUp = false;
+		return issueNext ? GetScreenshotBuffer(pitch, color_type, gamma) : TArray<uint8_t>();
+	}
+
+	// True only for a backend-owned asynchronous transfer that a normal stop may
+	// poll with `issueNext == false`. Synchronous fallback backends always return
+	// false, so finalization never starts an extra blocking screenshot.
+	virtual bool HasPendingVideoCapture() const { return false; }
+
+	// Drop any backend-owned in-flight video readbacks when a take stops,
+	// restarts, or changes renderer. This prevents a stale PBO/staging frame
+	// leaking into the next capture family.
+	virtual void ResetVideoCapture() {}
+
+	// Discard only submitted video readbacks that the recorder can no longer
+	// hand to its bounded CPU writer. Unlike ResetVideoCapture(), this retains
+	// reusable idle capture storage so transient writer back-pressure neither
+	// blocks presentation behind an old GPU fence nor forces a fresh allocation
+	// when the writer catches up. Synchronous backends have nothing to abandon.
+	virtual void AbandonPendingVideoCaptureReadbacks() {}
+
+	// A capture backend can temporarily stop admitting rendered frames when its
+	// bounded GPU work queue is saturated. This is deliberately checked before
+	// BeginFrame()/D_Render(): submitting another frame after the queue is full
+	// would defeat the memory and latency bound the queue is meant to provide.
+	// Backends that do not need this protection keep the established behavior.
+	virtual bool CanRenderNextFrame() { return true; }
+
+	// Returns a one-shot capture failure raised by a backend's bounded
+	// back-pressure recovery. The main loop owns the recorder lifecycle, so the
+	// backend reports the failure here instead of trying to synchronously stop a
+	// writer or wait for a wedged GPU from the renderer.
+	virtual bool ConsumeVideoCaptureBackpressureFailure() { return false; }
+
 	static float GetZNear() { return 5.f; }
 	// The far plane covers the full engine coordinate range (MAX_MAP_COORD
 	// in doomdef.h) so that geometry on very large maps is never clipped.

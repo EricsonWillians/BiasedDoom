@@ -1,0 +1,48 @@
+// A motionless, one-health monster.  It inherits DoomImp's normal monster
+// flags, so the companion's real target selection and attack code must find
+// it.  Its inactive See/Missile/Melee states prevent the fixture from
+// fabricating damage or distracting the companion with return fire.
+actor CompanionCombatTarget : DoomImp 32000
+{
+    Health 1
+    States
+    {
+    Spawn:
+        TROO A -1
+        Stop
+    See:
+        TROO A -1
+        Stop
+    Missile:
+        TROO A -1
+        Stop
+    Melee:
+        TROO A -1
+        Stop
+    }
+}
+
+// This deliberately remains a solid, shootable friendly actor.  The safety
+// map puts it in the only corridor lane between a companion and a hostile;
+// the companion must not turn the hitscan autoaim allowance into permission
+// to damage either actor through that physical blocker.
+actor CompanionCombatFriendly : DoomImp 32001
+{
+    +FRIENDLY
+    Health 10000
+    States
+    {
+    Spawn:
+        TROO A -1
+        Stop
+    See:
+        TROO A -1
+        Stop
+    Missile:
+        TROO A -1
+        Stop
+    Melee:
+        TROO A -1
+        Stop
+    }
+}

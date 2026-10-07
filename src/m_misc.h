@@ -39,6 +39,12 @@ void M_FindResponseFile (void);
 //		Pass a NULL to get the original behavior.
 void M_ScreenShot (const char *filename);
 void M_RequestScreenShot(const char *filename);
+// Advance only an already-stopping recorder without servicing a pending
+// ordinary screenshot or starting a new GPU readback. The display admission
+// gate uses this while it deliberately skips presentation after a
+// capture-backpressure failure, so recorder finalization can retire or
+// abandon its last GPU readback.
+void M_PollStoppingVideoRecording();
 void M_ProcessPendingScreenShot();
 
 // Shared destination helpers for the recording UI. A blank configured folder
@@ -46,11 +52,40 @@ void M_ProcessPendingScreenShot();
 FString M_GetCaptureExportPath();
 FString M_MakeCaptureFileName(const char *requestedName, const char *extension, const char *defaultStem);
 
+// A presentation snapshot for the video recorder. Active takes update their
+// elapsed time from a wall clock; stopping and completed takes retain the
+// elapsed time of the captured material. Completed and failed snapshots are
+// intentionally short-lived so the caller can provide immediate feedback
+// without leaving a permanent HUD message behind.
+enum EVideoRecordingState
+{
+	VRS_None,
+	VRS_Recording,
+	VRS_Stopping,
+	VRS_Finalized,
+	VRS_Failed,
+};
+
+struct FVideoRecordingStatus
+{
+	EVideoRecordingState State = VRS_None;
+	uint64_t ElapsedMilliseconds = 0;
+	FString Detail;
+};
+
 // Lossless final-frame video capture. Capture is completed before graphics
 // shutdown so a stopped or normally exited recording remains playable.
 bool M_StartVideoRecording(const char *requestedName = nullptr);
 void M_StopVideoRecording();
+// Stop a take because a backend could no longer safely make forward progress.
+// Completed frames are still finalized, but the final status remains failed so
+// the player knows why the recorder detached from the render loop.
+void M_FailVideoRecording(const char *reason);
+// Used during engine teardown after an interactive stop request has already
+// detached capture from the render loop.
+void M_FinishVideoRecording();
 bool M_IsVideoRecording();
+bool M_GetVideoRecordingStatus(FVideoRecordingStatus &status);
 
 void M_LoadDefaults ();
 

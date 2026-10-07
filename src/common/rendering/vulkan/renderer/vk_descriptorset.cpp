@@ -71,46 +71,110 @@ void VkDescriptorSetManager::BeginFrame()
 
 void VkDescriptorSetManager::UpdateHWBufferSet()
 {
-	fb->GetCommands()->DrawDeleteList->Add(std::move(HWBufferSet));
+	auto buffers = fb->GetBufferManager();
+	const VkBuffer viewpointBuffer = buffers->ViewpointUBO->mBuffer->buffer;
+	const VkBuffer matrixBuffer = buffers->MatrixBuffer->UniformBuffer->mBuffer->buffer;
+	const VkBuffer streamBuffer = buffers->StreamBuffer->UniformBuffer->mBuffer->buffer;
+	const VkBuffer lightBuffer = buffers->LightBufferSSO->mBuffer->buffer;
+	const VkBuffer boneBuffer = buffers->BoneBufferSSO->mBuffer->buffer;
 
-	HWBufferSet = HWBufferDescriptorPool->tryAllocate(HWBufferSetLayout.get());
+	// Buffer data is streamed through persistent allocations and dynamic
+	// offsets; it does not require a new descriptor set every frame.  A resize
+	// or map-resource rebuild replaces a Vulkan buffer handle, which is the
+	// point where descriptors really must be rewritten.
+	if (HWBufferSet &&
+		HWViewpointBuffer == viewpointBuffer &&
+		HWMatrixBuffer == matrixBuffer &&
+		HWStreamBuffer == streamBuffer &&
+		HWLightBuffer == lightBuffer &&
+		HWBoneBuffer == boneBuffer)
+	{
+		return;
+	}
+
 	if (!HWBufferSet)
 	{
-		fb->GetCommands()->WaitForCommands(false);
-		HWBufferSet = HWBufferDescriptorPool->allocate(HWBufferSetLayout.get());
+		HWBufferSet = HWBufferDescriptorPool->tryAllocate(HWBufferSetLayout.get());
+		if (!HWBufferSet)
+		{
+			fb->GetCommands()->WaitForCommands(false);
+			HWBufferSet = HWBufferDescriptorPool->allocate(HWBufferSetLayout.get());
+		}
 	}
 
 	WriteDescriptors()
-		.AddBuffer(HWBufferSet.get(), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, fb->GetBufferManager()->ViewpointUBO->mBuffer.get(), 0, sizeof(HWViewpointUniforms))
-		.AddBuffer(HWBufferSet.get(), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, fb->GetBufferManager()->MatrixBuffer->UniformBuffer->mBuffer.get(), 0, sizeof(MatricesUBO))
-		.AddBuffer(HWBufferSet.get(), 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, fb->GetBufferManager()->StreamBuffer->UniformBuffer->mBuffer.get(), 0, sizeof(StreamUBO))
-		.AddBuffer(HWBufferSet.get(), 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, fb->GetBufferManager()->LightBufferSSO->mBuffer.get())
-		.AddBuffer(HWBufferSet.get(), 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, fb->GetBufferManager()->BoneBufferSSO->mBuffer.get())
+		.AddBuffer(HWBufferSet.get(), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, buffers->ViewpointUBO->mBuffer.get(), 0, sizeof(HWViewpointUniforms))
+		.AddBuffer(HWBufferSet.get(), 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, buffers->MatrixBuffer->UniformBuffer->mBuffer.get(), 0, sizeof(MatricesUBO))
+		.AddBuffer(HWBufferSet.get(), 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, buffers->StreamBuffer->UniformBuffer->mBuffer.get(), 0, sizeof(StreamUBO))
+		.AddBuffer(HWBufferSet.get(), 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, buffers->LightBufferSSO->mBuffer.get())
+		.AddBuffer(HWBufferSet.get(), 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, buffers->BoneBufferSSO->mBuffer.get())
 		.Execute(fb->device.get());
+
+	HWViewpointBuffer = viewpointBuffer;
+	HWMatrixBuffer = matrixBuffer;
+	HWStreamBuffer = streamBuffer;
+	HWLightBuffer = lightBuffer;
+	HWBoneBuffer = boneBuffer;
 }
 
 void VkDescriptorSetManager::UpdateFixedSet()
 {
-	fb->GetCommands()->DrawDeleteList->Add(std::move(FixedSet));
+	auto textures = fb->GetTextureManager();
+	const VkImageView shadowmapView = textures->Shadowmap.View->view;
+	const VkImageView lightmapView = textures->Lightmap.View->view;
+	const VkImageView sectorBleedView = textures->SectorBleed.View->view;
+	const VkAccelerationStructureKHR accelerationStructure = fb->RaytracingEnabled()
+		? fb->GetRaytrace()->GetAccelStruct()->accelstruct
+		: VK_NULL_HANDLE;
 
-	FixedSet = FixedDescriptorPool->tryAllocate(FixedSetLayout.get());
+	// The descriptor set is only touched at frame start, after the previous
+	// frame has retired.  Reuse it until a backing handle really changes; the
+	// old code allocated, wrote, deferred, and freed this otherwise static set
+	// on every frame.
+	if (FixedSet &&
+		FixedShadowmapView == shadowmapView &&
+		FixedLightmapView == lightmapView &&
+		FixedSectorBleedView == sectorBleedView &&
+		FixedAccelerationStructure == accelerationStructure)
+	{
+		return;
+	}
+
 	if (!FixedSet)
 	{
-		fb->GetCommands()->WaitForCommands(false);
-		FixedSet = FixedDescriptorPool->allocate(FixedSetLayout.get());
+		FixedSet = FixedDescriptorPool->tryAllocate(FixedSetLayout.get());
+		if (!FixedSet)
+		{
+			fb->GetCommands()->WaitForCommands(false);
+			FixedSet = FixedDescriptorPool->allocate(FixedSetLayout.get());
+		}
 	}
 
 	WriteDescriptors update;
-	update.AddCombinedImageSampler(FixedSet.get(), 0, fb->GetTextureManager()->Shadowmap.View.get(), fb->GetSamplerManager()->ShadowmapSampler.get(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-	update.AddCombinedImageSampler(FixedSet.get(), 1, fb->GetTextureManager()->Lightmap.View.get(), fb->GetSamplerManager()->LightmapSampler.get(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-	update.AddCombinedImageSampler(FixedSet.get(), 3, fb->GetTextureManager()->SectorBleed.View.get(), fb->GetSamplerManager()->LightmapSampler.get(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	update.AddCombinedImageSampler(FixedSet.get(), 0, textures->Shadowmap.View.get(), fb->GetSamplerManager()->ShadowmapSampler.get(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	update.AddCombinedImageSampler(FixedSet.get(), 1, textures->Lightmap.View.get(), fb->GetSamplerManager()->LightmapSampler.get(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	update.AddCombinedImageSampler(FixedSet.get(), 3, textures->SectorBleed.View.get(), fb->GetSamplerManager()->LightmapSampler.get(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	if (fb->RaytracingEnabled())
 		update.AddAccelerationStructure(FixedSet.get(), 2, fb->GetRaytrace()->GetAccelStruct());
 	update.Execute(fb->device.get());
+
+	FixedShadowmapView = shadowmapView;
+	FixedLightmapView = lightmapView;
+	FixedSectorBleedView = sectorBleedView;
+	FixedAccelerationStructure = accelerationStructure;
 }
 
 void VkDescriptorSetManager::ResetHWTextureSets()
 {
+	// This is called before hardware samplers are rebuilt.  The current fixed
+	// samplers are intentionally separate today, but invalidate their cache as
+	// well so a future sampler-policy change cannot leave stale descriptor
+	// bindings behind.
+	FixedShadowmapView = VK_NULL_HANDLE;
+	FixedLightmapView = VK_NULL_HANDLE;
+	FixedSectorBleedView = VK_NULL_HANDLE;
+	FixedAccelerationStructure = VK_NULL_HANDLE;
+
 	for (auto mat : Materials)
 		mat->DeleteDescriptors();
 

@@ -391,6 +391,10 @@ public:
   int GetMugShotHeight(FName face = NAME_None);
   int GetMugShotX(FName face = NAME_None);
   int GetMugShotY(FName face = NAME_None);
+  // Local companion runs use multiplayer gameplay rules, but still have only
+  // one human player. HUDs use this to avoid presenting multiplayer-only
+  // identity decoration as a backdrop for the local player's portrait.
+  bool IsLocalCompanionCoop() const;
   void DrawLog();
   FTranslationID GetTranslation() const override;
 

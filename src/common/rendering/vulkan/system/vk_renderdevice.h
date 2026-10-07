@@ -85,6 +85,11 @@ public:
 	FTexture *WipeEndScreen() override;
 
 	TArray<uint8_t> GetScreenshotBuffer(int &pitch, ESSType &color_type, float &gamma) override;
+	TArray<uint8_t> GetVideoCaptureBuffer(int &width, int &height, int &pitch, ESSType &color_type, float &gamma,
+		uint64_t requestTimeNS, uint64_t &captureTimeNS, bool &pending, bool &bottomUp, bool issueNext) override;
+	bool HasPendingVideoCapture() const override;
+	void ResetVideoCapture() override;
+	void AbandonPendingVideoCaptureReadbacks() override;
 
 	bool GetVSync() { return mVSync; }
 	void SetVSync(bool vsync) override;
@@ -96,9 +101,15 @@ public:
 	bool RaytracingEnabled();
 
 private:
+	struct FVideoReadbackSlot;
+
 	void RenderTextureView(FCanvasTexture* tex, std::function<void(IntRect &)> renderFunc) override;
 	void PrintStartupLog();
 	void CopyScreenToBuffer(int w, int h, uint8_t *data) override;
+	bool IssueVideoReadback(uint64_t requestTimeNS);
+	TArray<uint8_t> ConsumeVideoReadback(int &width, int &height, int &pitch, ESSType &color_type,
+		float &gamma, uint64_t &captureTimeNS, bool &bottomUp);
+	void ReleaseVideoReadback();
 
 	std::unique_ptr<VkCommandBufferManager> mCommands;
 	std::unique_ptr<VkBufferManager> mBufferManager;
@@ -113,6 +124,21 @@ private:
 	std::unique_ptr<VkRenderPassManager> mRenderPassManager;
 	std::unique_ptr<VkRaytrace> mRaytrace;
 	std::unique_ptr<VkRenderState> mRenderState;
+	// The normal Vulkan frame fence is completed before the next Update(), so
+	// one persistent, frame-delayed slot removes capture's old allocation and
+	// mid-frame WaitForCommands() without changing the renderer's lifetime
+	// model or keeping unbounded GPU/CPU memory alive.
+	std::unique_ptr<FVideoReadbackSlot> mVideoReadback;
+	// A discarded slot's image and staging buffer live in DrawDeleteList until
+	// the next command-manager retirement boundary. Do not allocate a replacement
+	// in that interval: one skipped sample keeps the capture footprint bounded
+	// across stop/restart and output-size changes.
+	bool mVideoReadbackRetirementPending = false;
+	// An optional capture allocation failure must reach the recorder as a real
+	// unavailable frame.  The old resources may still need one deferred-delete
+	// boundary, but treating that boundary as ordinary readback progress would
+	// otherwise make the recorder retry a permanent OOM forever.
+	bool mVideoReadbackIssueFailed = false;
 
 	VkRenderBuffers *mActiveRenderBuffers = nullptr;
 

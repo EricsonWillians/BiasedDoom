@@ -1,0 +1,4 @@
+map DOORPASS "Companion Doorway Passability"
+{
+    sky1 = "SKY1"
+}

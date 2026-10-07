@@ -1,0 +1,4 @@
+map SQUADAUTH "Companion Profile Authority"
+{
+    sky1 = "SKY1"
+}

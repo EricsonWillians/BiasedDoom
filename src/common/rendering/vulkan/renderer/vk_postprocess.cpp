@@ -186,7 +186,7 @@ void VkPostprocess::BlitCurrentToImage(VkTextureImage *dstimage,
 }
 
 void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma,
-                                       bool screenshot) {
+                                       bool screenshot, PPTexture *output) {
   VkPPRenderState renderstate(fb);
 
   // Run custom "screen" shaders here for both the live present and the
@@ -331,7 +331,9 @@ void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma,
                                                        : PPFilterMode::Nearest);
   renderstate.SetInputTexture(1, &hw_postprocess.present.Dither,
                               PPFilterMode::Nearest, PPWrapMode::Repeat);
-  if (screenshot)
+  if (output)
+    renderstate.SetOutputTexture(output);
+  else if (screenshot)
     renderstate.SetOutputNext();
   else
     renderstate.SetOutputSwapChain();

@@ -37,7 +37,9 @@ pause pause
 sysrq screenshot
 t messagemode
 \ +showscores
-f12 spynext
+// F12 is the default lossless-video capture toggle. Spy next remains
+// available from Customize Controls for multiplayer users who prefer it.
+f12 togglevideorecording
 mwheeldown weapnext
 mwheelup weapprev
 

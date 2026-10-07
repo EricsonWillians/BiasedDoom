@@ -165,6 +165,39 @@ Record the smallest load order that reproduces the issue. Do not report a
 problem as an engine regression until it has been tested without launchers that
 rewrite arguments or inject files.
 
+## DECOHack Or MBF21 Weapon Sprites Are Invisible
+
+First confirm the engine version at startup. Update to the current 4.15.18
+build or newer before diagnosing a DECOHack/DSDHacked weapon mod: older builds
+could reject a valid sparse `[SPRITES]` number through the legacy dense-sprite
+growth guard. The usual DECOHack MBF21 range starts at sprite ID `8000`.
+
+Run the smallest mod load with a fresh configuration and retain its startup
+log:
+
+```text
+biaseddoom -config deh-test.ini -iwad doom2 -file weapon-mod.pk3 -stdout +logfile deh-test.log
+```
+
+The log should show the patch being added and installed. Search it for the
+following messages:
+
+- `Sprite number ... out of range.` means the patch supplied an invalid
+  unsigned/overflowing ID, or exceeded the deliberate extended-sprite budget.
+- `Frame ... Sprite ... is undefined` means the patch named a sprite which is
+  not present after its own resources and dependencies load.
+- No `Adding dehacked patch` line usually means the patch was not discovered
+  in the expected load order. Check the mod's own installation instructions
+  and any required base/resource PK3s.
+
+Current builds accept DSDHacked (`Doom version = 2021`) sparse sprite IDs
+through the signed 32-bit range and keep up to 262,144 distinct extended
+`[SPRITES]` mappings per load. That restores the conventional `8000` range
+without turning one large ID into an equally large allocation. The limit is
+intentional: it protects the engine from malformed patch data and is not a
+user-adjustable CVar. See [classic-mod compatibility](docs/engine/mod-compatibility.md)
+for scope and load-path details.
+
 ## Python Mod Troubleshooting
 
 Python mods are trusted native-equivalent code and are disabled unless the

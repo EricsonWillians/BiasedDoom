@@ -42,6 +42,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits>
 
 #include "a_sharedglobal.h"
 #include "actorptrselect.h"
@@ -101,6 +102,36 @@ struct DEHSprName
 	char c[5];
 };
 static TArray<DEHSprName> OrgSprNames;
+// DSDHacked's [SPRITES] table may use sparse, extended indices. Keep those
+// entries separate from the legacy dense table so a single patch-controlled
+// index cannot turn into a massive allocation. 2^18 entries comfortably
+// covers exceptionally large DECOHack packs while still bounding both this
+// table and the number of sprite definitions a patch can add.
+static constexpr size_t MAX_EXTENDED_DEH_SPRITE_NAMES = 262144;
+
+// TMap uses power-of-two buckets. Its generic integer hash is the identity,
+// so a patch could otherwise deliberately submit numbers spaced by a table
+// size and create long lookup chains. Mix the untrusted sparse IDs first.
+struct FDehSpriteNumberHash
+{
+	hash_t Hash(const int key)
+	{
+		uint32_t value = static_cast<uint32_t>(key);
+		value ^= value >> 16;
+		value *= 0x7feb352dU;
+		value ^= value >> 15;
+		value *= 0x846ca68bU;
+		value ^= value >> 16;
+		return value;
+	}
+
+	int Compare(const int left, const int right)
+	{
+		return left != right;
+	}
+};
+
+static TMap<int, DEHSprName, FDehSpriteNumberHash> ExtendedSprNames;
 size_t OrgSprOrgSize;
 static TMap<FState*, int> stateSprites;
 
@@ -181,16 +212,26 @@ void RemapAllSprites()
 	
 	while (it.NextPair(pair))
 	{
-		int frameNum = 0; // Hmmm...
 		auto info = pair->Key;
+		int frameNum = info->DehIndex;
 		int val = pair->Value;
+		const DEHSprName *spriteName = nullptr;
 		unsigned int i;
 		
 		if (val >= 0 && val < (int)OrgSprNames.Size())
 		{
+			spriteName = &OrgSprNames[val];
+		}
+		else
+		{
+			spriteName = ExtendedSprNames.CheckKey(val);
+		}
+
+		if (spriteName != nullptr)
+		{
 			for (i = 0; i < sprites.Size(); i++)
 			{
-				if (memcmp (OrgSprNames[val].c, sprites[i].name, 4) == 0)
+				if (memcmp (spriteName->c, sprites[i].name, 4) == 0)
 				{
 					info->sprite = (int)i;
 					break;
@@ -199,7 +240,7 @@ void RemapAllSprites()
 			if (i == sprites.Size ())
 			{
 				Printf ("Frame %d: Sprite %d (%s) is undefined\n",
-						frameNum, val, OrgSprNames[val].c);
+						frameNum, val, spriteName->c);
 			}
 		}
 		else
@@ -3082,6 +3123,7 @@ static int PatchSoundNames (int dummy, int flags)
 static int PatchSpriteNames (int dummy, int flags)
 {
 		int result;
+		unsigned int rejectedExtendedSprites = 0;
 		
 		DPrintf (DMSG_SPAMMY, "[Sprites]\n");
 		
@@ -3094,26 +3136,76 @@ static int PatchSpriteNames (int dummy, int flags)
 				Printf("Sprite name must be 4 characters long, got '%s'\n", newname.GetChars());
 				continue;
 			}
-			int64_t line1val = strtoll(Line1, nullptr, 10);
-			// Reject bogus indices: a negative value would index out of bounds and an
-			// arbitrarily large one would force an unbounded allocation from a single line.
-			if (line1val < 0 || line1val >= (int64_t)OrgSprNames.Size() + 4096)
+			char *end;
+			int64_t line1val = strtoll(Line1, &end, 10);
+			if (end == Line1 || *end != '\0' || line1val < 0 ||
+				line1val > std::numeric_limits<int>::max())
 			{
 				Printf("Sprite number %s out of range.\n", Line1);
 				continue;
 			}
-			if (line1val >= (int64_t)OrgSprNames.Size())
+
+			const int spriteNumber = (int)line1val;
+			const bool isDenseSprite = spriteNumber < (int)OrgSprNames.Size();
+			const bool isKnownExtendedSprite = dsdhacked &&
+				ExtendedSprNames.CheckKey(spriteNumber) != nullptr;
+			const bool canAddExtendedSprite = dsdhacked &&
+				(isKnownExtendedSprite || ExtendedSprNames.CountUsed() < MAX_EXTENDED_DEH_SPRITE_NAMES);
+			const bool canGrowLegacyTable = !dsdhacked &&
+				spriteNumber < (int)OrgSprOrgSize + 4096;
+
+			// Validate the destination before resolving the name: GetSpriteIndex()
+			// can add a new entry to the global sprite list.
+			if (!isDenseSprite && !canAddExtendedSprite && !canGrowLegacyTable)
+			{
+				if (dsdhacked)
+				{
+					// A malformed patch can contain an arbitrarily long [SPRITES]
+					// section. Keep the cap visible without allowing the diagnostic
+					// stream itself to become an allocation or responsiveness issue.
+					if (rejectedExtendedSprites < 4)
+					{
+						Printf("Too many extended sprite names in DEHACKED patch.\n");
+					}
+					else if (rejectedExtendedSprites == 4)
+					{
+						Printf("Further extended sprite-name limit warnings are suppressed.\n");
+					}
+					++rejectedExtendedSprites;
+				}
+				else
+				{
+					Printf("Sprite number %s out of range.\n", Line1);
+				}
+				continue;
+			}
+
+			int v = GetSpriteIndex(newname.GetChars());
+			DEHSprName spriteName{};
+			memcpy(spriteName.c, sprites[v].name, sizeof(spriteName.c));
+
+			if (isDenseSprite)
+			{
+				OrgSprNames[spriteNumber] = spriteName;
+			}
+			else if (dsdhacked)
+			{
+				// DSDHacked uses arbitrary sparse IDs (DECOHack commonly starts at
+				// 8000). Store only the explicitly named entries rather than growing
+				// the legacy array to the supplied index.
+				ExtendedSprNames.Insert(spriteNumber, spriteName);
+			}
+			else
 			{
 				unsigned osize = OrgSprNames.Size();
-				OrgSprNames.Resize((unsigned)line1val + 1);
+				OrgSprNames.Resize((unsigned)spriteNumber + 1);
 				DEHSprName nulname{};
 				for (unsigned o = osize; o < OrgSprNames.Size(); o++)
 				{
 					OrgSprNames[o] = nulname;
 				}
+				OrgSprNames[spriteNumber] = spriteName;
 			}
-			int v = GetSpriteIndex(newname.GetChars());
-			memcpy(OrgSprNames[line1val].c, sprites[v].name, 5);
 
 			DPrintf (DMSG_SPAMMY, "Sprite %p set to:\n%s\n", Line1, newname.GetChars()); // should %p be %s ?
 		}
@@ -3457,6 +3549,7 @@ static void UnloadDehSupp ()
 	MBFCodePointers.Clear();
 	MBFCodePointers.ShrinkToFit();
 	OrgSprNames.Reset();
+	ExtendedSprNames.Clear();
 	StateMap.Reset();
 	Actions.Reset();
 	OrgHeights.Reset();

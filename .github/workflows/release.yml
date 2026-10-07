@@ -234,6 +234,12 @@ jobs:
         run: |
           python3 tools/test-framework-hotfixes.py
 
+      - name: Test prediction rollback source contracts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 tools/test-prediction-rollback.py
+
       - name: Test bundled Windows audio
         if: runner.os == 'Windows'
         shell: bash

@@ -192,19 +192,28 @@ void VkTextureManager::CreateSectorBleed()
 
 void VkTextureManager::SetSectorBleed(int width, int height, const TArray<uint8_t>& data)
 {
-	SectorBleed.Reset(fb);
+	// Flickering lights can refresh the low-resolution map several times a
+	// second.  Its dimensions stay stable for a loaded level, so retain the
+	// image and view for ordinary uploads instead of repeatedly allocating
+	// device memory and invalidating the fixed descriptor set.
+	const bool recreate = !SectorBleed.Image ||
+		SectorBleed.Image->width != width || SectorBleed.Image->height != height;
+	if (recreate)
+	{
+		SectorBleed.Reset(fb);
 
-	SectorBleed.Image = ImageBuilder()
-		.Size(width, height)
-		.Format(VK_FORMAT_R8G8B8A8_UNORM)
-		.Usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-		.DebugName("VkRenderBuffers.SectorBleed")
-		.Create(fb->device.get());
+		SectorBleed.Image = ImageBuilder()
+			.Size(width, height)
+			.Format(VK_FORMAT_R8G8B8A8_UNORM)
+			.Usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+			.DebugName("VkRenderBuffers.SectorBleed")
+			.Create(fb->device.get());
 
-	SectorBleed.View = ImageViewBuilder()
-		.Image(SectorBleed.Image.get(), VK_FORMAT_R8G8B8A8_UNORM)
-		.DebugName("VkRenderBuffers.SectorBleedView")
-		.Create(fb->device.get());
+		SectorBleed.View = ImageViewBuilder()
+			.Image(SectorBleed.Image.get(), VK_FORMAT_R8G8B8A8_UNORM)
+			.DebugName("VkRenderBuffers.SectorBleedView")
+			.Create(fb->device.get());
+	}
 
 	auto cmdbuffer = fb->GetCommands()->GetTransferCommands();
 	const int totalSize = width * height * 4;
@@ -219,7 +228,7 @@ void VkTextureManager::SetSectorBleed(int width, int height, const TArray<uint8_
 	stagingBuffer->Unmap();
 
 	VkImageTransition()
-		.AddImage(&SectorBleed, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true)
+		.AddImage(&SectorBleed, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, recreate)
 		.Execute(cmdbuffer);
 
 	VkBufferImageCopy region = {};

@@ -255,6 +255,9 @@ class BaseStatusBar : StatusBarCore native
 	native int GetMugShotHeight(Name face = 'None');
 	native int GetMugShotX(Name face = 'None');
 	native int GetMugShotY(Name face = 'None');
+	// Local companion squads use co-op gameplay rules without adding another
+	// human player's identity panel to the status bar.
+	native bool IsLocalCompanionCoop();
 
 	clearscope virtual void FlashItem (class<Inventory> itemtype) { artiflashTick = 4; itemflashFade = 0.75; }
 	virtual void AttachToPlayer (PlayerInfo player) { CPlayer = player; UpdateScreenGeometry(); }

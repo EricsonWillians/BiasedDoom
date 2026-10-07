@@ -51,6 +51,7 @@
 #include "m_haptics.h"
 #include "m_joy.h"
 #include "menu.h"
+#include "menustate.h"
 #include "utf8.h"
 #include "v_video.h"
 
@@ -63,6 +64,11 @@ static bool NativeMouse = true;
 // would fire a capture command and swallow the typed character.
 static bool CaptureKeyMayBypassGUICapture()
 {
+	// EnterKey intentionally receives raw key events while a controls-menu row
+	// is waiting for a replacement binding. A capture shortcut must not bypass
+	// that prompt, or F12/other capture keys can never be assigned there.
+	if (menuactive == MENU_WaitKey)
+		return false;
 	if (ConsoleState == c_down || ConsoleState == c_falling || chatmodeon)
 		return false;
 	if (CurrentMenu != nullptr && CurrentMenu->IsKindOf("TextEnterMenu"))

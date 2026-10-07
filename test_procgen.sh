@@ -4,29 +4,151 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-RERELEASE_IWAD="/home/ericson-willians/.steam/debian-installation/steamapps/common/Ultimate Doom/rerelease/doom2.wad"
-RERELEASE_DOOM_IWAD="/home/ericson-willians/.steam/debian-installation/steamapps/common/Ultimate Doom/rerelease/doom.wad"
-CONFIG_IWAD="/home/ericson-willians/.config/biaseddoom/doom2.wad"
 BIN="${BIN:-$ROOT/build/biaseddoom}"
-IWAD="${IWAD:-}"
 
-if [ -z "$IWAD" ]; then
-    if [ -f "$RERELEASE_IWAD" ]; then
-        IWAD="$RERELEASE_IWAD"
-    else
-        IWAD="$CONFIG_IWAD"
+usage() {
+    cat <<'USAGE'
+Usage: ./test_procgen.sh [--iwad PATH] [--doom1-iwad PATH] [--bin PATH] <mode> [mode arguments]
+
+Runs the procedural-generation structural and runtime checks.
+
+Input selection (highest priority first):
+  --iwad PATH / IWAD / BIASEDDOOM_TEST_IWAD
+      Doom II IWAD used by the standard test modes.
+  --doom1-iwad PATH / DOOM1_IWAD / BIASEDDOOM_TEST_DOOM1_IWAD
+      Doom or Ultimate Doom IWAD used by doom1, alignment, features, and music.
+  --bin PATH / BIN
+      Engine binary (defaults to build/biaseddoom).
+
+When an IWAD is not specified, the script checks its repository root, the
+engine binary directory, DOOMWADDIR, and DOOMWADPATH for the conventional
+doom2.wad/doom.wad filenames. It never relies on a contributor-specific path.
+Global options must precede the mode. Run --help for the available modes.
+USAGE
+}
+
+iwad_request="${IWAD:-${BIASEDDOOM_TEST_IWAD:-}}"
+doom1_iwad_request="${DOOM1_IWAD:-${BIASEDDOOM_TEST_DOOM1_IWAD:-}}"
+
+# Keep the long-standing IWAD= and BIN= entry points, then offer explicit
+# command-line forms shared with the newer integration scripts. Parse these
+# before the mode so positional seed arguments remain exactly compatible.
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --iwad)
+            if [ "$#" -lt 2 ]; then
+                echo "ERROR: --iwad requires a path" >&2
+                usage >&2
+                exit 2
+            fi
+            iwad_request="$2"
+            shift 2
+            ;;
+        --doom1-iwad)
+            if [ "$#" -lt 2 ]; then
+                echo "ERROR: --doom1-iwad requires a path" >&2
+                usage >&2
+                exit 2
+            fi
+            doom1_iwad_request="$2"
+            shift 2
+            ;;
+        --bin)
+            if [ "$#" -lt 2 ]; then
+                echo "ERROR: --bin requires a path" >&2
+                usage >&2
+                exit 2
+            fi
+            BIN="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+find_iwad() {
+    local requested="$1"
+    shift
+    local -a names=("$@")
+    local -a search_dirs=("$ROOT" "$(dirname "$BIN")")
+    local -a path_dirs=()
+    local directory name
+
+    if [ -n "$requested" ]; then
+        [ -f "$requested" ] || return 1
+        printf '%s\n' "$requested"
+        return 0
     fi
-fi
 
-if [ ! -f "$IWAD" ]; then
-    echo "ERROR: IWAD not found. Set IWAD=/path/to/doom2.wad"
-    exit 1
+    if [ -n "${DOOMWADDIR:-}" ]; then
+        search_dirs+=("$DOOMWADDIR")
+    fi
+    if [ -n "${DOOMWADPATH:-}" ]; then
+        IFS=: read -r -a path_dirs <<<"$DOOMWADPATH"
+        for directory in "${path_dirs[@]}"; do
+            [ -n "$directory" ] && search_dirs+=("$directory")
+        done
+    fi
+
+    for directory in "${search_dirs[@]}"; do
+        [ -d "$directory" ] || continue
+        for name in "${names[@]}"; do
+            if [ -f "$directory/$name" ]; then
+                printf '%s\n' "$directory/$name"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+if ! IWAD="$(find_iwad "$iwad_request" doom2.wad DOOM2.WAD)"; then
+    echo "ERROR: Doom II IWAD not found. Pass --iwad PATH or set IWAD/BIASEDDOOM_TEST_IWAD." >&2
+    echo "       Automatic lookup checks the repository, binary directory, DOOMWADDIR, and DOOMWADPATH." >&2
+    exit 2
 fi
+DOOM2_IWAD="$IWAD"
+
+# The default matrix needs only Doom II. Resolve Doom I lazily so the ordinary
+# validation commands remain usable on installations that own just Doom II.
+DOOM1_IWAD=""
+ensure_doom1_iwad() {
+    if [ -n "$DOOM1_IWAD" ] && [ -f "$DOOM1_IWAD" ]; then
+        return 0
+    fi
+    if ! DOOM1_IWAD="$(find_iwad "$doom1_iwad_request" doom.wad DOOM.WAD)"; then
+        echo "ERROR: Doom or Ultimate Doom IWAD not found. Pass --doom1-iwad PATH or set DOOM1_IWAD/BIASEDDOOM_TEST_DOOM1_IWAD." >&2
+        echo "       Automatic lookup checks the repository, binary directory, DOOMWADDIR, and DOOMWADPATH." >&2
+        return 1
+    fi
+    return 0
+}
 
 if [ ! -x "$BIN" ]; then
-    echo "ERROR: binary not found at $BIN"
-    exit 1
+    echo "ERROR: binary not found at $BIN" >&2
+    exit 2
 fi
+
+# Keep this non-interactive suite independent of a developer's live settings
+# and writable home directory. A shared private config is safe because this
+# script intentionally serializes its engine processes and it makes every
+# invocation start from the same deterministic defaults.
+TEST_CONFIG=$(mktemp "${TMPDIR:-/tmp}/procmap_config.XXXXXX") || {
+    echo "ERROR: could not create an isolated test config" >&2
+    exit 1
+}
+rm -f "$TEST_CONFIG"
+trap 'rm -f "$TEST_CONFIG"' EXIT
 
 run_dump_export() {
     local output_path=$1
@@ -42,7 +164,8 @@ run_dump_export() {
     # than making a sequential corpus wait for its full watchdog timeout.
     log=$(mktemp /tmp/procmap_export.XXXXXX) || return 1
     rm -f "$output_path"
-    setsid stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui -iwad "$IWAD" \
+    SDL_AUDIODRIVER=dummy ALSOFT_DRIVERS=null setsid stdbuf -oL -eL "$BIN" \
+        -config "$TEST_CONFIG" -headless -nosound -nomusic -nogui -iwad "$IWAD" \
         "$@" >"$log" 2>&1 &
     pid=$!
     for ((tick = 0; tick < timeout_seconds * 10; ++tick)); do
@@ -118,7 +241,8 @@ run_manifest_pair_same_process() {
 
 	rm -f "$first_path" "$second_path"
 	log=$(mktemp /tmp/procmap_same_process.XXXXXX) || return 1
-	setsid stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui -iwad "$IWAD" \
+	SDL_AUDIODRIVER=dummy ALSOFT_DRIVERS=null setsid stdbuf -oL -eL "$BIN" \
+		-config "$TEST_CONFIG" -headless -nosound -nomusic -nogui -iwad "$IWAD" \
 		+dumpprocmanifest "$seed" "$theme" "$difficulty" "$size" \
 		"$layout" "$verticality" "$detail" "$outdoors" "$first_path" \
 		+dumpprocmanifest "$seed" "$theme" "$difficulty" "$size" \
@@ -159,7 +283,8 @@ run_runtime_load() {
     local pid reached=0
 
     rm -f "$log"
-    setsid stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui -iwad "$iwad" \
+    SDL_AUDIODRIVER=dummy ALSOFT_DRIVERS=null setsid stdbuf -oL -eL "$BIN" \
+        -config "$TEST_CONFIG" -headless -nosound -nomusic -nogui -iwad "$iwad" \
         +developer "$developer_level" \
         +procgen_seed "$seed" +procgen_theme "$theme" \
 		+procgen_difficulty "$difficulty" +procgen_size "$size" \
@@ -196,7 +321,8 @@ capture_proc_music() {
     local pid reached=0
 
     rm -f "$log"
-    setsid stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui -iwad "$iwad" \
+    SDL_AUDIODRIVER=dummy ALSOFT_DRIVERS=null setsid stdbuf -oL -eL "$BIN" \
+        -config "$TEST_CONFIG" -headless -nosound -nomusic -nogui -iwad "$iwad" \
         +developer 3 +procgen_seed "$seed" +map PROCMAP >"$log" 2>&1 &
     pid=$!
     for _ in $(seq 1 20); do
@@ -221,7 +347,8 @@ run_software_midi_smoke() {
     local pid reached=0
 
     rm -f "$log"
-    ALSOFT_DRIVERS=null setsid stdbuf -oL -eL "$BIN" -nogui -noautoload -iwad "$iwad" \
+    SDL_AUDIODRIVER=dummy ALSOFT_DRIVERS=null setsid stdbuf -oL -eL "$BIN" \
+        -config "$TEST_CONFIG" -headless -nogui -noautoload -iwad "$iwad" \
         +developer 3 +snd_mididevice -5 +snd_musicvolume 1 +mus_enabled true \
         +procgen_seed "$seed" +map PROCMAP >"$log" 2>&1 &
     pid=$!
@@ -1238,8 +1365,10 @@ monster_types = {'7', '9', '16', '58', '64', '65', '66', '67', '68', '69',
                  '71', '72', '84', '88', '89', '3001', '3002', '3003', '3004',
                  '3005', '3006'}
 perch_sector_ids = [sector_id for sector_id in sector_ids if 2000 <= sector_id < 3000]
-if not perch_sector_ids:
-    errors.append('map contains no elevated ranged-monster perch')
+# Perches are an optional motif: compact, progression-dense layouts may have
+# no safe multi-cell host once keys, locks, starts, and required landmarks are
+# reserved. Validate every perch that was emitted here; the dedicated features
+# matrix below keeps the three supported perch architectures covered globally.
 perch_footprints = set()
 perch_approaches = set()
 for sector_id in perch_sector_ids:
@@ -1391,8 +1520,10 @@ if len(perch_sector_ids) >= 2 and len(perch_footprints) < 2:
     errors.append('all elevated ranged-monster areas use the same architecture')
 
 lift_sector_ids = [sector_id for sector_id in sector_ids if 3000 <= sector_id < 4000]
-if not lift_sector_ids:
-    errors.append('map contains no operable bypassable lift')
+# Lifts are optional scenery, not a progression requirement. Compact or
+# circulation-dense runs can correctly have no cell that preserves the full
+# bypass ring; validate every lift that is emitted below rather than rejecting
+# the safe zero-lift fallback.
 pickup_types = {'17', '2007', '2008', '2010', '2011', '2012', '2014', '2015',
                 '2018', '2019', '2046', '2047', '2048', '2049'}
 for sector_id in lift_sector_ids:
@@ -2162,9 +2293,39 @@ for thing in things:
         continue
     keys_at[matches[0]].add(lock)
 
-player_starts = [thing for thing in things if thing.get('type') == '1']
+cooperative_start_types = ('1', '2', '3', '4', '4001', '4002', '4003', '4004')
+starts_by_type = {
+    start_type: [thing for thing in things if thing.get('type') == start_type]
+    for start_type in cooperative_start_types
+}
+for slot, start_type in enumerate(cooperative_start_types, 1):
+    if len(starts_by_type[start_type]) != 1:
+        errors.append(f'cooperative start P{slot} (thing type {start_type}) must appear exactly once, '
+                      f'got {len(starts_by_type[start_type])}')
+cooperative_starts = [starts_by_type[start_type][0]
+                      for start_type in cooperative_start_types
+                      if len(starts_by_type[start_type]) == 1]
+cooperative_start_sectors = []
+for slot, start in enumerate(cooperative_starts, 1):
+    matches = locate_sector(float(start['x']), float(start['y']))
+    if len(matches) != 1:
+        errors.append(f'cooperative start P{slot} belongs to {len(matches)} sectors')
+    else:
+        cooperative_start_sectors.append(matches[0])
+for first in range(len(cooperative_starts)):
+    for second in range(first):
+        dx = float(cooperative_starts[first]['x']) - float(cooperative_starts[second]['x'])
+        dy = float(cooperative_starts[first]['y']) - float(cooperative_starts[second]['y'])
+        if (dx * dx + dy * dy) ** 0.5 < 48.0 - 0.001:
+            errors.append(f'cooperative starts P{second + 1}/P{first + 1} are closer than 48 units')
+if cooperative_start_sectors and len(set(cooperative_start_sectors)) != 1:
+    errors.append('cooperative starts are not all staged in one landmark sector')
+
+# P1 remains the canonical single-player origin. The remaining native starts
+# must never change this solver's initial state or key-route semantics.
+player_starts = starts_by_type['1']
 if len(player_starts) != 1:
-    errors.append(f'symbolic key-state solver expected one player start, got {len(player_starts)}')
+    errors.append(f'symbolic key-state solver expected one canonical P1 start, got {len(player_starts)}')
     start_sector = None
 else:
     start_matches = locate_sector(float(player_starts[0]['x']), float(player_starts[0]['y']))
@@ -2395,7 +2556,7 @@ else:
         'physical_corridor_witnesses', 'room_merge_corridors',
         'switch_cache_actions', 'switch_cache_rewards_reached',
         'required_key_mask', 'exit_key_mask', 'anchors',
-        'corridors', 'switch_caches',
+        'corridors', 'switch_caches', 'cooperative_starts',
     }
     if not isinstance(collision_navigation, dict):
         errors.append('accessibility collision_navigation is not an object')
@@ -2458,6 +2619,50 @@ else:
                    len(collision_navigation['switch_caches']) ==
                    collision_navigation['switch_cache_actions'],
                    'collision navigation has inconsistent switch-cache witnesses')
+            cooperative_starts = collision_navigation['cooperative_starts']
+            cooperative_fields = {
+                'status', 'native_slots', 'canonical_player',
+                'minimum_separation', 'starts',
+            }
+            if not isinstance(cooperative_starts, dict):
+                errors.append('collision navigation cooperative_starts is not an object')
+            else:
+                missing_cooperative = sorted(cooperative_fields - cooperative_starts.keys())
+                if missing_cooperative:
+                    errors.append('collision navigation cooperative_starts is missing ' +
+                                  ', '.join(missing_cooperative))
+                else:
+                    expect(cooperative_starts['status'] == 'proven',
+                           'cooperative-start proof status must be proven')
+                    expect(cooperative_starts['native_slots'] == 8,
+                           'cooperative-start proof must cover native P1 through P8')
+                    expect(cooperative_starts['canonical_player'] == 1,
+                           'cooperative-start proof must retain P1 as canonical')
+                    expect(finite_number(cooperative_starts['minimum_separation']) and
+                           cooperative_starts['minimum_separation'] >= 48.0 - 0.001,
+                           'cooperative starts violate the 48-unit separation contract')
+                    starts = cooperative_starts['starts']
+                    expect(isinstance(starts, list) and len(starts) == 8,
+                           'cooperative-start proof must contain exactly eight starts')
+                    expected_types = (1, 2, 3, 4, 4001, 4002, 4003, 4004)
+                    if isinstance(starts, list) and len(starts) == 8:
+                        for slot, start in enumerate(starts, 1):
+                            fields = {'player', 'thing_index', 'thing_type', 'room',
+                                      'landmark_sector', 'x', 'y', 'clear_radius'}
+                            if not isinstance(start, dict) or fields - start.keys():
+                                errors.append(f'cooperative start P{slot} has incomplete metadata')
+                                continue
+                            expect(start['player'] == slot and
+                                   start['thing_type'] == expected_types[slot - 1],
+                                   f'cooperative start P{slot} has the wrong native player type')
+                            expect(all(isinstance(start[field], int) and
+                                       not isinstance(start[field], bool)
+                                       for field in ('thing_index', 'room', 'landmark_sector')),
+                                   f'cooperative start P{slot} has invalid integer metadata')
+                            expect(all(finite_number(start[field]) for field in
+                                       ('x', 'y', 'clear_radius')) and
+                                   start['clear_radius'] >= 48.0 - 0.001,
+                                   f'cooperative start P{slot} has no conservative clear pad')
 
 # Schema 1 is the shipping spatial-grammar contract.  It deliberately stays at
 # schema 1, but current generators must not be allowed to silently drop the
@@ -3574,14 +3779,15 @@ required = {
     'manual_switches_reached', 'physical_corridor_witnesses',
     'room_merge_corridors', 'switch_cache_actions',
     'switch_cache_rewards_reached', 'required_key_mask', 'exit_key_mask',
-    'anchors', 'corridors', 'switch_caches',
+    'anchors', 'corridors', 'switch_caches', 'cooperative_starts',
 }
 missing = sorted(required - navigation.keys())
 if missing:
     errors.append('collision-navigation proof is missing ' + ', '.join(missing))
 if navigation.get('status') != 'proven':
     errors.append('collision-navigation proof status is not proven')
-for field in required - {'status', 'anchors', 'corridors', 'switch_caches'}:
+for field in required - {'status', 'anchors', 'corridors', 'switch_caches',
+                         'cooperative_starts'}:
     if field in navigation and (not isinstance(navigation[field], int) or
                                 isinstance(navigation[field], bool) or navigation[field] < 0):
         errors.append(f'collision-navigation {field} is not a nonnegative integer')
@@ -3934,6 +4140,113 @@ def point_in_sector(px, py, sector_index):
         if crossing_x > px:
             crossings += 1
     return crossings % 2 == 1
+
+# Multiplayer membership is deliberately not a procedural input: every map
+# contains the native P1--P8 start set. Audit the manifest's separate proof
+# against the serialized things and collision lanes without changing the
+# canonical P1-only key-state anchor above.
+cooperative = navigation.get('cooperative_starts')
+cooperative_fields = {
+    'status', 'native_slots', 'canonical_player',
+    'minimum_separation', 'starts',
+}
+if not isinstance(cooperative, dict):
+    errors.append('collision-navigation proof has no cooperative-start evidence')
+    cooperative = {}
+else:
+    missing_fields = sorted(cooperative_fields - cooperative.keys())
+    if missing_fields:
+        errors.append('cooperative-start proof is missing ' + ', '.join(missing_fields))
+if cooperative.get('status') != 'proven':
+    errors.append('cooperative-start proof status is not proven')
+expect(cooperative.get('native_slots') == 8,
+       'cooperative-start proof must cover exactly native P1 through P8')
+expect(cooperative.get('canonical_player') == 1,
+       'cooperative-start proof must retain P1 as the canonical solver origin')
+minimum_separation = cooperative.get('minimum_separation')
+minimum_separation_valid = (isinstance(minimum_separation, (int, float)) and
+                            not isinstance(minimum_separation, bool) and
+                            math.isfinite(minimum_separation) and
+                            minimum_separation >= 48.0 - 0.001)
+if not minimum_separation_valid:
+    errors.append('cooperative-start proof violates the 48-unit separation contract')
+cooperative_records = cooperative.get('starts')
+if not isinstance(cooperative_records, list) or len(cooperative_records) != 8:
+    errors.append('cooperative-start proof must contain exactly eight records')
+    cooperative_records = []
+native_start_types = (1, 2, 3, 4, 4001, 4002, 4003, 4004)
+seen_cooperative_indices = set()
+seen_cooperative_types = set()
+cooperative_positions = []
+landmark_sectors = set()
+for slot, record in enumerate(cooperative_records, 1):
+    fields = {'player', 'thing_index', 'thing_type', 'room', 'landmark_sector',
+              'x', 'y', 'clear_radius'}
+    if not isinstance(record, dict):
+        errors.append(f'cooperative start P{slot} is not an object')
+        continue
+    missing_fields = sorted(fields - record.keys())
+    if missing_fields:
+        errors.append(f'cooperative start P{slot} is missing ' + ', '.join(missing_fields))
+        continue
+    if record.get('player') != slot or record.get('thing_type') != native_start_types[slot - 1]:
+        errors.append(f'cooperative start P{slot} has the wrong native slot/type')
+    integer_fields = ('player', 'thing_index', 'thing_type', 'room', 'landmark_sector')
+    if any(not isinstance(record[field], int) or isinstance(record[field], bool)
+           for field in integer_fields):
+        errors.append(f'cooperative start P{slot} has invalid integer metadata')
+        continue
+    x, y, clear_radius = (record[field] for field in ('x', 'y', 'clear_radius'))
+    if any(not isinstance(value, (int, float)) or isinstance(value, bool) or
+           not math.isfinite(value) for value in (x, y, clear_radius)) or clear_radius < 48.0 - 0.001:
+        errors.append(f'cooperative start P{slot} has no conservative clear pad')
+        continue
+    thing_index = record['thing_index']
+    if thing_index in seen_cooperative_indices or not 0 <= thing_index < len(things):
+        errors.append(f'cooperative start P{slot} has a duplicate or invalid UDMF thing index')
+        continue
+    seen_cooperative_indices.add(thing_index)
+    if record['thing_type'] in seen_cooperative_types:
+        errors.append(f'cooperative start P{slot} duplicates a native start type')
+    seen_cooperative_types.add(record['thing_type'])
+    thing = things[thing_index]
+    thing_x, thing_y = number(thing.get('x')), number(thing.get('y'))
+    if (thing.get('type') != str(record['thing_type']) or thing_x is None or thing_y is None or
+            math.hypot(thing_x - x, thing_y - y) > 0.01):
+        errors.append(f'cooperative start P{slot} does not match its UDMF thing')
+    landmark_sector = record['landmark_sector']
+    if record['room'] < 0 or not 0 <= landmark_sector < len(sectors):
+        errors.append(f'cooperative start P{slot} has an invalid landmark owner')
+    elif not point_in_sector(x, y, landmark_sector):
+        errors.append(f'cooperative start P{slot} lies outside its landmark sector')
+    else:
+        landmark_sectors.add(landmark_sector)
+    cooperative_positions.append((slot, x, y))
+    clearance_shapes.append((x, y, x, y, clear_radius,
+                             'cooperative_start', slot))
+if len(seen_cooperative_indices) != 8 or seen_cooperative_types != set(native_start_types):
+    errors.append('cooperative-start proof does not cover each serialized native start exactly once')
+if len(landmark_sectors) != 1:
+    errors.append('cooperative starts are not all staged in one landmark sector')
+for first_index, first in enumerate(cooperative_positions):
+    for second in cooperative_positions[:first_index]:
+        separation = math.hypot(first[1] - second[1], first[2] - second[2])
+        if separation < 48.0 - 0.001:
+            errors.append(f'cooperative starts P{second[0]}/P{first[0]} are too close: '
+                          f'{separation:.3f} < 48')
+if len(cooperative_positions) > 1 and minimum_separation_valid:
+    actual_minimum = min(math.hypot(first[1] - second[1], first[2] - second[2])
+                         for first_index, first in enumerate(cooperative_positions)
+                         for second in cooperative_positions[:first_index])
+    if abs(actual_minimum - float(minimum_separation)) > 0.01:
+        errors.append('cooperative-start manifest separation does not match serialized positions')
+if len(by_kind['start']) == 1 and cooperative_records:
+    canonical = cooperative_records[0]
+    start_anchor = by_kind['start'][0]
+    if (start_anchor['thing_index'] != canonical.get('thing_index') or
+            math.hypot(start_anchor['x'] - canonical.get('x', 0),
+                       start_anchor['y'] - canonical.get('y', 0)) > 0.01):
+        errors.append('canonical P1 accessibility anchor disagrees with cooperative-start proof')
 
 switch_caches = navigation.get('switch_caches')
 if not isinstance(switch_caches, list):
@@ -4499,6 +4812,7 @@ seen_material_families = set()
 seen_connection_profiles = set()
 visual_metadata_cases = 0
 connection_metadata_cases = 0
+cooperative_start_metadata_cases = 0
 unified_envelope_count = 0
 realized_non_safe_room_count = 0
 realized_non_safe_footprints = set()
@@ -4646,6 +4960,40 @@ for fields in cases:
         errors.append(str(error))
         continue
     case_count += 1
+    cooperative = (manifest.get('accessibility', {})
+                   if isinstance(manifest.get('accessibility'), dict) else {})
+    cooperative = (cooperative.get('collision_navigation', {})
+                   if isinstance(cooperative.get('collision_navigation'), dict) else {})
+    cooperative = cooperative.get('cooperative_starts')
+    native_start_types = (1, 2, 3, 4, 4001, 4002, 4003, 4004)
+    if not isinstance(cooperative, dict):
+        errors.append(f'corpus manifest {path} is missing cooperative-start evidence')
+    else:
+        starts = cooperative.get('starts')
+        valid_cooperative = (
+            cooperative.get('status') == 'proven' and
+            cooperative.get('native_slots') == 8 and
+            cooperative.get('canonical_player') == 1 and
+            isinstance(cooperative.get('minimum_separation'), (int, float)) and
+            not isinstance(cooperative.get('minimum_separation'), bool) and
+            math.isfinite(cooperative['minimum_separation']) and
+            cooperative['minimum_separation'] >= 48.0 - 0.001 and
+            isinstance(starts, list) and len(starts) == 8)
+        if valid_cooperative:
+            for slot, start in enumerate(starts, 1):
+                if (not isinstance(start, dict) or start.get('player') != slot or
+                        start.get('thing_type') != native_start_types[slot - 1] or
+                        not isinstance(start.get('thing_index'), int) or
+                        not isinstance(start.get('landmark_sector'), int) or
+                        not isinstance(start.get('clear_radius'), (int, float)) or
+                        isinstance(start.get('clear_radius'), bool) or
+                        start['clear_radius'] < 48.0 - 0.001):
+                    valid_cooperative = False
+                    break
+        if valid_cooperative:
+            cooperative_start_metadata_cases += 1
+        else:
+            errors.append(f'corpus manifest {path} has incomplete cooperative-start evidence')
     if map_graph['non_orthogonal_lines'] > 0:
         themes_with_non_orthogonal_geometry.add(theme)
     profile = manifest.get('profile', '').casefold()
@@ -4833,6 +5181,7 @@ for fields in cases:
              connection.get('rise'), connection.get('stair_chain'), connection.get('alignment_group')]
             for connection in connections if isinstance(connection, dict)
         ],
+        'cooperative_starts': cooperative,
         'visual_proof': manifest.get('visual_proof'),
     }, sort_keys=True, separators=(',', ':'))
     signatures[profile].add(signature)
@@ -4870,6 +5219,9 @@ if visual_metadata_cases != case_count:
 if connection_metadata_cases != case_count:
     errors.append(f'connection manifest metadata is missing from '
                   f'{case_count - connection_metadata_cases} corpus case(s)')
+if cooperative_start_metadata_cases != case_count:
+    errors.append(f'cooperative-start manifest metadata is missing from '
+                  f'{case_count - cooperative_start_metadata_cases} corpus case(s)')
 if len(seen_footprints) < 2:
     errors.append(f'visual corpus covered only one room footprint: {sorted(seen_footprints)}')
 if unified_envelope_count < 10:
@@ -4933,7 +5285,8 @@ print(f'  replayability coverage passed: cases={case_count} profiles={len(seen_p
       f'unified_envelopes={unified_envelope_count} '
       f'realized_non_safe_rooms={realized_non_safe_room_count} '
       f'visual_metadata_cases={visual_metadata_cases} '
-      f'connection_metadata_cases={connection_metadata_cases}')
+      f'connection_metadata_cases={connection_metadata_cases} '
+      f'cooperative_start_metadata_cases={cooperative_start_metadata_cases}')
 PY
 }
 
@@ -5224,7 +5577,7 @@ case "${1:-validate}" in
 		# processes for UDMF and two fresh processes for its manifest, which catches
 		# both shared-RNG drift and accidentally cached planning state.
 		suite_dir=$(mktemp -d /tmp/procmap_replayability.XXXXXX) || exit 1
-		trap 'rm -rf "$suite_dir"' EXIT
+		trap 'rm -rf "$suite_dir"; rm -f "$TEST_CONFIG"' EXIT
 		cases_file="$suite_dir/cases.tsv"
 			# Curated recipe corpus: two independently shaped runs for each profile,
 			# plus deterministic feasibility cases for a realized ring, bastion, the
@@ -5533,21 +5886,18 @@ PY
 		echo "Five themes passed structural differentiation and texture/lighting validation"
 		;;
 	music)
-		if [ ! -f "$RERELEASE_IWAD" ] || [ ! -f "$RERELEASE_DOOM_IWAD" ]; then
-			echo "ERROR: Doom and Doom II IWADs are required for soundtrack validation"
-			exit 1
-		fi
+		ensure_doom1_iwad || exit 2
 		music_dir=/tmp/procmap_music_matrix
 		rm -rf "$music_dir"
 		mkdir -p "$music_dir"
-		if ! capture_proc_music 12345 "$RERELEASE_IWAD" "$music_dir/doom2_a.log" ||
-				! capture_proc_music 12345 "$RERELEASE_IWAD" "$music_dir/doom2_b.log" ||
-				! capture_proc_music 54321 "$RERELEASE_IWAD" "$music_dir/doom2_c.log" ||
-				! capture_proc_music 12345 "$RERELEASE_DOOM_IWAD" "$music_dir/doom1.log"; then
+		if ! capture_proc_music 12345 "$DOOM2_IWAD" "$music_dir/doom2_a.log" ||
+				! capture_proc_music 12345 "$DOOM2_IWAD" "$music_dir/doom2_b.log" ||
+				! capture_proc_music 54321 "$DOOM2_IWAD" "$music_dir/doom2_c.log" ||
+				! capture_proc_music 12345 "$DOOM1_IWAD" "$music_dir/doom1.log"; then
 			echo "Procedural soundtrack selection did not reach a loaded map"
 			exit 1
 		fi
-		if ! python3 - "$RERELEASE_IWAD" "$RERELEASE_DOOM_IWAD" "$music_dir" <<'PY'
+		if ! python3 - "$DOOM2_IWAD" "$DOOM1_IWAD" "$music_dir" <<'PY'
 import os
 import re
 import struct
@@ -5624,7 +5974,7 @@ PY
 		then
 			exit 1
 		fi
-		if ! run_software_midi_smoke 12345 "$RERELEASE_IWAD" "$music_dir/software_midi.log"; then
+		if ! run_software_midi_smoke 12345 "$DOOM2_IWAD" "$music_dir/software_midi.log"; then
 			echo "FluidSynth/OpenAL streaming smoke test failed"
 			grep -Ei 'openal|midi|music|error|unable|failed' "$music_dir/software_midi.log" | tail -50 || true
 			exit 1
@@ -5635,11 +5985,8 @@ PY
 		feature_dir=/tmp/procmap_feature_matrix
 		rm -rf "$feature_dir"
 		mkdir -p "$feature_dir"
-		if [ ! -f "$RERELEASE_IWAD" ] || [ ! -f "$RERELEASE_DOOM_IWAD" ]; then
-			echo "ERROR: Doom and Doom II IWADs are required for fluid-flat validation"
-			exit 1
-		fi
-		if ! python3 - "$RERELEASE_DOOM_IWAD" "$RERELEASE_IWAD" <<'PY'
+		ensure_doom1_iwad || exit 2
+		if ! python3 - "$DOOM1_IWAD" "$DOOM2_IWAD" <<'PY'
 import os
 import struct
 import sys
@@ -6100,6 +6447,33 @@ PY
 		fi
 		echo "Maximum all-high settings passed structural and runtime/node validation"
 		;;
+	network)
+		# This state-machine contract deliberately stays source-level: a short
+		# headless process cannot create two synchronized peers, but these checks
+		# cover the ordering that prevents an ACKed client from clearing its staged
+		# archive while the host's already-queued map-change event is in flight.
+		procgen_source="$ROOT/src/common/maps/procgen.cpp"
+		required_network_transfer_patterns=(
+			'bool TransitionCommitted = false;'
+			'NetworkProceduralReceiver.TransitionCommitted = true;'
+			'if (NetworkProceduralReceiver.TransitionCommitted)'
+			'(!NetworkProceduralReceiver.Staged ||'
+			'!NetworkProceduralReceiver.TransitionCommitted))'
+			'(!NetworkProceduralReceiver.TransitionCommitted &&'
+			'DiscardAbandonedProceduralArchive();'
+		)
+		for pattern in "${required_network_transfer_patterns[@]}"; do
+			if ! grep -Fq "$pattern" "$procgen_source"; then
+				echo "Procedural co-op transfer safety contract is missing: $pattern"
+				exit 1
+			fi
+		done
+		if [ "$(grep -Fc 'DiscardAbandonedProceduralArchive();' "$procgen_source")" -lt 4 ]; then
+			echo "Abandoned procedural archives are not released on every transfer reset path"
+			exit 1
+		fi
+		echo "Procedural co-op ACK-commit and abandoned-archive contracts passed"
+		;;
 	menu)
         menu_dump=/tmp/procmap_menu_definition.txt
         menu_config=/tmp/procmap_menu_test.ini
@@ -6127,7 +6501,8 @@ PY
             local pid completed=0
 
             rm -f "$output_log"
-            setsid stdbuf -oL -eL "$BIN" "${menu_engine_args[@]}" \
+            SDL_AUDIODRIVER=dummy ALSOFT_DRIVERS=null setsid stdbuf -oL -eL "$BIN" \
+                "${menu_engine_args[@]}" \
                 "$@" >"$output_log" 2>&1 &
             pid=$!
             for ((tick = 0; tick < 300; ++tick)); do
@@ -6396,12 +6771,9 @@ PY
         echo "Difficulty balance progression passed"
         ;;
     alignment)
-        if [ ! -f "$RERELEASE_IWAD" ] || [ ! -f "$RERELEASE_DOOM_IWAD" ]; then
-            echo "ERROR: Doom and Doom II IWADs are required for native-metric alignment validation"
-            exit 1
-        fi
+        ensure_doom1_iwad || exit 2
         alignment_dir=$(mktemp -d /tmp/procmap_alignment.XXXXXX) || exit 1
-        trap 'rm -rf "$alignment_dir"' EXIT
+        trap 'rm -rf "$alignment_dir"; rm -f "$TEST_CONFIG"' EXIT
         alignment_cases="$alignment_dir/cases.tsv"
         # These two focused recipes exercise large dramatic stair/portal runs
         # and the compact Gothic dogleg regression. Run them against both IWAD
@@ -6412,9 +6784,9 @@ PY
         )
         for family in doom1 doom2; do
             if [ "$family" = doom1 ]; then
-                IWAD="$RERELEASE_DOOM_IWAD"
+                IWAD="$DOOM1_IWAD"
             else
-                IWAD="$RERELEASE_IWAD"
+                IWAD="$DOOM2_IWAD"
             fi
             index=0
             for spec in "${specs[@]}"; do
@@ -6511,11 +6883,8 @@ PY
         echo "Native-metric texture alignment validation passed"
         ;;
     doom1)
-        if [ ! -f "$RERELEASE_DOOM_IWAD" ]; then
-            echo "ERROR: Ultimate Doom IWAD not found at $RERELEASE_DOOM_IWAD"
-            exit 1
-        fi
-        IWAD="$RERELEASE_DOOM_IWAD"
+        ensure_doom1_iwad || exit 2
+        IWAD="$DOOM1_IWAD"
         specs=(
             "2718 techbase 4 4"
             "31337 hell 5 5"
@@ -6553,7 +6922,7 @@ PY
             read -r seed theme difficulty size <<<"$spec"
             doom1_runtime_log="/tmp/procmap_doom1_runtime_${theme}.log"
             if ! run_runtime_load "$seed" "$theme" "$difficulty" "$size" \
-                    "$RERELEASE_DOOM_IWAD" "$doom1_runtime_log"; then
+                    "$DOOM1_IWAD" "$doom1_runtime_log"; then
                 echo "Ultimate Doom runtime load failed for theme=$theme"
                 grep -Ei 'error|failed|invalid|unknown|node|texture' "$doom1_runtime_log" | tail -20 || true
                 exit 1
@@ -6688,6 +7057,54 @@ PY
                 failures=$((failures + 1))
             fi
         done
+		# This compact recipe used to reject the entire map because every safe
+		# multi-cell host was consumed by progression geometry before an optional
+		# raised perch could be placed. It must retain the full serialized
+		# key/collision proof and reach a live map even when that flourish falls
+		# back cleanly.
+		fallback_seed=12
+		fallback_theme=techbase
+		fallback_difficulty=3
+		fallback_size=1
+		fallback_layout=0
+		fallback_verticality=1
+		fallback_detail=1
+		fallback_outdoors=0
+		fallback_manifest=/tmp/procmap_compact_perch_fallback.json
+		fallback_runtime_log=/tmp/procmap_compact_perch_fallback.log
+		echo "=== compact optional-perch fallback seed=$fallback_seed ==="
+		output=$(run_test "$fallback_seed" "$fallback_theme" "$fallback_difficulty" \
+			"$fallback_size" "$fallback_layout" "$fallback_verticality" \
+			"$fallback_detail" "$fallback_outdoors")
+		if ! echo "$output" | grep -q "Dumped UDMF"; then
+			echo "$output" | grep -E "Dumped UDMF|Generation failed" || true
+			echo "Compact optional-perch fallback failed to generate"
+			failures=$((failures + 1))
+		else
+			output=$(run_manifest "$fallback_seed" "$fallback_theme" "$fallback_difficulty" \
+				"$fallback_size" "$fallback_layout" "$fallback_verticality" \
+				"$fallback_detail" "$fallback_outdoors" "$fallback_manifest")
+			if [ ! -s "$fallback_manifest" ] ||
+					! validate_manifest "$fallback_manifest" "$fallback_size" \
+						"$fallback_difficulty" "$fallback_verticality" ||
+					! validate_manifest_udmf_connectors "$fallback_manifest" /tmp/procmap_test.udmf ||
+					! validate_manifest_udmf_collision_navigation "$fallback_manifest" \
+						/tmp/procmap_test.udmf ||
+					! validate_key_progression; then
+				echo "$output" | grep -E "Dumped.*manifest|Generation failed" || true
+				echo "Compact optional-perch fallback lost structural accessibility"
+				failures=$((failures + 1))
+			fi
+			if ! run_runtime_load "$fallback_seed" "$fallback_theme" \
+					"$fallback_difficulty" "$fallback_size" "$IWAD" \
+					"$fallback_runtime_log" 3 "$fallback_layout" "$fallback_verticality" \
+					"$fallback_detail" "$fallback_outdoors"; then
+				echo "Compact optional-perch fallback failed runtime load"
+				grep -Ei 'generation failed|invalid|node|texture|unclosed|dummy subsector' \
+					"$fallback_runtime_log" | tail -30 || true
+				failures=$((failures + 1))
+			fi
+		fi
         if [ "$failures" -ne 0 ]; then
             echo "Validation failed for $failures configuration(s)"
             exit 1
@@ -6698,7 +7115,7 @@ PY
         head -100 /tmp/procmap_test.udmf
         ;;
     *)
-		echo "Usage: $0 {validate|seeds|inspect|size|determinism|replayability|settings|themes|music|features|doors|alignment|rewards|maxsettings|menu|balance|doom1|load|extreme|huge|udmf} [args...]"
+		echo "Usage: $0 {validate|seeds|inspect|size|determinism|replayability|settings|themes|music|features|doors|alignment|rewards|maxsettings|network|menu|balance|doom1|load|extreme|huge|udmf} [args...]"
         exit 2
         ;;
 esac

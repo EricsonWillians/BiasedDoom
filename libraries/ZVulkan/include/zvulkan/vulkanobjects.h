@@ -65,6 +65,9 @@ public:
 	size_t size = 0;
 
 	void *Map(size_t offset, size_t size);
+	// Map does not make device writes visible to a non-coherent host mapping.
+	// Call this after the GPU has finished writing and before the CPU reads.
+	void Invalidate(size_t offset, size_t size);
 	void Unmap();
 
 private:
@@ -508,6 +511,13 @@ inline void *VulkanBuffer::Map(size_t offset, size_t size)
 	void *data;
 	VkResult result = vmaMapMemory(device->allocator, allocation, &data);
 	return (result == VK_SUCCESS) ? ((uint8_t*)data) + offset : nullptr;
+}
+
+inline void VulkanBuffer::Invalidate(size_t offset, size_t size)
+{
+	CheckVulkanError(vmaInvalidateAllocation(device->allocator, allocation,
+		static_cast<VkDeviceSize>(offset), static_cast<VkDeviceSize>(size)),
+		"Could not invalidate mapped Vulkan buffer");
 }
 
 inline void VulkanBuffer::Unmap()

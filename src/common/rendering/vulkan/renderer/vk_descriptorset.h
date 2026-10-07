@@ -65,6 +65,19 @@ private:
 	std::unique_ptr<VulkanDescriptorSet> FixedSet;
 	std::unique_ptr<VulkanDescriptorSet> NullTextureDescriptorSet;
 
+	// These bindings reference long-lived buffers/images.  Their contents may
+	// change every frame, but their descriptor handles only need rewriting when
+	// a backing resource is replaced.
+	VkBuffer HWViewpointBuffer = VK_NULL_HANDLE;
+	VkBuffer HWMatrixBuffer = VK_NULL_HANDLE;
+	VkBuffer HWStreamBuffer = VK_NULL_HANDLE;
+	VkBuffer HWLightBuffer = VK_NULL_HANDLE;
+	VkBuffer HWBoneBuffer = VK_NULL_HANDLE;
+	VkImageView FixedShadowmapView = VK_NULL_HANDLE;
+	VkImageView FixedLightmapView = VK_NULL_HANDLE;
+	VkImageView FixedSectorBleedView = VK_NULL_HANDLE;
+	VkAccelerationStructureKHR FixedAccelerationStructure = VK_NULL_HANDLE;
+
 	std::list<VkMaterial*> Materials;
 
 	static const int maxSets = 10;

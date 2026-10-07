@@ -1306,6 +1306,30 @@ public:
 
 	//=======================================================================
 	//
+	// ClearKeepCapacity
+	//
+	// Destroys all live pairs while retaining the current node allocation.
+	// Unlike repeated Remove() calls, this also resets LastFree so collision
+	// spill slots are reusable by the next insertion cycle.
+	//
+	//=======================================================================
+
+	void ClearKeepCapacity()
+	{
+		for (hash_t i = 0; i < Size; ++i)
+		{
+			if (!Nodes[i].IsNil())
+			{
+				Nodes[i].~Node();
+				Nodes[i].SetNil();
+			}
+		}
+		LastFree = &Nodes[Size];
+		NumUsed = 0;
+	}
+
+	//=======================================================================
+	//
 	// CountUsed
 	//
 	// Returns the number of entries in use in the table.

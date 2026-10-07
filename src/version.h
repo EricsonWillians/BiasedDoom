@@ -41,16 +41,16 @@ const char *GetVersionString();
 
 /** Lots of different version numbers **/
 
-#define VERSIONSTR "4.15.17"
+#define VERSIONSTR "4.15.18"
 
 // The version as seen in the Windows resource
-#define RC_FILEVERSION 4,15,17,0
-#define RC_PRODUCTVERSION 4,15,17,0
+#define RC_FILEVERSION 4,15,18,0
+#define RC_PRODUCTVERSION 4,15,18,0
 #define RC_PRODUCTVERSION2 VERSIONSTR
 // These are for content versioning.
 #define VER_MAJOR 4
 #define VER_MINOR 15
-#define VER_REVISION 17
+#define VER_REVISION 18
 
 // This should always refer to the GZDoom version a derived port is based on and not reflect the derived port's version number!
 #define ENG_MAJOR 4
@@ -65,11 +65,11 @@ const char *GetVersionString();
 // Protocol version used in demos.
 // Bump it if you change existing DEM_ commands or add new ones.
 // Otherwise, it should be safe to leave it alone.
-#define DEMOGAMEVERSION 0x221
+#define DEMOGAMEVERSION 0x224
 
 // Minimum demo version we can play.
 // Bump it whenever you change or remove existing DEM_ commands.
-#define MINDEMOVERSION 0x221
+#define MINDEMOVERSION 0x224
 
 // SAVEVER is the version of the information stored in level snapshots.
 // Note that SAVEVER is not directly comparable to VERSION.

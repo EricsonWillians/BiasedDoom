@@ -371,6 +371,11 @@ public:
 
 extern bool bPredictionGuard;
 
+// Prediction may execute third-party presentation code that creates and
+// destroys compatibility objects at a high rate. Keep its diagnostics bounded
+// per loaded map so warning I/O cannot become a secondary failure mode.
+void P_ReportPredictionObjectWarning(const char *verb, const char *className);
+
 // This is the only method aside from calling CreateNew that should be used for creating DObjects
 // to ensure that the Class pointer is always set.
 template<typename T, typename... Args>

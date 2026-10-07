@@ -1320,12 +1320,26 @@ int DBaseStatusBar::GetMugShotY(FName face) {
   return y;
 }
 
+bool DBaseStatusBar::IsLocalCompanionCoop() const {
+  // Companion squads promote a solo run to co-op so normal player spawning,
+  // key sharing, and cheat rules remain correct. That is deliberately not the
+  // same as a real multiplayer session for cosmetic HUD identity treatment.
+  return multiplayer && !netgame && !deathmatch && primaryLevel != nullptr &&
+         primaryLevel->BotInfo.HasCompanionForcedMultiplayer();
+}
+
 static int GetMugShotX(DBaseStatusBar *self, int face) {
   return self->GetMugShotX(FName((ENamedName)face));
 }
 
 static int GetMugShotY(DBaseStatusBar *self, int face) {
   return self->GetMugShotY(FName((ENamedName)face));
+}
+
+static int IsLocalCompanionCoop(DBaseStatusBar *self) {
+  // VM native bool values are represented by integers at this direct binding
+  // boundary.
+  return self->IsLocalCompanionCoop();
 }
 
 DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, GetMugShotWidth,
@@ -1352,6 +1366,12 @@ DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, GetMugShotY, GetMugShotY) {
   PARAM_SELF_PROLOGUE(DBaseStatusBar);
   PARAM_NAME(face);
   ACTION_RETURN_INT(self->GetMugShotY(face));
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, IsLocalCompanionCoop,
+                              IsLocalCompanionCoop) {
+  PARAM_SELF_PROLOGUE(DBaseStatusBar);
+  ACTION_RETURN_BOOL(self->IsLocalCompanionCoop());
 }
 //---------------------------------------------------------------------------
 //

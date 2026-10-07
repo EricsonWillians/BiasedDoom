@@ -374,6 +374,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	TMap<uint64_t, int> solidWallLookup;
 	constexpr double PlayerRadius = 16.0;
 	constexpr double NavigationSafety = 16.0;
+	// The stock Doom map grammar supplies P1 through P8 numbered starts. They
+	// are emitted for every procedural map independently of the current party:
+	// bot count and multiplayer membership are runtime state, never recipe
+	// inputs. P1 remains the canonical single-player/key-solver origin.
+	constexpr int NativeCooperativeStartCount = 8;
+	constexpr double CooperativeStartPadRadius = 64.0;
+	constexpr double CooperativeStartMinimumSeparation =
+		PlayerRadius * 2.0 + NavigationSafety;
 	// An operable lift is an optional obstacle, so its entire perimeter needs a
 	// real alternate walking lane. Keep this separate from its 40-unit moving
 	// footprint: later feature and decoration passes must honor the full ring.
@@ -1547,10 +1555,17 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	// reward budget.  These are self-contained manual annexes in otherwise
 	// ordinary optional rooms; unlike reclassifying a through-room as secret,
 	// they cannot seal or hide a required route.
-	TArray<int> secretAnnexCellX;
-	TArray<int> secretAnnexCellY;
-	TArray<int> secretAnnexDoorSides;
-	TArray<int> secretAnnexVariants;
+	struct SecretAnnexPlan
+	{
+		int roomId = -1;
+		int x = -1;
+		int y = -1;
+		int doorSide = -1;
+		int variant = 0;
+	};
+	TArray<SecretAnnexPlan> secretAnnexes;
+	TArray<int> secretAnnexRoomCounts;
+	TArray<bool> secretAnnexCells;
 	TArray<FluidDescriptor> fluidDescriptors;
 	TArray<bool> fluidCellReserved;
 	TArray<bool> falseWallNeighborReserved;
@@ -1578,10 +1593,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	liftTags.Resize(Rooms.Size());
 	liftCellX.Resize(Rooms.Size());
 	liftCellY.Resize(Rooms.Size());
-	secretAnnexCellX.Resize(Rooms.Size());
-	secretAnnexCellY.Resize(Rooms.Size());
-	secretAnnexDoorSides.Resize(Rooms.Size());
-	secretAnnexVariants.Resize(Rooms.Size());
+	secretAnnexRoomCounts.Resize(Rooms.Size());
+	secretAnnexCells.Resize(W * H);
 	fluidDescriptors.Resize(Rooms.Size());
 	fluidCellReserved.Resize(W * H);
 	falseWallNeighborReserved.Resize(W * H);
@@ -1612,11 +1625,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		perchVariants[ri] = 0;
 		liftTags[ri] = 0;
 		liftCellX[ri] = liftCellY[ri] = -1;
-		secretAnnexCellX[ri] = secretAnnexCellY[ri] = -1;
-		secretAnnexDoorSides[ri] = -1;
-		secretAnnexVariants[ri] = 0;
+		secretAnnexRoomCounts[ri] = 0;
 		fluidDescriptors[ri] = FluidDescriptor();
 	}
+	for (int index = 0; index < W * H; ++index)
+		secretAnnexCells[index] = false;
 	constexpr double RevealClearance = 64.0;
 	auto BuildRevealProfile = [&](int roomId, int revealKind) -> RevealProfile
 	{
@@ -1766,6 +1779,21 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		return false;
 	};
+	auto CellTouchesDogleg = [&](int x, int y) -> bool
+	{
+		if (x < 0 || x >= W || y < 0 || y >= H) return false;
+		for (int direction = 0; direction < 4; ++direction)
+		{
+			const int nx = x + DX[direction];
+			const int ny = y + DY[direction];
+			if (nx < 0 || nx >= W || ny < 0 || ny >= H ||
+				!Grid[ny][nx].present)
+				continue;
+			if (DoglegAnchorForCells(x, y, nx, ny) >= 0)
+				return true;
+		}
+		return false;
+	};
 
 	auto PickFeatureCell = [&](int roomId, int revealKind,
 		int& featureX, int& featureY) -> bool
@@ -1783,6 +1811,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					if (cell.hasPlayerStart || cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
 						continue;
 					if (pass == 0 && CellHasHeightTransition(x, y)) continue;
+					// A cache is optional; a dogleg is a protected required-route
+					// connector. Do not select a host that the later clearance pass
+					// must discard, otherwise a valid alternative room may never get
+					// considered for an explicit manual cache.
+					if (CellTouchesDogleg(x, y)) continue;
 					if (IsLandmarkAnchorCell(roomId, x, y)) continue;
 					candidates.Push(std::make_pair(x, y));
 				}
@@ -1818,6 +1851,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 						cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked ||
 						CellHasHeightTransition(x, y) || IsLandmarkAnchorCell(roomId, x, y))
 						continue;
+					if (CellTouchesDogleg(x, y)) continue;
 					for (int backDirection = 0; backDirection < 4; backDirection++)
 					{
 						if (cell.conn[backDirection]) continue;
@@ -1871,6 +1905,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 						cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
 						continue;
 					if (pass == 0 && CellHasHeightTransition(x, y)) continue;
+					if (CellTouchesDogleg(x, y)) continue;
 					if (IsLandmarkAnchorCell(roomId, x, y)) continue;
 					for (int direction = 0; direction < 4; direction++)
 					{
@@ -2161,17 +2196,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		if (revealKinds[ri] == RevealNone) continue;
 		const int x = revealCellX[ri];
 		const int y = revealCellY[ri];
-		bool touchesDogleg = false;
-		for (int direction = 0; direction < 4 && !touchesDogleg; ++direction)
-		{
-			const int nx = x + DX[direction];
-			const int ny = y + DY[direction];
-			touchesDogleg = x >= 0 && x < W && y >= 0 && y < H &&
-				nx >= 0 && nx < W && ny >= 0 && ny < H &&
-				Grid[ny][nx].present &&
-				DoglegAnchorForCells(x, y, nx, ny) >= 0;
-		}
-		if (!touchesDogleg) continue;
+		if (!CellTouchesDogleg(x, y)) continue;
 
 		// Keep the optional cache from competing with a mandatory turned stair.
 		// Its pavilion ring needs the same chamber face that the dogleg reserves;
@@ -2189,22 +2214,30 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 	}
 
-	// A reveal pavilion needs its full circulation ring. If the only valid host
-	// cell also owns a staircase, restore that chamber face; the opposite face
-	// remains inset and still provides a useful connector run.
+	// A reveal may use spare shell depth, but never its protected 64-unit
+	// circulation envelope or a planned dogleg's connector bay.
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
 		if (revealKinds[ri] == RevealNone) continue;
 		const int x = revealCellX[ri];
 		const int y = revealCellY[ri];
 		if (x < 0 || x >= W || y < 0 || y >= H) continue;
-		// A reveal pavilion may reclaim its local circulation ring, but never at
-		// the expense of a planned dogleg's connector bay. Re-expanding that face
-		// after the stair pass shortened it was enough to turn a real four-tread
-		// dogleg into a straight-stair fallback on otherwise feasible maps.
+		// Pavilion profiles preserve their hash-planned off-center placement.
+		// Wall alcoves and false-wall closets calculate their center from a real
+		// wall later in emission, so their generic profile offset does not apply
+		// while reserving their host-cell circulation envelope.
 		bool revealCirculationFits = true;
+		double originalRevealEdges[4];
+		for (int direction = 0; direction < 4; ++direction)
+			originalRevealEdges[direction] = cellEdges[y][x].edge[direction];
+		const RevealProfile profile = BuildRevealProfile(ri, revealKinds[ri]);
 		auto RestoreRevealFace = [&](int direction, double roomHalf)
 		{
+			const bool horizontal = direction == DIR_W || direction == DIR_E;
+			const double outerHalf = horizontal ? profile.outerX : profile.outerY;
+			const double outwardOffset = revealArchitectures[ri] == RevealPavilion ?
+				DX[direction] * profile.offsetX + DY[direction] * profile.offsetY : 0.0;
+			const double minimumFace = outerHalf + outwardOffset + RevealClearance;
 			const int nx = x + DX[direction];
 			const int ny = y + DY[direction];
 			if (nx >= 0 && nx < W && ny >= 0 && ny < H &&
@@ -2232,16 +2265,16 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				const int requiredDepth = std::max(mandatory ? 64 : 48,
 					std::min(first.connectionDepth[direction],
 						second.connectionDepth[opposite]));
-				const double centerDistance = direction == DIR_E ?
-					CellCenterX(nx) - CellCenterX(x) :
-					CellCenterY(ny) - CellCenterY(y);
+				const double centerDistance = direction == DIR_W || direction == DIR_E ?
+					fabs(CellCenterX(nx) - CellCenterX(x)) :
+					fabs(CellCenterY(ny) - CellCenterY(y));
 				const double maximumFace = centerDistance -
 					cellEdges[ny][nx].edge[opposite] - requiredDepth;
-				if (maximumFace + 0.001 < roomHalf)
+				if (maximumFace + 0.001 < minimumFace)
 				{
-					// A reveal is optional. Its pavilion requires the whole local
-					// circulation ring, so do not retain a cramped partial version
-					// that steals clearance from a real connector.
+					// A reveal is optional. It may give up unused shell depth, but
+					// never its own profile plus the protected 64-unit circulation
+					// envelope in order to crowd a real connector.
 					revealCirculationFits = false;
 					return;
 				}
@@ -2258,6 +2291,12 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		RestoreRevealFace(DIR_E, roomHalfX[ri]);
 		if (!revealCirculationFits)
 		{
+			// Face restoration happens incrementally so that a surviving cache can
+			// preserve its full local ring. Undo those speculative changes when a
+			// later face proves infeasible: an omitted optional cache must not alter
+			// room geometry or steal depth from a different connector.
+			for (int direction = 0; direction < 4; ++direction)
+				cellEdges[y][x].edge[direction] = originalRevealEdges[direction];
 			const int missingTag = revealTags[ri];
 			revealKinds[ri] = RevealNone;
 			revealTags[ri] = 0;
@@ -2414,11 +2453,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		perchVariants[roomId] = (variantSeedMod3 + nextPerchTag - 2001) % 3;
 		perchBudget--;
 	}
-	if (nextPerchTag == 2000)
-	{
-		LastError = "Could not place an elevated ranged-monster perch";
-		return false;
-	}
+	// Perches enrich a run when the final room geometry has a safe host, but
+	// they are never part of progression. A compact recipe can legitimately
+	// spend every suitable multi-cell room on a start, key, lock, or required
+	// landmark. Keep that fair map playable instead of weakening those clearance
+	// contracts merely to force an optional raised platform into it.
 
 	// Operable lifts add meaningful height variation without placing a mandatory
 	// route behind moving geometry. They live in spare cells with a full walkable
@@ -3044,10 +3083,13 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	for (unsigned int ri = 0; ri < fluidDescriptors.Size(); ri++)
 		if (fluidDescriptors[ri].primary) macroFluidPlaced++;
 	// A flooded room plus multiple broad reservoirs/watercourses establishes a
-	// regional liquid identity. Two macro descriptors could still fall below a
-	// meaningful share of an unusually broad composed floor plan, so standard
-	// maps target three and large maps target four when compatible hosts exist.
-	const int macroFluidTarget = Size >= 20 ? 4 : (Size >= 5 ? 3 : 1);
+	// regional liquid identity. Scale the broad reservoirs/watercourses with the
+	// supported map size: a fixed four macros read correctly at normal scale but
+	// become isolated accents on the size-80/160 canvases. Individual descriptors
+	// still need a geometry-safe host, so constrained recipes deterministically
+	// stop at the feasible count.
+	const int macroFluidTarget = Size >= 20 ? std::min(11, 3 + Size / 20) :
+		(Size >= 5 ? 3 : 1);
 	for (int ordinal = macroFluidPlaced;
 		ordinal < macroFluidTarget; ordinal++)
 	{
@@ -3284,6 +3326,13 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		int doorSide = -1;
 		uint32_t score = 0;
 	};
+	// Annexes are self-contained within a coarse room cell. Favor spreading them
+	// across hosts, but let one spacious host carry a second annex when a dense
+	// macro shape leaves fewer independent rooms than the secret reward budget.
+	// Distinct reserved cells keep their door approaches and circulation rings
+	// separate; two is deliberately a hard cap so an ordinary room never turns
+	// into a corridor of hidden closets.
+	constexpr int MaxSecretAnnexesPerRoom = 2;
 	auto SecretAnnexHash = [&](int roomId, int x, int y) -> uint32_t
 	{
 		uint32_t value = StableRoomHash(roomId, 0x53454352u) ^
@@ -3329,7 +3378,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 						(x == revealCellX[ri] && y == revealCellY[ri]) ||
 						(x == perchCellX[ri] && y == perchCellY[ri]) ||
 						(x == liftCellX[ri] && y == liftCellY[ri]) ||
-						fluidCellReserved[y * W + x] || sightlineMask[y][x] != 0)
+						secretAnnexCells[y * W + x] || fluidCellReserved[y * W + x] ||
+						sightlineMask[y][x] != 0)
 						continue;
 					bool opensIntoRoom = false;
 					for (int direction = 0; direction < 4; ++direction)
@@ -3351,8 +3401,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				}
 			}
 		}
-		for (int index = 0; index < (int)candidates.Size() && secretAnnexBudget > 0;
-			++index)
+		for (int index = 0; index < (int)candidates.Size(); ++index)
 		{
 			int best = index;
 			for (int candidate = index + 1; candidate < (int)candidates.Size(); ++candidate)
@@ -3363,16 +3412,30 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				candidates[index] = candidates[best];
 				candidates[best] = saved;
 			}
-			const SecretAnnexCandidate& selected = candidates[index];
-			if (secretAnnexCellX[selected.roomId] >= 0) continue;
-			secretAnnexCellX[selected.roomId] = selected.x;
-			secretAnnexCellY[selected.roomId] = selected.y;
-			secretAnnexDoorSides[selected.roomId] = selected.doorSide;
-			secretAnnexVariants[selected.roomId] =
-				(int)(selected.score % 4u);
-			if (Rooms[selected.roomId].manualInteraction == PGMI_None)
-				Rooms[selected.roomId].manualInteraction = PGMI_SecretDoor;
-			secretAnnexBudget--;
+		}
+		for (int hostRound = 0;
+			hostRound < MaxSecretAnnexesPerRoom && secretAnnexBudget > 0;
+			++hostRound)
+		{
+			for (const SecretAnnexCandidate& selected : candidates)
+			{
+				if (secretAnnexBudget <= 0) break;
+				if (secretAnnexRoomCounts[selected.roomId] != hostRound ||
+					secretAnnexCells[selected.y * W + selected.x])
+					continue;
+				SecretAnnexPlan plan;
+				plan.roomId = selected.roomId;
+				plan.x = selected.x;
+				plan.y = selected.y;
+				plan.doorSide = selected.doorSide;
+				plan.variant = (int)(selected.score % 4u);
+				secretAnnexes.Push(std::move(plan));
+				secretAnnexRoomCounts[selected.roomId]++;
+				secretAnnexCells[selected.y * W + selected.x] = true;
+				if (Rooms[selected.roomId].manualInteraction == PGMI_None)
+					Rooms[selected.roomId].manualInteraction = PGMI_SecretDoor;
+				secretAnnexBudget--;
+			}
 		}
 	}
 
@@ -3392,7 +3455,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			room.hasKey || room.hasExit || room.hasBoss || room.isLocked ||
 			room.isSecret || room.verticalAnchor || room.terrainRouteReservation ||
 			revealKinds[ri] != RevealNone || switchTargetTags[ri] > 0 ||
-			secretAnnexCellX[ri] >= 0 ||
+			secretAnnexRoomCounts[ri] > 0 ||
 			perchTags[ri] > 0 || liftTags[ri] > 0 ||
 			fluidDescriptors[ri].architecture >= 0)
 			continue;
@@ -4450,8 +4513,44 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		points.Push({ x2, y2 });
 		for (unsigned int point = 0; point + 1 < points.Size(); ++point)
+		{
+			FString segmentTexture = texture;
+			// A shaped exterior can leave its first contour segment collinear with
+			// the preceding chamfer. That is one visible wall run, not an
+			// architectural boundary, so carry the chamfer material into the first
+			// segment instead of creating an abrupt diagonal texture split. The
+			// last segment is handled symmetrically by AddCornerWall below.
+			if (point == 0 && lines.Size() > 0)
+			{
+				const BuildLine& previous = lines[lines.Size() - 1];
+				if (previous.sideBack < 0 && previous.sideFront >= 0 &&
+					previous.special == 0 &&
+					sides[previous.sideFront].sector == sector)
+				{
+					const BuildVertex& previousFirst = vertices[previous.v1];
+					const BuildVertex& previousSecond = vertices[previous.v2];
+					const bool firstAtStart = fabs(previousFirst.x - points[0].x) <= 0.01 &&
+						fabs(previousFirst.y - points[0].y) <= 0.01;
+					const bool secondAtStart = fabs(previousSecond.x - points[0].x) <= 0.01 &&
+						fabs(previousSecond.y - points[0].y) <= 0.01;
+					if (firstAtStart || secondAtStart)
+					{
+						const BuildVertex& other = firstAtStart ? previousSecond : previousFirst;
+						const double previousX = other.x - points[0].x;
+						const double previousY = other.y - points[0].y;
+						const double contourX = points[1].x - points[0].x;
+						const double contourY = points[1].y - points[0].y;
+						if (fabs(previousX * contourY - previousY * contourX) <= 0.01 &&
+							previousX * contourX + previousY * contourY < 0.0 &&
+							sides[previous.sideFront].middle.Compare("-") != 0)
+							segmentTexture = sides[previous.sideFront].middle;
+					}
+				}
+			}
 			AddWall(points[point].x, points[point].y,
-				points[point + 1].x, points[point + 1].y, sector, texture);
+				points[point + 1].x, points[point + 1].y, sector,
+				segmentTexture.GetChars());
+		}
 		room.contourEdges += (int)points.Size() - 2;
 		room.contourVertices += (int)points.Size() - 2;
 		room.contourArea = std::max(0.0, room.contourArea + areaDelta);
@@ -6645,7 +6744,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			break;
 		}
 		if (room.hasKey) { halfX = halfY = 64.0; raise = 16.0; }
-		if (room.hasPlayerStart) { halfX = halfY = 64.0; raise = 8.0; }
+		// A generated start landmark is a real cooperative staging terrace, not a
+		// single pad with seven fallback spawns. The final room profile guarantees
+		// enough local extent for this compact 3x3 formation even on size-one maps;
+		// constrained landmark bounds still clamp it safely before emission.
+		if (room.hasPlayerStart) { halfX = halfY = 96.0; raise = 8.0; }
 		if (room.hasExit) { halfX = halfY = 96.0; raise = 16.0; }
 		// Room bounds describe the composed footprint, but a landmark is emitted
 		// around one particular anchor cell.  An L-shaped composed room can put
@@ -7014,7 +7117,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			const bool scenicVerticalLandmark = room.verticalAnchor &&
 				(room.verticalIntent == PGVI_TerraceOverlook ||
 				 room.verticalIntent == PGVI_BridgeApproach);
-			const bool landmarkHasSpace = room.cellCount >= 2 || room.hasKey || room.hasExit ||
+			const bool landmarkHasSpace = room.hasPlayerStart || room.cellCount >= 2 ||
+				room.hasKey || room.hasExit ||
 				(room.landmarkArchetype != PGLA_None && room.spatialClass >= 2) ||
 				scenicVerticalLandmark;
 			// A flooded room and its dry chamfered island already form a strong
@@ -7026,7 +7130,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		int revealCell = -1;
 		int perchCell = -1;
 		int liftCell = -1;
-		int secretAnnexCell = -1;
+		TArray<int> secretAnnexPlanIndices;
+		TArray<int> secretAnnexCellIndices;
 		int floodedIslandCell = -1;
 			TArray<int> placementCells;
 		for (unsigned int index = 0; index < roomCells.Size(); index++)
@@ -7036,18 +7141,32 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (x == revealCellX[ri] && y == revealCellY[ri]) revealCell = index;
 			if (x == perchCellX[ri] && y == perchCellY[ri]) perchCell = index;
 			if (x == liftCellX[ri] && y == liftCellY[ri]) liftCell = index;
-			if (x == secretAnnexCellX[ri] && y == secretAnnexCellY[ri])
-				secretAnnexCell = index;
+			for (unsigned int planIndex = 0; planIndex < secretAnnexes.Size(); ++planIndex)
+			{
+				const SecretAnnexPlan& plan = secretAnnexes[planIndex];
+				if (plan.roomId == (int)ri && plan.x == x && plan.y == y)
+				{
+					secretAnnexPlanIndices.Push((int)planIndex);
+					secretAnnexCellIndices.Push(index);
+					break;
+				}
+			}
 			if (roomFluid.floodedRoom && x == roomFluid.islandX && y == roomFluid.islandY)
 				floodedIslandCell = index;
 		}
+		auto IsSecretAnnexCell = [&](int index) -> bool
+		{
+			for (int secretCell : secretAnnexCellIndices)
+				if (secretCell == index) return true;
+			return false;
+		};
 		if (roomFluid.floodedRoom && floodedIslandCell >= 0)
 			placementCells.Push(floodedIslandCell);
 		else
 		{
 			for (unsigned int index = 0; index < roomCells.Size(); index++)
 				if ((int)index != revealCell && (int)index != perchCell &&
-					(int)index != liftCell && (int)index != secretAnnexCell &&
+					(int)index != liftCell && !IsSecretAnnexCell((int)index) &&
 					!fluidCellReserved[roomCells[index].second * W + roomCells[index].first] &&
 						(!willHaveLandmark || roomCells.Size() == 1 || (int)index != landmarkCell))
 						placementCells.Push(index);
@@ -7062,7 +7181,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				for (unsigned int index = 0; index < roomCells.Size(); index++)
 				{
 					if ((int)index == revealCell || (int)index == perchCell ||
-						(int)index == liftCell || (int)index == secretAnnexCell ||
+						(int)index == liftCell || IsSecretAnnexCell((int)index) ||
 						fluidCellReserved[roomCells[index].second * W + roomCells[index].first])
 						continue;
 					placementCells.Push(index);
@@ -7265,17 +7384,18 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			}
 		}
 
-		if (secretAnnexCell >= 0)
+		for (int planIndex : secretAnnexPlanIndices)
 		{
-			double secretX, secretY;
-			CellPosition(secretAnnexCell, secretX, secretY);
+			const SecretAnnexPlan& plan = secretAnnexes[planIndex];
+			double secretX = CellCenterX(plan.x);
+			double secretY = CellCenterY(plan.y);
 			RevealProfile profile = BuildRevealProfile(ri, RevealSwitchCache);
-			profile.variant = secretAnnexVariants[ri];
+			profile.variant = plan.variant;
 			profile.floorDelta = 0.0;
 			profile.ceilingDrop = 0.0;
 			secretX += profile.offsetX;
 			secretY += profile.offsetY;
-			const int doorSide = clamp(secretAnnexDoorSides[ri], 0, 3);
+			const int doorSide = clamp(plan.doorSide, 0, 3);
 			if (AddRevealCloset(room, secretX, secretY, 0, 0, profile, doorSide,
 				RevealPavilion, RevealHidden, true) < 0)
 			{
@@ -7336,6 +7456,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		if (room.hasPlayerStart)
 		{
+			if (landmarkSector < 0 || CooperativeStarts.Size() != 0)
+			{
+				LastError = "Could not emit the required cooperative start landmark";
+				return false;
+			}
 			CellPosition(playerCell >= 0 ? playerCell : 0, anchorX, anchorY);
 			int startIndex = playerCell >= 0 ? playerCell : 0;
 			int startX = roomCells[startIndex].first;
@@ -7347,8 +7472,52 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					(direction == DIR_W ? 180 : 270));
 				break;
 			}
-			AddThing(anchorX, anchorY, 1, startFacingAngle);
-			ReserveNavigationPad(anchorX, anchorY, 88.0);
+
+			// Keep P1 on the original central pad so every existing single-player
+			// proof begins at exactly the same canonical origin. The other native
+			// Doom starts occupy a 3x3 formation behind and beside the forward
+			// shotgun lane. Rotating the formation with the outgoing route keeps the
+			// opening readable regardless of the recipe-selected orientation.
+			static const int CooperativeStartTypes[NativeCooperativeStartCount] = {
+				1, 2, 3, 4, 4001, 4002, 4003, 4004
+			};
+			static const double CooperativeForward[NativeCooperativeStartCount] = {
+				0.0, -56.0, 0.0, 56.0, -56.0, -56.0, 0.0, 56.0
+			};
+			static const double CooperativeRight[NativeCooperativeStartCount] = {
+				0.0, 56.0, 56.0, 56.0, 0.0, -56.0, -56.0, -56.0
+			};
+			const double radians = startFacingAngle * (3.14159265358979323846 / 180.0);
+			const double forwardX = cos(radians);
+			const double forwardY = sin(radians);
+			const double rightX = -forwardY;
+			const double rightY = forwardX;
+			for (int slot = 0; slot < NativeCooperativeStartCount; ++slot)
+			{
+				const double spawnX = anchorX + CooperativeForward[slot] * forwardX +
+					CooperativeRight[slot] * rightX;
+				const double spawnY = anchorY + CooperativeForward[slot] * forwardY +
+					CooperativeRight[slot] * rightY;
+				const int thingIndex = things.Size();
+				if (!AddThing(spawnX, spawnY, CooperativeStartTypes[slot], startFacingAngle) ||
+					things.Size() != (unsigned int)(thingIndex + 1) ||
+					things.Last().type != CooperativeStartTypes[slot])
+				{
+					LastError = "Could not emit a native cooperative player start";
+					return false;
+				}
+				ReserveNavigationPad(spawnX, spawnY, CooperativeStartPadRadius);
+				ProcGenCooperativeStart start;
+				start.player = slot + 1;
+				start.thingIndex = thingIndex;
+				start.thingType = CooperativeStartTypes[slot];
+				start.roomId = (int)ri;
+				start.landmarkSector = landmarkSector;
+				start.x = spawnX;
+				start.y = spawnY;
+				start.clearRadius = CooperativeStartPadRadius;
+				CooperativeStarts.Push(std::move(start));
+			}
 		}
 		if (room.hasKey && room.keyType >= 1 && room.keyType <= 3)
 		{
@@ -7871,6 +8040,95 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return ReservationRadiusAtPoint((first.x + second.x) * 0.5,
 			(first.y + second.y) * 0.5, false, minimumRadius);
 	};
+	// A reservation keeps props away, but a cooperative spawn also needs to be
+	// inside the final landmark sector rather than merely near its planned
+	// center. Test the emitted sector boundary here, after all compact fallback
+	// geometry has been serialized into the local build arrays.
+	auto PointInsideSector = [&](int sectorIndex, double px, double py) -> bool
+	{
+		if (sectorIndex < 0 || sectorIndex >= (int)sectors.Size()) return false;
+		int crossings = 0;
+		for (const BuildLine& line : lines)
+		{
+			if (line.v1 < 0 || line.v2 < 0 || line.v1 >= (int)vertices.Size() ||
+				line.v2 >= (int)vertices.Size())
+				continue;
+			const bool ownsFront = line.sideFront >= 0 &&
+				line.sideFront < (int)sides.Size() &&
+				sides[line.sideFront].sector == sectorIndex;
+			const bool ownsBack = line.sideBack >= 0 &&
+				line.sideBack < (int)sides.Size() &&
+				sides[line.sideBack].sector == sectorIndex;
+			if (ownsFront == ownsBack) continue;
+			const BuildVertex& first = vertices[line.v1];
+			const BuildVertex& second = vertices[line.v2];
+			if ((first.y > py) == (second.y > py)) continue;
+			const double crossing = first.x + (py - first.y) *
+				(second.x - first.x) / (second.y - first.y);
+			if (crossing > px) crossings++;
+		}
+		return (crossings & 1) != 0;
+	};
+	{
+		static const int CooperativeStartTypes[NativeCooperativeStartCount] = {
+			1, 2, 3, 4, 4001, 4002, 4003, 4004
+		};
+		int canonicalRoom = -1;
+		for (int y = 0; y < H && canonicalRoom < 0; ++y)
+		{
+			for (int x = 0; x < W; ++x)
+			{
+				if (Grid[y][x].present && Grid[y][x].hasPlayerStart)
+				{
+					canonicalRoom = Grid[y][x].roomId;
+					break;
+				}
+			}
+		}
+		if (CooperativeStarts.Size() != NativeCooperativeStartCount || canonicalRoom < 0)
+		{
+			LastError = "The cooperative start proof has an incomplete native start set";
+			return false;
+		}
+		int canonicalStartThings = 0;
+		for (int slot = 0; slot < NativeCooperativeStartCount; ++slot)
+		{
+			const ProcGenCooperativeStart& start = CooperativeStarts[slot];
+			if (start.player != slot + 1 || start.thingType != CooperativeStartTypes[slot] ||
+				start.thingIndex < 0 || start.thingIndex >= (int)things.Size() ||
+				start.roomId != canonicalRoom || start.landmarkSector < 0 ||
+				start.landmarkSector >= (int)sectors.Size())
+			{
+				LastError = "The cooperative start proof has invalid slot metadata";
+				return false;
+			}
+			const BuildThing& thing = things[start.thingIndex];
+			if (thing.type != start.thingType ||
+				fabs(thing.x - start.x) > 0.001 || fabs(thing.y - start.y) > 0.001 ||
+				!HasPadReservation(start.x, start.y, CooperativeStartPadRadius) ||
+				!PointInsideSector(start.landmarkSector, start.x, start.y))
+			{
+				LastError = "A cooperative player start lacks a clear landmark pad";
+				return false;
+			}
+			if (start.thingType == 1) canonicalStartThings++;
+			for (int other = 0; other < slot; ++other)
+			{
+				const ProcGenCooperativeStart& previous = CooperativeStarts[other];
+				if (hypot(start.x - previous.x, start.y - previous.y) + 0.001 <
+					CooperativeStartMinimumSeparation)
+				{
+					LastError = "Two cooperative player starts are too close together";
+					return false;
+				}
+			}
+		}
+		if (canonicalStartThings != 1)
+		{
+			LastError = "The cooperative start proof lost the canonical P1 start";
+			return false;
+		}
+	}
 	auto LineConnectsSectors = [&](const BuildLine& line, int firstSector,
 		int secondSector) -> bool
 	{

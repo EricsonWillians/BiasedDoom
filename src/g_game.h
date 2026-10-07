@@ -73,6 +73,10 @@ void G_RecordDemo (const char* name);
 
 void G_BeginRecording (const char *startmap);
 void G_StopDemoRecording();
+// A menu-driven recorddemo request can be cancelled before the ticker begins
+// it. Once it reaches ga_recordgame, its queued mode snapshot is no longer
+// eligible for restoration.
+void G_CommitQueuedDemoRecording();
 
 void G_PlayDemo (char* name);
 void G_TimeDemo (const char* name);

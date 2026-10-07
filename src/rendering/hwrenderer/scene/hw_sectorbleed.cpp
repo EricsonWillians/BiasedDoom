@@ -32,6 +32,16 @@ static uint64_t SectorBleedHashFloat(uint64_t hash, float value)
 	return SectorBleedHashMix(hash, bits);
 }
 
+// Sector light state is game-tick driven, while a high-refresh renderer can
+// invoke this path several hundred times per second. Sampling the input at a
+// 60 Hz cadence retains responsive lighting changes without making a large
+// map pay an O(sectors) hash walk for every display refresh.
+static constexpr uint64_t SectorBleedHashCheckIntervalMS = 16;
+// A full rebuild traces the map at every bleed texel and uploads a texture.
+// Keep that heavier operation at the established 10 Hz ceiling even if a
+// flickering sector changes the input hash every game tic.
+static constexpr uint64_t SectorBleedRebuildIntervalMS = 100;
+
 static double PointLineDistance(const DVector2 &point, const line_t *line)
 {
 	const DVector2 a = line->v1->fPos();
@@ -201,6 +211,17 @@ void HW_UpdateSectorLightBleed(FLevelLocals *Level, ELightMode lightmode)
 		return;
 
 	const float distance = clamp(*bd_sectorlight_distance, 16.0f, 512.0f);
+	const uint64_t now = I_msTimeFS();
+	// Do the validation throttle before walking every sector to construct the
+	// input hash. The old ordering still paid that O(sectors) cost on every
+	// display refresh, even though a large light-bleed upload is rate-limited
+	// below. New maps always validate immediately; existing maps are sampled at
+	// most once per 16 ms, which bounds visual change detection to a 60 Hz
+	// cadence while removing redundant work at high refresh rates.
+	if (Level->SectorBleedData.Size() != 0 && Level->SectorBleedLastCheck != 0 &&
+		now - Level->SectorBleedLastCheck < SectorBleedHashCheckIntervalMS)
+		return;
+
 	uint64_t hash = 1469598103934665603ULL;
 	hash = SectorBleedHashMix(hash, uint64_t(lightmode));
 	hash = SectorBleedHashFloat(hash, distance);
@@ -214,22 +235,24 @@ void HW_UpdateSectorLightBleed(FLevelLocals *Level, ELightMode lightmode)
 		// invalidate the map as well.
 		hash = SectorBleedHashMix(hash, uint64_t(IsSkySector(&sector)));
 	}
+	Level->SectorBleedLastCheck = now;
 
 	if (hash == Level->SectorBleedHash && Level->SectorBleedData.Size() != 0)
 		return;
 
-	// Rate-limit rebuilds: flickering sector light can change the hash every
-	// frame, and rebuilding/uploading the map each time is not free. While a
-	// valid map exists and the last rebuild is recent, keep serving it; the
-	// stale hash keeps this check live so the refresh lands once the window
-	// elapsed. First build (no timestamp) or empty data always builds now.
-	const uint64_t now = I_msTimeFS();
+	// The inexpensive hash may discover a new light state at 60 Hz, but keep
+	// serving the previous valid map until the expensive CPU rebuild/upload is
+	// eligible. The hash deliberately remains stale in that interval so the
+	// newest state is rebuilt as soon as the throttle expires.
 	if (Level->SectorBleedData.Size() != 0 && Level->SectorBleedLastRebuild != 0 &&
-		now - Level->SectorBleedLastRebuild < 100)
+		now - Level->SectorBleedLastRebuild < SectorBleedRebuildIntervalMS)
+	{
 		return;
+	}
 
 	BuildSectorBleedMap(Level, lightmode, distance);
 	Level->SectorBleedHash = hash;
+	Level->SectorBleedLastCheck = now;
 	Level->SectorBleedLastRebuild = now;
 	screen->InitSectorBleed(Level->SectorBleedWidth, Level->SectorBleedHeight, Level->SectorBleedData);
 }

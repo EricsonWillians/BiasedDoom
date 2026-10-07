@@ -806,6 +806,7 @@ OptionMenu "ProceduralMapMenu"
 	Option "Outdoor Spaces", "procgen_outdoors", "ProcGenOutdoors"
 	StaticText "1 = compact, 160 = enormous (very slow)", 1
 	StaticText " "
+	StaticText "Configure co-op companions in Options.", 1
 	Command "GENERATE & PLAY", "procmap", 1, 1
 	Command "NEW RANDOM MAP", "procmap random", 1, 1
 	StaticText " "
@@ -880,6 +881,7 @@ OptionMenu "GameplayMenu" protected
 	Submenu "$OPTMNU_COMPATIBILITY",	"CompatibilityOptions"
 	Submenu "$OPTMNU_AUTOMAP",			"AutomapOptions"
 	Submenu "$OPTMNU_HUD",				"HUDOptions"
+	Submenu "Companion Bots",			"CompanionBotsMenu"
 }
 
 //-------------------------------------------------------------------------------------------
@@ -895,7 +897,83 @@ OptionMenu "MultiplayerMenu" protected
 	Submenu "$OPTMNU_PLAYER",			"NewPlayerMenu"
 	Submenu "$GMPLYMNU_DEATHMATCH",		"DeathmatchOptions"
 	Submenu "$GMPLYMNU_COOPERATIVE",	"CoopOptions"
+	Submenu "Companion Bots",			"CompanionBotsMenu"
 	Submenu "$OPTMNU_NETWORK",			"NetworkOptions"
+}
+
+//-------------------------------------------------------------------------------------------
+//
+// Companion bots
+//
+//-------------------------------------------------------------------------------------------
+
+OptionMenu "CompanionBotsMenu" protected
+{
+	Title "COMPANION BOTS"
+	Class "CompanionBotsMenu"
+}
+
+OptionMenu "CompanionDraftMenu" protected
+{
+	Title "ADD COMPANION"
+	StaticText " "
+	Class "CompanionDraftMenu"
+}
+
+OptionMenu "CompanionRosterMenu" protected
+{
+	Title "COMPANION ROSTER"
+	StaticText " "
+	Class "CompanionRosterMenu"
+}
+
+OptionMenu "CompanionProfile1Menu" protected
+{
+	Title "COMPANION 1"
+	StaticText " "
+	Class "CompanionProfile1Menu"
+}
+
+OptionMenu "CompanionProfile2Menu" protected
+{
+	Title "COMPANION 2"
+	StaticText " "
+	Class "CompanionProfile2Menu"
+}
+
+OptionMenu "CompanionProfile3Menu" protected
+{
+	Title "COMPANION 3"
+	StaticText " "
+	Class "CompanionProfile3Menu"
+}
+
+OptionMenu "CompanionProfile4Menu" protected
+{
+	Title "COMPANION 4"
+	StaticText " "
+	Class "CompanionProfile4Menu"
+}
+
+OptionMenu "CompanionProfile5Menu" protected
+{
+	Title "COMPANION 5"
+	StaticText " "
+	Class "CompanionProfile5Menu"
+}
+
+OptionMenu "CompanionProfile6Menu" protected
+{
+	Title "COMPANION 6"
+	StaticText " "
+	Class "CompanionProfile6Menu"
+}
+
+OptionMenu "CompanionProfile7Menu" protected
+{
+	Title "COMPANION 7"
+	StaticText " "
+	Class "CompanionProfile7Menu"
 }
 
 //-------------------------------------------------------------------------------------------
@@ -936,11 +1014,21 @@ OptionValue "VideoCaptureFrameRates"
 	240, "240 FPS"
 }
 
+OptionValue "VideoCapturePngCompression"
+{
+	0, "Fastest lossless (largest files)"
+	1, "Fast lossless (recommended)"
+	5, "Balanced"
+	9, "Smallest lossless (slowest)"
+}
+
 OptionMenu "CaptureOptions" protected
 {
 	Title "RECORDING & EXPORT"
 	StaticText "Lossless final frames at the active output resolution.", 1
-	StaticText "Audio is not captured; PNG is the recommended master format.", 1
+	StaticText "48 kHz game audio: WAV sidecar for PNG, PCM track in AVI.", 1
+	StaticText "PNG keeps exact timing; AVI holds the latest completed frame at its selected rate.", 1
+	StaticText "Slow storage skips frames; raw AVI takes stop before filling a disk.", 1
 	StaticText " "
 	TextField "Default export folder", "capture_export_dir"
 	Command "Paste export folder", "pastecapturepath"
@@ -951,6 +1039,7 @@ OptionMenu "CaptureOptions" protected
 	TextField "Video base name", "vid_record_name"
 	Option "Video format", "vid_record_format", "VideoCaptureFormats"
 	Option "Video frame rate", "vid_record_fps", "VideoCaptureFrameRates"
+	Option "PNG compression", "vid_record_png_level", "VideoCapturePngCompression"
 	Command "Start video recording", "startvideorecording"
 	Command "Stop video recording", "stopvideorecording"
 	Submenu "Configure recording shortcuts", "CaptureControlsMenu"
@@ -966,9 +1055,13 @@ OptionMenu "CaptureControlsMenu" protected
 {
 	Title "RECORDING SHORTCUTS"
 	StaticText "Select a row, then press the desired key or button.", 1
+	StaticText "Fresh installs use F12; preserved old F12 actions use double-tap F12.", 1
 	StaticText " "
 	Control "Toggle video recording", "togglevideorecording"
 	Control "Toggle demo recording", "toggledemorecording"
+	StaticText " "
+	Command "Make F12 toggle video recording", "bind F12 togglevideorecording"
+	Command "Make double-tap F12 toggle video recording", "doublebind F12 togglevideorecording"
 }
 
 //-------------------------------------------------------------------------------------------

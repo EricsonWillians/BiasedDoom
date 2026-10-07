@@ -36,7 +36,11 @@ public:
 
 	void BlitSceneToPostprocess();
 	void BlitCurrentToImage(VkTextureImage *image, VkImageLayout finallayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-	void DrawPresentTexture(const IntRect &box, bool applyGamma, bool screenshot);
+	// A continuous capture can render the final-present pass directly into a
+	// caller-owned RGBA8 texture.  That avoids the old R16F pipeline hop and
+	// full-image blit before copying the pixels to a staging buffer.  The normal
+	// live-present and one-shot screenshot paths leave `output` null.
+	void DrawPresentTexture(const IntRect &box, bool applyGamma, bool screenshot, PPTexture *output = nullptr);
 
 	int GetCurrentPipelineImage() const { return mCurrentPipelineImage; }
 	void SetCurrentPipelineImage(int image) { mCurrentPipelineImage = image; }

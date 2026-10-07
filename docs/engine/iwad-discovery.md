@@ -32,6 +32,27 @@ An explicit path still works and always takes precedence:
 
 `-find-iwads` and `--find-iwads` are aliases for `-findiwads`.
 
+## Game Support And Store Discovery
+
+The built-in IWAD catalog decides whether a candidate is usable; store probing
+only supplies likely directories to inspect. In addition to the commercial
+Doom, Heretic, Hexen, and Strife families, the bundled catalog recognizes
+supported variants such as BFG/Unity/KEX rereleases, Final Doom, Deathkings
+(with its required Hexen base data), Freedoom, Chex, Hacx, Harmony, and several
+standalone compatible games. The picker and `-findiwads` report the actual
+recognized title, so they are more reliable than guessing from a filename.
+
+An explicit `-iwad` path remains useful for a supported game stored outside a
+known platform layout. It does not make an arbitrary PWAD an IWAD: archive
+contents are still validated against the catalog.
+
+Game support and procedural generation have deliberately different scopes.
+Normal maps retain their game's native actor, inventory, key, and action rules;
+the current procedural generator is a Doom/Ultimate Doom and Doom II feature
+because those other games require their own generation grammar. See
+[procedural map generation](procedural-map-generation.md) for that separate
+contract.
+
 ## What is searched
 
 The engine combines these sources in deterministic order:

@@ -291,6 +291,11 @@ public:
   int Width;
   int Height;
   PixelFormat Format;
+  // Most dynamic PP textures are only sampled and rendered to.  A small set
+  // of backend-owned targets (continuous final-frame capture) also need to be
+  // copied out by the GPU, so request that usage explicitly instead of making
+  // every postprocess allocation depend on TRANSFER_SRC support.
+  bool TransferSource = false;
   std::shared_ptr<void> Data;
 
   std::unique_ptr<PPTextureBackend> Backend;

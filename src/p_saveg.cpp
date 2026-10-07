@@ -970,6 +970,20 @@ void FLevelLocals::Serialize(FSerializer &arc, bool hubload)
 	}
 
 	arc("multiplayer", multiplayer);
+	// This is intentionally separate from multiplayer: a local companion
+	// roster may have promoted a normally solo map to co-op. Preserve the
+	// ownership bit so dismissing the last companion after loading a save
+	// returns only that automatic mode to single-player.
+	bool companionMultiplayerOwned = false;
+	if (arc.isWriting())
+	{
+		companionMultiplayerOwned = BotInfo.HasCompanionForcedMultiplayer();
+	}
+	arc("companionmultiplayerowned", companionMultiplayerOwned);
+	if (arc.isReading())
+	{
+		BotInfo.SetCompanionForcedMultiplayer(companionMultiplayerOwned);
+	}
 
 	arc("flags", flags)
 		("flags2", flags2)

@@ -584,7 +584,272 @@ void D_UserInfoChanged (FBaseCVar *cvar)
 	Net_WriteString (foo);
 }
 
-static const char *SetServerVar (char *name, ECVarType type, TArrayView<uint8_t>& stream, bool singlebit)
+static bool IsCompanionProfileServerCVar(const char *name, const char *prefix)
+{
+	const size_t prefixLength = strlen(prefix);
+	return strnicmp(name, prefix, prefixLength) == 0 &&
+		name[prefixLength] >= '1' && name[prefixLength] <= '7' &&
+		name[prefixLength + 1] == '\0';
+}
+
+// Companion composition is host-owned even when another player is allowed to
+// control ordinary server settings. Keep this name check deliberately exact:
+// it is a narrow exception to the settings-controller model, not a change to
+// generic server-CVar delegation.
+static bool IsCompanionServerCVar(const char *name)
+{
+	return stricmp(name, "bot_companion_enabled_mask") == 0 ||
+		stricmp(name, "bot_companion_respawn") == 0 ||
+		IsCompanionProfileServerCVar(name, "bot_companion_name") ||
+		IsCompanionProfileServerCVar(name, "bot_companion_skin") ||
+		IsCompanionProfileServerCVar(name, "bot_companion_style") ||
+		IsCompanionProfileServerCVar(name, "bot_companion_skill");
+}
+
+static int ApplyingServerInfoChangeDepth = 0;
+static int ApplyingCompanionSnapshotDepth = 0;
+
+bool D_IsApplyingServerInfoChange()
+{
+	return ApplyingServerInfoChangeDepth > 0;
+}
+
+// Companion profile edits become visible to the host immediately so the menu
+// can safely resolve a draft and the reconciler can act on its chosen roster.
+// Ordinary SERVERINFO writes are intentionally best-effort field writes, but
+// doing that for an immediately-applied companion setting could leave the
+// host changed while a crowded tic drops the record for every peer. Build the
+// complete records first and commit them as one event instead.
+static bool GetCompanionServerInfoChangeRecordLength(FBaseCVar *cvar, UCVarValue value,
+	ECVarType type, size_t &recordLength)
+{
+	if (cvar == nullptr || !IsCompanionServerCVar(cvar->GetName()))
+	{
+		return false;
+	}
+	const char *name = cvar->GetName();
+	const size_t nameLength = strlen(name);
+	const char *stringValue = type == CVAR_String && value.String != nullptr ? value.String : "";
+	if (nameLength == 0 || nameLength > 0x3f)
+	{
+		return false;
+	}
+
+	size_t valueLength = 0;
+	switch (type)
+	{
+	case CVAR_Bool:	valueLength = 1; break;
+	case CVAR_Int:		valueLength = 4; break;
+	case CVAR_Float:	valueLength = 4; break;
+	case CVAR_String:	valueLength = strlen(stringValue) + 1; break;
+	default:			return false;
+	}
+
+	recordLength = 1 + 1 + nameLength + valueLength;
+	return recordLength <= NetAtomicEventMaxSize;
+}
+
+static void WriteCompanionServerInfoChangeRecord(TArrayView<uint8_t> &stream, FBaseCVar *cvar,
+	UCVarValue value, ECVarType type)
+{
+	const char *name = cvar->GetName();
+	const size_t nameLength = strlen(name);
+	const char *stringValue = type == CVAR_String && value.String != nullptr ? value.String : "";
+	WriteInt8(DEM_SINFCHANGED, stream);
+	WriteInt8((uint8_t)(nameLength | (type << 6)), stream);
+	for (size_t i = 0; i < nameLength; ++i)
+	{
+		WriteInt8((uint8_t)name[i], stream);
+	}
+	switch (type)
+	{
+	case CVAR_Bool:	WriteInt8(value.Bool, stream); break;
+	case CVAR_Int:		WriteInt32(value.Int, stream); break;
+	case CVAR_Float:	WriteFloat(value.Float, stream); break;
+	case CVAR_String:	WriteString(stringValue, stream); break;
+	default:			break;
+	}
+}
+
+// `queue` is intentionally separate from applying the local values: this
+// helper also builds a snapshot for host migration, where the event bytes are
+// carried by the exit packet rather than the current-tic stream.
+static bool BuildCompanionServerInfoChanges(const FCompanionServerInfoChange *changes, unsigned count,
+	TArray<uint8_t> &event)
+{
+	if (changes == nullptr || count == 0)
+	{
+		return false;
+	}
+
+	size_t eventLength = 0;
+	for (unsigned i = 0; i < count; ++i)
+	{
+		size_t recordLength = 0;
+		if (!GetCompanionServerInfoChangeRecordLength(changes[i].CVar, changes[i].Value,
+			changes[i].Type, recordLength) || recordLength > NetAtomicEventMaxSize - eventLength)
+		{
+			return false;
+		}
+		eventLength += recordLength;
+	}
+
+	event.Resize((unsigned)eventLength);
+	TArrayView<uint8_t> stream(event.Data(), event.Size());
+	for (unsigned i = 0; i < count; ++i)
+	{
+		WriteCompanionServerInfoChangeRecord(stream, changes[i].CVar, changes[i].Value, changes[i].Type);
+	}
+	return true;
+}
+
+bool D_ApplyCompanionServerInfoChangesAtomically(const FCompanionServerInfoChange *changes, unsigned count)
+{
+	if (changes == nullptr || count == 0)
+	{
+		return count == 0;
+	}
+
+	// Companion composition stays with the host even where a different player
+	// has ordinary settings-controller privileges. This API bypasses the usual
+	// CVar callback path, so it repeats that authority check itself.
+	if (netgame && (!players[consoleplayer].settings_controller || consoleplayer != Net_Arbitrator))
+	{
+		return false;
+	}
+
+	TArray<uint8_t> event;
+	if (!BuildCompanionServerInfoChanges(changes, count, event))
+	{
+		return false;
+	}
+
+	const bool replicate = gamestate != GS_STARTUP && !demoplayback && !savegamerestore;
+	if (replicate && !Net_WriteEventAtomic(event.Data(), (int)event.Size()))
+	{
+		return false;
+	}
+
+	for (unsigned i = 0; i < count; ++i)
+	{
+		changes[i].CVar->ForceSet(changes[i].Value, changes[i].Type);
+	}
+	return true;
+}
+
+bool D_BuildCompanionServerInfoSnapshot(TArray<uint8_t> &snapshot)
+{
+	// Keep this list explicit and ordered. It gives a host handoff an exact
+	// roster snapshot without serializing unrelated SERVERINFO state, and it
+	// makes the bytes stable enough to diagnose a migration capture.
+	FCompanionServerInfoChange changes[2 + 4 * 7];
+	unsigned count = 0;
+	auto add = [&](const char *name)
+	{
+		FBaseCVar *cvar = FindCVar(name, nullptr);
+		if (cvar == nullptr || !IsCompanionServerCVar(name))
+		{
+			return false;
+		}
+		ECVarType type;
+		changes[count++] = { cvar, cvar->GetFavoriteRep(&type), type };
+		return true;
+	};
+
+	if (!add("bot_companion_enabled_mask") || !add("bot_companion_respawn"))
+	{
+		return false;
+	}
+	for (int profile = 1; profile <= 7; ++profile)
+	{
+		FString name;
+		name.Format("bot_companion_name%d", profile);
+		if (!add(name.GetChars())) return false;
+		name.Format("bot_companion_skin%d", profile);
+		if (!add(name.GetChars())) return false;
+		name.Format("bot_companion_style%d", profile);
+		if (!add(name.GetChars())) return false;
+		name.Format("bot_companion_skill%d", profile);
+		if (!add(name.GetChars())) return false;
+	}
+	return BuildCompanionServerInfoChanges(changes, count, snapshot);
+}
+
+static bool IsValidCompanionServerInfoSnapshot(TArrayView<uint8_t> snapshot)
+{
+	while (snapshot.Size() > 0)
+	{
+		if (snapshot.Size() < 2 || snapshot[0] != DEM_SINFCHANGED)
+		{
+			return false;
+		}
+		const uint8_t descriptor = snapshot[1];
+		const int type = descriptor >> 6;
+		const size_t nameLength = descriptor & 0x3f;
+		const size_t headerLength = 2 + nameLength;
+		if (nameLength == 0 || headerLength > snapshot.Size())
+		{
+			return false;
+		}
+
+		char name[64];
+		memcpy(name, snapshot.Data() + 2, nameLength);
+		name[nameLength] = '\0';
+		if (!IsCompanionServerCVar(name))
+		{
+			return false;
+		}
+
+		size_t recordLength = headerLength;
+		switch (type)
+		{
+		case CVAR_Bool:
+			recordLength += 1;
+			break;
+		case CVAR_Int:
+		case CVAR_Float:
+			recordLength += 4;
+			break;
+		case CVAR_String:
+		{
+			const size_t valueLength = snapshot.Size() - headerLength;
+			if (memchr(snapshot.Data() + headerLength, '\0', valueLength) == nullptr)
+			{
+				return false;
+			}
+			recordLength += strlen((const char *)snapshot.Data() + headerLength) + 1;
+			break;
+		}
+		default:
+			return false;
+		}
+		if (recordLength > snapshot.Size())
+		{
+			return false;
+		}
+		snapshot = TArrayView<uint8_t>(snapshot.Data() + recordLength, snapshot.Size() - recordLength);
+	}
+	return true;
+}
+
+bool D_ApplyCompanionServerInfoSnapshot(TArrayView<uint8_t> &snapshot, int sender)
+{
+	if (!IsValidCompanionServerInfoSnapshot(snapshot))
+	{
+		return false;
+	}
+	++ApplyingCompanionSnapshotDepth;
+	while (snapshot.Size() > 0)
+	{
+		ReadInt8(snapshot);
+		D_DoServerInfoChange(snapshot, false, sender);
+	}
+	--ApplyingCompanionSnapshotDepth;
+	return true;
+}
+
+static const char *SetServerVar (char *name, ECVarType type, TArrayView<uint8_t>& stream,
+	bool singlebit, bool apply)
 {
 	FBaseCVar *var = FindCVar (name, NULL);
 	// Must be zero-initialized: when the cvar does not resolve, garbage type
@@ -629,9 +894,11 @@ static const char *SetServerVar (char *name, ECVarType type, TArrayView<uint8_t>
 		}
 	}
 
-	if (var)
+	if (var && apply)
 	{
+		++ApplyingServerInfoChangeDepth;
 		var->ForceSet (value, type);
+		--ApplyingServerInfoChangeDepth;
 	}
 
 	if (type == CVAR_String)
@@ -653,7 +920,7 @@ static const char *SetServerVar (char *name, ECVarType type, TArrayView<uint8_t>
 	}
 #endif
 
-	if (var)
+	if (var && apply)
 	{
 		value = var->GetGenericRep (CVAR_String);
 		return value.String;
@@ -668,10 +935,28 @@ bool D_SendServerInfoChange (FBaseCVar *cvar, UCVarValue value, ECVarType type)
 {
 	if (gamestate != GS_STARTUP && !demoplayback && !savegamerestore)
 	{
-		if (netgame && !players[consoleplayer].settings_controller)
+		const bool companionSetting = IsCompanionServerCVar(cvar->GetName());
+		if (netgame && (!players[consoleplayer].settings_controller ||
+			(companionSetting && consoleplayer != Net_Arbitrator)))
 		{
-			Printf("Only setting controllers can change server CVAR %s\n", cvar->GetName());
+			Printf(companionSetting ? "Only the host can change companion setting %s\n" :
+				"Only setting controllers can change server CVAR %s\n", cvar->GetName());
 			cvar->MarkSafe();
+			return true;
+		}
+		// Companion profiles are immediately consulted by menu callbacks and the
+		// host reconciler. Unlike ordinary SERVERINFO writes, do not mutate the
+		// host until a whole replicated record has been accepted: a partial event
+		// in a crowded tic would otherwise desynchronize the squad.
+		if (companionSetting)
+		{
+			const FCompanionServerInfoChange change = { cvar, value, type };
+			if (!D_ApplyCompanionServerInfoChangesAtomically(&change, 1))
+			{
+				Printf(TEXTCOLOR_YELLOW "Companion setting %s could not be queued; try again.\n", cvar->GetName());
+				cvar->MarkSafe();
+				return true;
+			}
 			return true;
 		}
 		size_t namelen;
@@ -718,7 +1003,7 @@ bool D_SendServerFlagChange (FBaseCVar *cvar, int bitnum, bool set, bool silent)
 	return false;
 }
 
-void D_DoServerInfoChange (TArrayView<uint8_t>& stream, bool singlebit)
+void D_DoServerInfoChange (TArrayView<uint8_t>& stream, bool singlebit, int sender)
 {
 	const char *value;
 	char name[64];
@@ -753,7 +1038,11 @@ void D_DoServerInfoChange (TArrayView<uint8_t>& stream, bool singlebit)
 	ReadBytes(dst, stream);
 	name[len] = 0;
 
-	if ( (value = SetServerVar (name, (ECVarType)type, stream, singlebit)) && netgame)
+	// Always consume the full typed payload, even for an unauthorized companion
+	// change, so one forged network event cannot desynchronize later commands.
+	const bool apply = !netgame || sender == Net_Arbitrator || !IsCompanionServerCVar(name);
+	if ( (value = SetServerVar (name, (ECVarType)type, stream, singlebit, apply)) && netgame &&
+		ApplyingCompanionSnapshotDepth == 0)
 	{
 		Printf ("%s changed to %s\n", name, value);
 	}

@@ -134,8 +134,10 @@ const float png_gamma = 0;
 //
 //==========================================================================
 
-bool M_CreatePNG (FileWriter *file, const uint8_t *buffer, const PalEntry *palette,
-				  ESSType color_type, int width, int height, int pitch, float gamma)
+bool M_CreatePNGWithEncoder(FileWriter *file, const uint8_t *buffer, const PalEntry *palette,
+				  ESSType color_type, int width, int height, int pitch, float gamma,
+				  int compressionLevel, float configuredGamma, bool useConfiguredGamma,
+				  FPNGEncoder *encoder)
 {
 	uint8_t work[8 +				// signature
 			  12+2*4+5 +		// IHDR
@@ -160,7 +162,11 @@ bool M_CreatePNG (FileWriter *file, const uint8_t *buffer, const PalEntry *palet
 	MakeChunk (ihdr, MAKE_ID('I','H','D','R'), 2*4+5);
 
 	// Assume a display exponent of 2.2 (100000/2.2 ~= 45454.5)
-	*gama = BigLong (int (45454.5f * (png_gamma == 0.f ? gamma : png_gamma)));
+	// Background encoders snapshot both settings at capture start, so they do
+	// not read mutable CVars off the engine thread. Ordinary screenshots retain
+	// the established live-CVar behavior through the default arguments.
+	const float outputGamma = useConfiguredGamma ? configuredGamma : png_gamma;
+	*gama = BigLong (int (45454.5f * (outputGamma == 0.f ? gamma : outputGamma)));
 	MakeChunk (gama, MAKE_ID('g','A','M','A'), 4);
 
 	if (color_type == SS_PAL)
@@ -177,7 +183,17 @@ bool M_CreatePNG (FileWriter *file, const uint8_t *buffer, const PalEntry *palet
 	if (file->Write (work, work_len) != work_len)
 		return false;
 
-	return M_SaveBitmap (buffer, color_type, width, height, pitch, file);
+	return encoder != nullptr ?
+		encoder->SaveBitmap(buffer, color_type, width, height, pitch, file, compressionLevel) :
+		M_SaveBitmap(buffer, color_type, width, height, pitch, file, compressionLevel);
+}
+
+bool M_CreatePNG(FileWriter *file, const uint8_t *buffer, const PalEntry *palette,
+	ESSType color_type, int width, int height, int pitch, float gamma,
+	int compressionLevel, float configuredGamma, bool useConfiguredGamma)
+{
+	return M_CreatePNGWithEncoder(file, buffer, palette, color_type, width, height, pitch, gamma,
+		compressionLevel, configuredGamma, useConfiguredGamma, nullptr);
 }
 
 //==========================================================================
@@ -905,16 +921,100 @@ static int SelectFilter(Byte **row, Byte *prior, int width)
 
 //==========================================================================
 //
-// M_SaveBitmap
+// FPNGEncoder
 //
-// Given a bitmap, creates one or more IDAT chunks in the given file.
+// The old M_SaveBitmap path constructed and destroyed miniz's state and the
+// small row/IDAT buffers for every still image. That is fine for screenshots,
+// but sustained PNG recording turns it into avoidable allocator traffic. A
+// recorder owns one encoder on its writer thread, so this state is never
+// shared across threads and deflateReset can safely start each PNG stream.
+//
+//==========================================================================
+
+struct FPNGEncoder::FState
+{
+	z_stream Stream = {};
+	TArray<Byte> RowStorage;
+	TArray<Byte> Output;
+	int CompressionLevel = -1;
+	bool Initialized = false;
+
+	~FState()
+	{
+		if (Initialized)
+		{
+			deflateEnd(&Stream);
+		}
+	}
+};
+
+FPNGEncoder::FPNGEncoder() = default;
+
+FPNGEncoder::~FPNGEncoder()
+{
+	Reset();
+}
+
+void FPNGEncoder::Reset()
+{
+	delete State;
+	State = nullptr;
+}
+
+//==========================================================================
+//
+// FPNGEncoder::SaveBitmap
+//
+// Given a bitmap, creates one or more IDAT chunks in the supplied file.
 // Returns true on success.
 //
 //==========================================================================
 
-bool M_SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height, int pitch, FileWriter *file)
+bool FPNGEncoder::SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height, int pitch,
+	FileWriter *file, int compressionLevel)
 {
-	TArray<Byte> temprow_storage;
+	if (compressionLevel < 0 || compressionLevel > 9)
+	{
+		compressionLevel = png_level;
+	}
+	if (State == nullptr)
+	{
+		State = new FState;
+	}
+	FState &state = *State;
+	if (state.Initialized && state.CompressionLevel != compressionLevel)
+	{
+		deflateEnd(&state.Stream);
+		state.Stream = {};
+		state.Initialized = false;
+	}
+
+	int err;
+	if (!state.Initialized)
+	{
+		state.Stream.next_in = Z_NULL;
+		state.Stream.avail_in = 0;
+		state.Stream.zalloc = Z_NULL;
+		state.Stream.zfree = Z_NULL;
+		err = deflateInit(&state.Stream, compressionLevel);
+		if (err != Z_OK)
+		{
+			return false;
+		}
+		state.Initialized = true;
+		state.CompressionLevel = compressionLevel;
+	}
+	else
+	{
+		err = deflateReset(&state.Stream);
+		if (err != Z_OK)
+		{
+			deflateEnd(&state.Stream);
+			state.Stream = {};
+			state.Initialized = false;
+			return false;
+		}
+	}
 
 #if USE_FILTER_HEURISTIC
 	static const unsigned temprow_count = 5;
@@ -926,40 +1026,30 @@ bool M_SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height
 #endif
 
 	const unsigned temprow_size = 1 + width * 3;
-	temprow_storage.Resize(temprow_size * temprow_count);
+	state.RowStorage.Resize(temprow_size * temprow_count);
 
 	Byte* temprow[temprow_count];
 
 	for (unsigned i = 0; i < temprow_count; ++i)
 	{
-		temprow[i] = &temprow_storage[temprow_size * i];
+		temprow[i] = &state.RowStorage[temprow_size * i];
 	}
 
-	TArray<Byte> buffer(PNG_WRITE_SIZE, true);
-	z_stream stream;
-	int err;
-	int y;
+	state.Output.Resize(PNG_WRITE_SIZE);
+	TArray<Byte> &buffer = state.Output;
+	z_stream &stream = state.Stream;
+	int y = height;
 
 	stream.next_in = Z_NULL;
 	stream.avail_in = 0;
-	stream.zalloc = Z_NULL;
-	stream.zfree = Z_NULL;
-	err = deflateInit (&stream, png_level);
-
-	if (err != Z_OK)
-	{
-		return false;
-	}
-
-	y = height;
 	stream.next_out = buffer.data();
 
-	if(buffer.size() > UINT_MAX)
+	if (buffer.size() > UINT_MAX)
 	{
 		I_Error("save png buffer too large");
 	}
 
-	stream.avail_out = (unsigned int) buffer.size();
+	stream.avail_out = (unsigned int)buffer.size();
 
 	temprow[0][0] = 0;
 #if USE_FILTER_HEURISTIC
@@ -988,7 +1078,7 @@ bool M_SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height
 			break;
 
 		case SS_RGB:
-			memcpy(&temprow[0][1], from, width*3);
+			memcpy(&temprow[0][1], from, width * 3);
 			stream.next_in = temprow[SelectFilter(temprow, prior, width)];
 			stream.avail_in = width * 3 + 1;
 			break;
@@ -996,9 +1086,23 @@ bool M_SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height
 		case SS_BGRA:
 			for (int x = 0; x < width; ++x)
 			{
-				temprow[0][x*3 + 1] = from[x*4 + 2];
-				temprow[0][x*3 + 2] = from[x*4 + 1];
-				temprow[0][x*3 + 3] = from[x*4];
+				temprow[0][x * 3 + 1] = from[x * 4 + 2];
+				temprow[0][x * 3 + 2] = from[x * 4 + 1];
+				temprow[0][x * 3 + 3] = from[x * 4];
+			}
+			stream.next_in = temprow[SelectFilter(temprow, prior, width)];
+			stream.avail_in = width * 3 + 1;
+			break;
+
+		case SS_RGBA:
+			// Video capture retains the native GPU RGBA rows until this
+			// background encoder owns them. Drop alpha while preserving PNG's
+			// RGB channel order; no render-thread swizzle/copy is required.
+			for (int x = 0; x < width; ++x)
+			{
+				temprow[0][x * 3 + 1] = from[x * 4];
+				temprow[0][x * 3 + 2] = from[x * 4 + 1];
+				temprow[0][x * 3 + 3] = from[x * 4 + 2];
 			}
 			stream.next_in = temprow[SelectFilter(temprow, prior, width)];
 			stream.avail_in = width * 3 + 1;
@@ -1008,40 +1112,47 @@ bool M_SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height
 		if (color_type != SS_PAL)
 		{
 			// Save this row for filter calculations on the next row.
-			memcpy (prior, &temprow[0][1], stream.avail_in - 1);
+			memcpy(prior, &temprow[0][1], stream.avail_in - 1);
 		}
 #endif
 
 		from += pitch;
 
-		err = deflate (&stream, (y == 0) ? Z_FINISH : 0);
+		err = deflate(&stream, (y == 0) ? Z_FINISH : 0);
 		if (err != Z_OK)
 		{
 			break;
 		}
 		while (stream.avail_out == 0)
 		{
-
-			if(buffer.size() > INT_MAX)
+			if (buffer.size() > INT_MAX)
 			{
 				I_Error("save png buffer too large");
 			}
-			int sz = (int) buffer.size();
-			if (!WriteIDAT (file, buffer.data(), sz))
+			const int sz = (int)buffer.size();
+			if (!WriteIDAT(file, buffer.data(), sz))
 			{
+				// Keep the allocation for the next frame, but reset the stream so a
+				// failed output never contaminates a later PNG's zlib stream.
+				if (deflateReset(&stream) != Z_OK)
+				{
+					deflateEnd(&stream);
+					state.Stream = {};
+					state.Initialized = false;
+				}
 				return false;
 			}
 			stream.next_out = buffer.data();
 
-			if(buffer.size() > UINT_MAX)
+			if (buffer.size() > UINT_MAX)
 			{
 				I_Error("save png buffer too large");
 			}
 
-			stream.avail_out = (unsigned int) buffer.size();
+			stream.avail_out = (unsigned int)buffer.size();
 			if (stream.avail_in != 0)
 			{
-				err = deflate (&stream, (y == 0) ? Z_FINISH : 0);
+				err = deflate(&stream, (y == 0) ? Z_FINISH : 0);
 				if (err != Z_OK)
 				{
 					break;
@@ -1052,48 +1163,74 @@ bool M_SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height
 
 	while (err == Z_OK)
 	{
-		err = deflate (&stream, Z_FINISH);
+		err = deflate(&stream, Z_FINISH);
 		if (err != Z_OK)
 		{
 			break;
 		}
 		if (stream.avail_out == 0)
 		{
-			if(buffer.size() > INT_MAX)
+			if (buffer.size() > INT_MAX)
 			{
 				I_Error("save png buffer too large");
 			}
-			int sz = (int) buffer.size();
-			if (!WriteIDAT (file, buffer.data(), sz))
+			const int sz = (int)buffer.size();
+			if (!WriteIDAT(file, buffer.data(), sz))
 			{
+				if (deflateReset(&stream) != Z_OK)
+				{
+					deflateEnd(&stream);
+					state.Stream = {};
+					state.Initialized = false;
+				}
 				return false;
 			}
 			stream.next_out = buffer.data();
 
-			if(buffer.size() > UINT_MAX)
+			if (buffer.size() > UINT_MAX)
 			{
 				I_Error("save png buffer too large");
 			}
-			
-			stream.avail_out = (unsigned int) buffer.size();
+
+			stream.avail_out = (unsigned int)buffer.size();
 		}
 	}
 
-	deflateEnd (&stream);
-
 	if (err != Z_STREAM_END)
 	{
+		if (deflateReset(&stream) != Z_OK)
+		{
+			deflateEnd(&stream);
+			state.Stream = {};
+			state.Initialized = false;
+		}
 		return false;
 	}
 
-
-	if((buffer.size() - stream.avail_out) > INT_MAX)
+	if ((buffer.size() - stream.avail_out) > INT_MAX)
 	{
 		I_Error("save png buffer too large");
 	}
-	int sz = (int) (buffer.size() - stream.avail_out);
+	const int sz = (int)(buffer.size() - stream.avail_out);
 
-	return WriteIDAT (file, buffer.data(), sz);
+	return WriteIDAT(file, buffer.data(), sz);
+}
+
+//==========================================================================
+//
+// M_SaveBitmap
+//
+// One-shot callers retain the established API. The short-lived encoder makes
+// this exactly the old allocation lifetime, while video recording supplies a
+// persistent encoder through M_CreatePNG.
+//
+//==========================================================================
+
+bool M_SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height, int pitch,
+	FileWriter *file, int compressionLevel)
+{
+	FPNGEncoder encoder;
+	return encoder.SaveBitmap(from, color_type, width, height, pitch, file, compressionLevel);
 }
 
 //==========================================================================

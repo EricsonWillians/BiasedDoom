@@ -7,9 +7,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "i_sound.h"
 #include "s_soundinternal.h"
+#include "video_capture_audio.h"
 
 #ifndef NO_OPENAL
 
@@ -161,6 +163,10 @@ private:
 
 	void LoadReverb(const ReverbContainer *env);
 	void PurgeStoppedSources();
+	void CacheVideoRecordingAudioSource(ALuint buffer, const FVideoRecordingAudioSourceRef &source);
+	FVideoRecordingAudioSourceRef FindVideoRecordingAudioSource(ALuint buffer);
+	void RemoveVideoRecordingAudioSource(ALuint buffer);
+	void TrimVideoRecordingAudioCache(uint64_t targetBytes);
 	static FSoundChan *FindLowestChannel();
 
 	// Builds the attribute list used both for the initial context creation
@@ -200,8 +206,28 @@ private:
 
     bool WasInWater;
 
-    TArray<OpenALSoundStream*> Streams;
-    friend class OpenALSoundStream;
+	TArray<OpenALSoundStream*> Streams;
+	// Keep a bounded decoded source beside each OpenAL buffer. OpenAL's public
+	// API intentionally has no buffer-data readback, so this is the only way
+	// for the video recorder to capture an effect that was loaded before a take
+	// begins. Entries vanish with their AL buffers and the shared cache has its
+	// own hard byte cap.
+	struct FVideoRecordingAudioCacheEntry
+	{
+		FVideoRecordingAudioSourceRef Source;
+		uint64_t Bytes = 0;
+		uint64_t LastUse = 0;
+	};
+	std::unordered_map<ALuint, FVideoRecordingAudioCacheEntry> VideoRecordingAudioSources;
+	uint64_t VideoRecordingAudioCacheBytes = 0;
+	uint64_t VideoRecordingAudioCacheStamp = 0;
+	// Main-thread bookkeeping for sources that existed before a take began.
+	// It also lets paused loops be picked up on their first resumed update
+	// without duplicating starts that were already captured by StartSound.
+	uint64_t VideoRecordingAudioEpoch = 0;
+	bool VideoRecordingAudioCaptureWasActive = false;
+	std::unordered_set<ALuint> VideoRecordingAudioKnownSources;
+	friend class OpenALSoundStream;
 
 	ALCdevice *InitDevice();
 	bool TryReopenDevice();

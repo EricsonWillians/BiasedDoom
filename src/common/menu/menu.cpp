@@ -716,6 +716,14 @@ bool M_Responder (event_t *ev)
 		}
 		else if (menuactive != MENU_WaitKey && (ev->type == EV_KeyDown || ev->type == EV_KeyUp))
 		{
+			// Controller buttons are normally translated into menu navigation
+			// below. Let a bound capture shortcut through first, otherwise a
+			// video-toggle Pad_A acts as Enter instead of reaching G_Responder.
+			if (ev->type == EV_KeyDown && C_IsCaptureKey(ev->data1))
+			{
+				return false;
+			}
+
 			// eat blocked controller events without dispatching them.
 			if (ev->data1 >= KEY_FIRSTJOYBUTTON && m_blockcontrollers && ev->type == EV_KeyDown) return true;
 

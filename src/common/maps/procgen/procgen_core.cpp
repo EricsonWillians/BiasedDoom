@@ -643,7 +643,11 @@ RunBlueprint BuildRunBlueprint(int seed, const FString& theme, int difficulty,
 	else if (verticality == 1)
 	{
 		result.MainRouteElevationTarget = terrainSign *
-			(64 + (int)(BlueprintChannel(result.RecipeHash, 73) % 3u) * 16);
+			// Moderate terrain still promises a clearly legible vertical district.
+			// The serialized-map validation requires at least 96 units of usable
+			// relief; a 64-unit broad target can be softened below that by safe
+			// door/cycle projection before UDMF emission.
+			(96 + (int)(BlueprintChannel(result.RecipeHash, 73) % 3u) * 16);
 	}
 	else if (size >= 3)
 	{
@@ -1174,7 +1178,43 @@ const FString& FProceduralMapGenerator::GetRunManifest() const
 			cache.sourceDoorClearRadius, cache.closetDoorClearRadius,
 			cache.rewardFirstThing, cache.rewardThingCount);
 	}
-	RunManifestText.AppendFormat("]}}\n}");
+	const bool cooperativeStartsProven = AccessibilityProofPassed &&
+		CooperativeStarts.Size() == 8;
+	double cooperativeStartSeparation = 0.0;
+	if (CooperativeStarts.Size() > 1)
+	{
+		cooperativeStartSeparation = 1.0e30;
+		for (unsigned int first = 0; first < CooperativeStarts.Size(); ++first)
+		{
+			for (unsigned int second = first + 1; second < CooperativeStarts.Size(); ++second)
+			{
+				const double dx = CooperativeStarts[first].x - CooperativeStarts[second].x;
+				const double dy = CooperativeStarts[first].y - CooperativeStarts[second].y;
+				cooperativeStartSeparation = std::min(cooperativeStartSeparation,
+					sqrt(dx * dx + dy * dy));
+			}
+		}
+	}
+	RunManifestText.AppendFormat("], \"cooperative_starts\": {\"status\": \"%s\", "
+		"\"native_slots\": 8, \"canonical_player\": 1, "
+		"\"minimum_separation\": %.3f, \"starts\": [",
+		cooperativeStartsProven ? "proven" : "pending", cooperativeStartSeparation);
+	for (unsigned int index = 0; index < CooperativeStarts.Size(); ++index)
+	{
+		const ProcGenCooperativeStart& start = CooperativeStarts[index];
+		if (index > 0) RunManifestText.AppendFormat(", ");
+		RunManifestText.AppendFormat(
+			"{\"player\": %d, \"thing_index\": %d, \"thing_type\": %d, "
+			"\"room\": %d, \"landmark_sector\": %d, \"x\": %.3f, "
+			"\"y\": %.3f, \"clear_radius\": %.3f}",
+			start.player, start.thingIndex, start.thingType, start.roomId,
+			start.landmarkSector, start.x, start.y, start.clearRadius);
+	}
+	// Close the cooperative-start object, collision navigation object,
+	// accessibility object, and root manifest in that order. Keep this one
+	// schema-1 tail explicit: dumpprocmanifest must remain valid JSON even when
+	// its additive cooperative evidence is the final emitted field.
+	RunManifestText.AppendFormat("]}}}\n}");
 	return RunManifestText;
 }
 
@@ -1277,6 +1317,7 @@ bool FProceduralMapGenerator::Generate()
 	AccessibilityRequiredKeyMask = 0;
 	AccessibilityExitKeyMask = 0;
 	AccessibilityAnchors.Clear();
+	CooperativeStarts.Clear();
 	AccessibilityRoomMergeCorridors = 0;
 	AccessibilitySwitchCacheActions = 0;
 	AccessibilitySwitchCacheRewards = 0;
@@ -1469,6 +1510,25 @@ bool FProceduralMapGenerator::Generate()
 
 	const int desiredRoute = std::max(8, ScaleSetting(9 + Size * 4, Layout, 78, 122) *
 		blueprint.RouteLengthPercent / 100);
+	// Reserve enough parent-chain depth for every blueprint-owned mandatory stair
+	// before selecting the exit. This is the deterministic topology replan for a
+	// compact route: choose a deeper already-carved maze endpoint, rather than
+	// later weakening a gate buffer or dropping a promised vertical beat.
+	int minimumVerticalRouteDepth = 7;
+	if (Size >= 3)
+	{
+		const int plannedKeys = blueprint.PlannedStageCount - 1;
+		int requiredDepth = 0;
+		for (int stage = 0; stage < plannedKeys; ++stage)
+		{
+			const bool needsVerticalBeat = blueprint.StageVerticalIntents[stage] != PGVI_Flat;
+			requiredDepth += needsVerticalBeat ? (stage == 0 ? 4 : 5) : 3;
+		}
+		const bool finalNeedsVerticalBeat =
+			blueprint.StageVerticalIntents[plannedKeys] != PGVI_Flat;
+		requiredDepth += finalNeedsVerticalBeat ? 4 : 1;
+		minimumVerticalRouteDepth = std::max(minimumVerticalRouteDepth, requiredDepth);
+	}
 	int ex = sx;
 	int ey = sy;
 	int bestExitScore = -1000000;
@@ -1481,7 +1541,7 @@ bool FProceduralMapGenerator::Generate()
 	{
 		for (int x = 1; x < W - 1; x++)
 		{
-			if (!visited[y][x] || depth[y][x] < 7) continue;
+			if (!visited[y][x] || depth[y][x] < minimumVerticalRouteDepth) continue;
 			const int forward = ForwardCoordinate(blueprint.Orientation, x, y, W, H);
 			const int perpendicular = PerpendicularCoordinate(blueprint.Orientation, x, y);
 			int score = forward * 28 - abs(depth[y][x] - desiredRoute) * 8;
@@ -1621,6 +1681,32 @@ bool FProceduralMapGenerator::Generate()
 	const int targetKeys = (Size >= 5 && mainPath.Size() >= 18) ? 3 :
 		((Size >= 3 && mainPath.Size() >= 13) ? 2 : 1);
 	const int minGateSpacing = 3;
+	// A gate boundary needs more than the ordinary three ranks when its stage
+	// owns a mandatory stair: the endpoint beside a keyed threshold is protected,
+	// as are the start and exit pads. Reserve the first safe interior edge before
+	// placing key branches and landmark loops, rather than discovering late that a
+	// fully valid progression topology has no place to realize its vertical beat.
+	// These bounds are recipe-only topology planning; they do not alter layout RNG.
+	auto StageNeedsVerticalBeat = [&](int stage) -> bool
+	{
+		return stage >= 0 && stage < blueprint.PlannedStageCount &&
+			blueprint.StageVerticalIntents[stage] != PGVI_Flat;
+	};
+	auto MinimumStageSpan = [&](int stage) -> int
+	{
+		if (!StageNeedsVerticalBeat(stage)) return minGateSpacing;
+		// Stage zero can use rank 1 -> 2 once its first gate is at rank 4.
+		// Later stages must clear both their entering and leaving gate buffers,
+		// leaving rank previous+2 -> previous+3 as their first legal connector.
+		return stage == 0 ? 4 : 5;
+	};
+	auto FinalStageTail = [&]() -> int
+	{
+		// The final stage's exit pad consumes the final rank. A vertical beat needs
+		// a non-exit successor after its entering-gate buffer; non-vertical finales
+		// retain the historic one-rank minimum.
+		return StageNeedsVerticalBeat(targetKeys) ? 4 : 1;
+	};
 	const int plannedStageCount = targetKeys + 1;
 	int totalStageWeight = 0;
 	for (int stage = 0; stage < plannedStageCount; ++stage)
@@ -1629,11 +1715,12 @@ bool FProceduralMapGenerator::Generate()
 
 	for (int k = 0; k < targetKeys; k++)
 	{
-		const int remainingGates = targetKeys - k - 1;
 		const int minimumGateRank = gateRanks.Size() > 0 ?
-			gateRanks.Last() + minGateSpacing : 3;
-		const int maximumGateRank = (int)mainPath.Size() - 2 -
-			remainingGates * minGateSpacing;
+			gateRanks.Last() + MinimumStageSpan(k) : MinimumStageSpan(0);
+		int reservedTail = FinalStageTail();
+		for (int futureStage = k + 1; futureStage < targetKeys; ++futureStage)
+			reservedTail += MinimumStageSpan(futureStage);
+		const int maximumGateRank = (int)mainPath.Size() - 1 - reservedTail;
 		accumulatedStageWeight += std::max(1, blueprint.StageWeights[k]);
 		const int localJitter = (int)(BlueprintChannel(blueprint.RecipeHash, 40 + k) % 5u) - 2;
 		// Stage weights replace fixed fractions while clamps retain both a
@@ -2052,6 +2139,15 @@ bool FProceduralMapGenerator::Generate()
 					const int ny = y + DY[d];
 					if (!InBounds(nx, ny) || !keep[ny][nx] || Grid[y][x].conn[d]) continue;
 					if (Grid[y][x].reservedSecret || Grid[ny][nx].reservedSecret) continue;
+					// Landmark pads and keyed thresholds keep their deliberately simple
+					// circulation. A generic late loop into one of these protected cells
+					// can make every otherwise safe stair candidate bypassable, while a
+					// normal room-to-room reconnection preserves the intended exploration.
+					if (Grid[y][x].hasPlayerStart || Grid[ny][nx].hasPlayerStart ||
+						Grid[y][x].hasExit || Grid[ny][nx].hasExit ||
+						Grid[y][x].hasKey || Grid[ny][nx].hasKey ||
+						Grid[y][x].isLocked || Grid[ny][nx].isLocked)
+						continue;
 					if (StageForRank(Grid[y][x].pathRank) != StageForRank(Grid[ny][nx].pathRank)) continue;
 					const int rankGap = abs(Grid[y][x].pathRank - Grid[ny][nx].pathRank);
 					const int maximumFoldback = 7 + Size / 5;
@@ -2180,6 +2276,106 @@ bool FProceduralMapGenerator::Generate()
 				Grid[ny][nx].conn[OPP[connection.direction]] = true;
 			}
 		};
+		// The normal pass deliberately leaves every key and locked landmark edge
+		// untouched. On a compact map that can leave one otherwise redundant side
+		// of a key landmark as the last bypass around a required stair. Before
+		// relaxing that conservative filter, prove that cutting this exact edge
+		// retains every cell in the current lock stage and in the whole map. This
+		// is topology-only and consumes no layout RNG, so it is a deterministic
+		// last resort rather than a new generation path.
+		auto RetractionPreservesConnectivity = [&](int cutX, int cutY,
+			int cutDirection) -> bool
+		{
+			const int cutNX = cutX + DX[cutDirection];
+			const int cutNY = cutY + DY[cutDirection];
+			if (!InBounds(cutX, cutY) || !InBounds(cutNX, cutNY) ||
+				!Grid[cutY][cutX].present || !Grid[cutNY][cutNX].present)
+				return false;
+
+			TArray<uint8_t> visited;
+			visited.Resize(W * H);
+			for (unsigned int index = 0; index < visited.Size(); ++index)
+				visited[index] = 0;
+			const int rootX = mainPath[routeRank].first;
+			const int rootY = mainPath[routeRank].second;
+			if (!InBounds(rootX, rootY) || !Grid[rootY][rootX].present ||
+				StageForRank(Grid[rootY][rootX].pathRank) != stage)
+				return false;
+
+			TArray<std::pair<int, int>> queue;
+			queue.Push(std::make_pair(rootX, rootY));
+			visited[rootY * W + rootX] = 1;
+			for (unsigned int queueIndex = 0; queueIndex < queue.Size(); ++queueIndex)
+			{
+				const int x = queue[queueIndex].first;
+				const int y = queue[queueIndex].second;
+				const ProcGenCell& cell = Grid[y][x];
+				for (int direction = 0; direction < 4; ++direction)
+				{
+					if (!cell.conn[direction]) continue;
+					if ((x == cutX && y == cutY && direction == cutDirection) ||
+						(x == cutNX && y == cutNY && direction == OPP[cutDirection]))
+						continue;
+					const int nx = x + DX[direction];
+					const int ny = y + DY[direction];
+					if (!InBounds(nx, ny) || !Grid[ny][nx].present ||
+						StageForRank(Grid[ny][nx].pathRank) != stage)
+						continue;
+					const int cellIndex = ny * W + nx;
+					if (visited[cellIndex]) continue;
+					visited[cellIndex] = 1;
+					queue.Push(std::make_pair(nx, ny));
+				}
+			}
+			for (int y = 1; y < H - 1; ++y)
+			{
+				for (int x = 1; x < W - 1; ++x)
+				{
+					if (Grid[y][x].present &&
+						StageForRank(Grid[y][x].pathRank) == stage &&
+						!visited[y * W + x])
+						return false;
+				}
+			}
+
+			// The stage-local proof protects pre-key traversal. Also retain the
+			// complete graph proof: this side chord must not strand a later district
+			// or an optional ordinary space through an unexpected connection shape.
+			for (unsigned int index = 0; index < visited.Size(); ++index)
+				visited[index] = 0;
+			if (!Grid[sy][sx].present) return false;
+			queue.Clear();
+			queue.Push(std::make_pair(sx, sy));
+			visited[sy * W + sx] = 1;
+			for (unsigned int queueIndex = 0; queueIndex < queue.Size(); ++queueIndex)
+			{
+				const int x = queue[queueIndex].first;
+				const int y = queue[queueIndex].second;
+				const ProcGenCell& cell = Grid[y][x];
+				for (int direction = 0; direction < 4; ++direction)
+				{
+					if (!cell.conn[direction]) continue;
+					if ((x == cutX && y == cutY && direction == cutDirection) ||
+						(x == cutNX && y == cutNY && direction == OPP[cutDirection]))
+						continue;
+					const int nx = x + DX[direction];
+					const int ny = y + DY[direction];
+					if (!InBounds(nx, ny) || !Grid[ny][nx].present) continue;
+					const int cellIndex = ny * W + nx;
+					if (visited[cellIndex]) continue;
+					visited[cellIndex] = 1;
+					queue.Push(std::make_pair(nx, ny));
+				}
+			}
+			for (int y = 1; y < H - 1; ++y)
+			{
+				for (int x = 1; x < W - 1; ++x)
+				{
+					if (Grid[y][x].present && !visited[y * W + x]) return false;
+				}
+			}
+			return true;
+		};
 
 		for (int pass = 0; pass < W * H; ++pass)
 		{
@@ -2227,6 +2423,44 @@ bool FProceduralMapGenerator::Generate()
 			}
 			if (chosenSegment < 0)
 			{
+				// Keep keys, locks, secret leaves, and every primary route edge intact.
+				// This narrowly admits only an extra start/exit chord after both the
+				// stage-local and full retained-graph proofs have passed.
+				for (unsigned int index = 0; index + 1 < bypass.Size(); ++index)
+				{
+					const int ax = bypass[index].first;
+					const int ay = bypass[index].second;
+					const int bx = bypass[index + 1].first;
+					const int by = bypass[index + 1].second;
+					const ProcGenCell& first = Grid[ay][ax];
+					const ProcGenCell& second = Grid[by][bx];
+					const bool mainRouteEdge = first.onMainPath && second.onMainPath &&
+						abs(first.pathRank - second.pathRank) == 1;
+					const bool touchesStartOrExit = first.hasPlayerStart || second.hasPlayerStart ||
+						first.hasExit || second.hasExit;
+					if (mainRouteEdge || !touchesStartOrExit || first.hasKey || second.hasKey ||
+						first.isLocked || second.isLocked || first.reservedSecret ||
+						second.reservedSecret)
+						continue;
+					int direction = -1;
+					for (int candidate = 0; candidate < 4; ++candidate)
+						if (ax + DX[candidate] == bx && ay + DY[candidate] == by)
+							direction = candidate;
+					if (direction < 0 ||
+						!RetractionPreservesConnectivity(ax, ay, direction))
+						continue;
+					const uint32_t score = MixProcGenHash(blueprint.RecipeHash ^
+						(uint32_t)(stage + 1) * 0x632be59bu ^
+						(uint32_t)(std::min(ay * W + ax, by * W + bx) + 1) * 0x85157af5u);
+					if (score < chosenScore)
+					{
+						chosenScore = score;
+						chosenSegment = (int)index;
+					}
+				}
+			}
+			if (chosenSegment < 0)
+			{
 				RestoreRemoved();
 				return false;
 			}
@@ -2259,8 +2493,12 @@ bool FProceduralMapGenerator::Generate()
 			gateRanks[stage] - 1 : (int)mainPath.Size() - 1;
 		int selectedRank = -1;
 		uint32_t selectedScore = UINT32_MAX;
-		int fallbackRank = -1;
-		uint32_t fallbackScore = UINT32_MAX;
+		struct RankedFallback
+		{
+			uint32_t score = 0;
+			int rank = -1;
+		};
+		TArray<RankedFallback> fallbackCandidates;
 		for (int pass = 0; pass < 2 && selectedRank < 0; ++pass)
 		{
 			for (int rank = firstRank + 1; rank < lastRank; ++rank)
@@ -2311,17 +2549,45 @@ bool FProceduralMapGenerator::Generate()
 						selectedRank = rank;
 					}
 				}
-				else if (score < fallbackScore)
+				else if (pass == 1)
 				{
-					fallbackScore = score;
-					fallbackRank = rank;
+					// The first pass may have ruled this out only because it is a
+					// landmark edge. Keep every pass-two bypass candidate so one
+					// protected local loop cannot make us give up before trying the
+					// next deterministic safe main-route connector.
+					fallbackCandidates.Push({ score, rank });
 				}
 			}
 		}
-		if (selectedRank < 0 && fallbackRank >= 0 &&
-			RetractSameStageBypasses(fallbackRank, stage))
+		// A retraction can legitimately refuse one candidate: its only alternate
+		// path may run through the start pad, a key, or another protected landmark.
+		// Try the remaining same-stage candidates in stable hash order before
+		// omitting an authored beat. RetractSameStageBypasses restores every failed
+		// trial, so no rejected candidate changes the following attempt or RNG state.
+		TArray<bool> fallbackTried;
+		fallbackTried.Resize(fallbackCandidates.Size());
+		for (unsigned int index = 0; index < fallbackTried.Size(); ++index)
+			fallbackTried[index] = false;
+		for (unsigned int attempt = 0;
+			selectedRank < 0 && attempt < fallbackCandidates.Size(); ++attempt)
 		{
-			selectedRank = fallbackRank;
+			int bestIndex = -1;
+			uint32_t bestScore = UINT32_MAX;
+			for (unsigned int index = 0; index < fallbackCandidates.Size(); ++index)
+			{
+				const RankedFallback& candidate = fallbackCandidates[index];
+				if (fallbackTried[index] ||
+					(candidate.score > bestScore) ||
+					(candidate.score == bestScore && bestIndex >= 0 &&
+						candidate.rank >= fallbackCandidates[bestIndex].rank))
+					continue;
+				bestScore = candidate.score;
+				bestIndex = (int)index;
+			}
+			if (bestIndex < 0) break;
+			fallbackTried[bestIndex] = true;
+			if (RetractSameStageBypasses(fallbackCandidates[bestIndex].rank, stage))
+				selectedRank = fallbackCandidates[bestIndex].rank;
 		}
 		if (selectedRank < 0) return false;
 		ProcGenCell& anchor = Grid[mainPath[selectedRank].second][mainPath[selectedRank].first];

@@ -59,6 +59,7 @@
 #include "p_spec.h"
 #include "p_trace.h"
 #include "python/python_runtime.h"
+#include "common/maps/procgen.h"
 #include "r_utility.h"
 #include "s_music.h"
 #include "savegamemanager.h"
@@ -220,6 +221,10 @@ static struct NetEventData
 	struct FStream {
 		uint8_t* Stream;
 		size_t Used = 0;
+		// End of the latest complete atomic record. If later legacy writes make
+		// the whole tic too large for a packet, the sender can safely retain
+		// this prefix rather than losing an already accepted transaction.
+		size_t AtomicEnd = 0;
 
 		FStream()
 		{
@@ -243,6 +248,7 @@ private:
 	size_t MaxSize = 256;
 	int CurrentClientTic = 0;
 	bool OverflowWarned = false;
+	size_t CurrentAtomicEnd = 0;
 
 	// Make more room for special Command.
 	void GetMoreBytes(size_t newSize)
@@ -279,6 +285,30 @@ private:
 		return true;
 	}
 
+	bool AddAtomicBytes(const uint8_t *bytes, size_t count)
+	{
+		// Special events are packed beside user commands and, in a server
+		// packet, other players' commands. Keep an atomic record well below
+		// MAX_MSGLEN so accepting it here also makes it practical to serialize
+		// in the normal tic packet. Ordinary legacy writes intentionally retain
+		// their existing best-effort behavior.
+		// The transport's compressed UDP payload is capped below MAX_MSGLEN.
+		// Leave a sizeable margin for its packet header, user commands, and
+		// compression framing; callers use small records rather than treating
+		// the larger in-memory packet buffer as a wire-size guarantee.
+		if (bytes == nullptr || count == 0 || CurrentStream == nullptr ||
+			count > NetAtomicEventMaxSize || CurrentSize > NetAtomicEventMaxSize - count)
+		{
+			return false;
+		}
+		if (!AddBytes(count))
+			return false;
+		memcpy(CurrentStream, bytes, count);
+		CurrentStream += count;
+		CurrentAtomicEnd = CurrentSize;
+		return true;
+	}
+
 public:
 	uint8_t* CurrentStream = nullptr;
 
@@ -288,6 +318,9 @@ public:
 	{
 		CurrentStream = Streams[0].Stream;
 		CurrentSize = 0;
+		CurrentAtomicEnd = 0;
+		Streams[0].Used = 0;
+		Streams[0].AtomicEnd = 0;
 	}
 
 	void ResetStream()
@@ -295,6 +328,9 @@ public:
 		CurrentClientTic = ClientTic / TicDup;
 		CurrentStream = Streams[CurrentClientTic % BACKUPTICS].Stream;
 		CurrentSize = 0;
+		CurrentAtomicEnd = 0;
+		Streams[CurrentClientTic % BACKUPTICS].Used = 0;
+		Streams[CurrentClientTic % BACKUPTICS].AtomicEnd = 0;
 	}
 
 	void NewClientTic()
@@ -304,10 +340,14 @@ public:
 			return;
 
 		Streams[CurrentClientTic % BACKUPTICS].Used = CurrentSize;
+		Streams[CurrentClientTic % BACKUPTICS].AtomicEnd = CurrentAtomicEnd;
 		
 		CurrentClientTic = tic;
 		CurrentStream = Streams[tic % BACKUPTICS].Stream;
 		CurrentSize = 0;
+		CurrentAtomicEnd = 0;
+		Streams[tic % BACKUPTICS].Used = 0;
+		Streams[tic % BACKUPTICS].AtomicEnd = 0;
 	}
 
 	NetEventData& operator<<(uint8_t it)
@@ -358,11 +398,17 @@ public:
 			UncheckedWriteString(it, &CurrentStream);
 		return *this;
 	}
+
+	bool WriteAtomic(const uint8_t *bytes, size_t count)
+	{
+		return AddAtomicBytes(bytes, count);
+	}
 } NetEvents;
 
 void Net_ClearBuffers()
 {
 	CloseNetwork();
+	P_ResetNetworkProceduralMapTransferState();
 
 	for (unsigned int i = 0; i < MAXPLAYERS; ++i)
 	{
@@ -587,7 +633,23 @@ static size_t GetNetBufferSize()
 	if (NetBufferLength < 1)
 		return NetBufferLength + 1;
 	if (NetBuffer[0] & NCMD_EXIT)
-		return 1 + (NetMode == NET_PacketServer && RemoteClient == Net_Arbitrator);
+	{
+		// A normal/disconnected exit is a one-byte packet. A deliberate host
+		// handoff adds successor + snapshot length + snapshot. Do not key this
+		// sizing off the current arbitrator: the host sends several copies, and
+		// the later copies arrive after the first has already promoted a new one.
+		if (NetBufferLength == 1)
+			return 1;
+		// A departing host carries an authoritative companion snapshot after its
+		// successor byte in both packet-server and peer-to-peer modes. This
+		// closes the short window where a host has locally accepted an atomic
+		// squad edit but its next normal command tic has not been broadcast yet.
+		if (NetBufferLength < 4)
+			return NetBufferLength + 1;
+		const size_t snapshotLength = (size_t(NetBuffer[2]) << 8) | NetBuffer[3];
+		const size_t packetLength = 4 + snapshotLength;
+		return packetLength <= MAX_MSGLEN ? packetLength : NetBufferLength + 1;
+	}
 	// TODO: Need a skipper for this.
 	if (NetBuffer[0] & NCMD_SETUP)
 		return NetBufferLength;
@@ -751,6 +813,13 @@ static void SetArbitrator(int clientNum)
 {
 	Net_Arbitrator = clientNum;
 	players[Net_Arbitrator].settings_controller = true;
+	if (gamestate == GS_LEVEL && consoleplayer == Net_Arbitrator)
+	{
+		// Bot availability is local roster state, unlike the replicated player
+		// table. A client promoted after the old host leaves must reserve the
+		// identities already in the run before it can add another companion.
+		primaryLevel->BotInfo.RehydrateCompanionRosterUsage();
+	}
 	Printf("%s is the new host\n", players[Net_Arbitrator].userinfo.GetName());
 	if (NetMode == NET_PacketServer)
 	{
@@ -901,7 +970,23 @@ static void GetPackets()
 
 		if (NetBuffer[0] & NCMD_EXIT)
 		{
-			ClientQuit(clientNum, NetMode == NET_PacketServer && clientNum == Net_Arbitrator ? NetBuffer[1] : -1);
+			// A one-byte host exit is the safe fallback for an abrupt disconnect
+			// (and remains compatible with an older peer). Only the extended exit
+			// frame carries a successor and authoritative companion snapshot.
+			const bool hostHandoff = clientNum == Net_Arbitrator && NetBufferLength >= 4;
+			if (hostHandoff)
+			{
+				const size_t snapshotLength = (size_t(NetBuffer[2]) << 8) | NetBuffer[3];
+				TArrayView<uint8_t> snapshot(&NetBuffer[4], snapshotLength);
+				// Apply while the sender is still the arbitrator. Once ClientQuit
+				// promotes the successor, normal companion-CVar authorization would
+				// correctly reject these final old-host values.
+				if (!D_ApplyCompanionServerInfoSnapshot(snapshot, clientNum))
+				{
+					Printf(TEXTCOLOR_YELLOW "Ignoring malformed companion snapshot from departing host.\n");
+				}
+			}
+			ClientQuit(clientNum, hostHandoff ? NetBuffer[1] : -1);
 			continue;
 		}
 
@@ -985,12 +1070,29 @@ static void GetPackets()
 		int baseSequence = -1;
 		const int totalTics = NetBuffer[curByte++];
 		if (totalTics > 0)
-			baseSequence = (NetBuffer[curByte++] << 24) | (NetBuffer[curByte++] << 16) | (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
+		{
+			// Do not combine curByte++ reads in a bitwise expression. The
+			// operands of | are not sequenced, which made the packet cursor
+			// modification undefined and could reverse/corrupt this value.
+			const uint32_t sequence = (uint32_t(NetBuffer[curByte]) << 24) |
+				(uint32_t(NetBuffer[curByte + 1]) << 16) |
+				(uint32_t(NetBuffer[curByte + 2]) << 8) |
+				uint32_t(NetBuffer[curByte + 3]);
+			curByte += 4;
+			baseSequence = static_cast<int>(sequence);
+		}
 
 		int baseConsistency = -1;
 		const int ranTics = NetBuffer[curByte++];
 		if (ranTics > 0)
-			baseConsistency = (NetBuffer[curByte++] << 24) | (NetBuffer[curByte++] << 16) | (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
+		{
+			const uint32_t consistency = (uint32_t(NetBuffer[curByte]) << 24) |
+				(uint32_t(NetBuffer[curByte + 1]) << 16) |
+				(uint32_t(NetBuffer[curByte + 2]) << 8) |
+				uint32_t(NetBuffer[curByte + 3]);
+			curByte += 4;
+			baseConsistency = static_cast<int>(consistency);
+		}
 
 		if (NetMode == NET_PacketServer)
 		{
@@ -1020,7 +1122,11 @@ static void GetPackets()
 			if (NetMode == NET_PacketServer && clientNum == Net_Arbitrator)
 			{
 				if (consoleplayer != Net_Arbitrator)
-					pState.AverageLatency = (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
+				{
+					pState.AverageLatency = (uint16_t(NetBuffer[curByte]) << 8) |
+						uint16_t(NetBuffer[curByte + 1]);
+					curByte += 2;
+				}
 				else
 					curByte += 2;
 			}
@@ -1036,7 +1142,10 @@ static void GetPackets()
 			for (int r = 0; r < ranTics; ++r)
 			{
 				int ofs = NetBuffer[curByte++];
-				consistencies.Insert(ofs, (NetBuffer[curByte++] << 8) | NetBuffer[curByte++]);
+				const uint16_t consistency = (uint16_t(NetBuffer[curByte]) << 8) |
+					uint16_t(NetBuffer[curByte + 1]);
+				curByte += 2;
+				consistencies.Insert(ofs, consistency);
 			}
 
 			for (size_t i = 0u; i < consistencies.Size(); ++i)
@@ -1641,6 +1750,13 @@ void NetUpdate(int tics)
 				maxCommands = MaxPlayersPerPacket / 2 + (MaxPlayersPerPacket / 4 - players) * 4;
 		}
 	}
+	// A procedural archive record is deliberately atomic. Do not bundle several
+	// of its chunks into one tic packet: the transport has a smaller wire limit
+	// than MAX_MSGLEN and would otherwise drop an entire oversized event block.
+	// The short-lived cap also applies to receiver acknowledgements and staged
+	// map hand-off, keeping the protocol's ordering and retry assumptions true.
+	if (P_IsNetworkProceduralMapTransferActive())
+		maxCommands = 1;
 
 	const bool resendOnly = startSequence == endSequence && (ClientTic % TicDup);
 	const int playerLoops = static_cast<int>(ceil((double)players / MaxPlayersPerPacket));
@@ -1836,21 +1952,37 @@ void NetUpdate(int tics)
 							// Write out the net events before the user commands so inputs can
 							// be used as a marker for when the given command ends.
 							auto& stream = NetEvents.Streams[curTic % BACKUPTICS];
-							// More events than fit in the packet must not abort the engine;
-							// drop the block (events are optional in the stream) and warn once.
-							if (stream.Used <= cmd.Size())
+							// More events than fit in a packet must not abort the engine. If
+							// this tic contains a complete atomic transaction, retain the prefix
+							// through its final atomic record. That keeps its preceding command
+							// order intact and avoids committing a host setting that peers never
+							// receive; only the later legacy suffix is discarded.
+							size_t eventBytes = stream.Used;
+							if (eventBytes > cmd.Size())
 							{
-								WriteBytes(TArrayView(stream.Stream, stream.Used), cmd);
-							}
-							else
-							{
-								static bool warnedEventOverflow = false;
-								if (!warnedEventOverflow)
+								if (stream.AtomicEnd != 0 && stream.AtomicEnd <= cmd.Size())
 								{
-									warnedEventOverflow = true;
-									Printf(TEXTCOLOR_YELLOW "Net events for one tic exceeded the packet size and were dropped\n");
+									eventBytes = stream.AtomicEnd;
+									static bool warnedAtomicEventTruncation = false;
+									if (!warnedAtomicEventTruncation)
+									{
+										warnedAtomicEventTruncation = true;
+										Printf(TEXTCOLOR_YELLOW "Net events for one tic exceeded the packet size; retained the atomic event prefix\n");
+									}
+								}
+								else
+								{
+									eventBytes = 0;
+									static bool warnedEventOverflow = false;
+									if (!warnedEventOverflow)
+									{
+										warnedEventOverflow = true;
+										Printf(TEXTCOLOR_YELLOW "Net events for one tic exceeded the packet size and were dropped\n");
+									}
 								}
 							}
+							if (eventBytes > 0)
+								WriteBytes(TArrayView(stream.Stream, eventBytes), cmd);
 
 							WriteUserCmdMessage(LocalCmds[realTic],
 								realLastTic >= 0 ? &LocalCmds[realLastTic] : nullptr, cmd);
@@ -1996,16 +2128,26 @@ bool D_CheckNetGame()
 //
 void D_QuitNetGame()
 {
+	P_ResetNetworkProceduralMapTransferState();
 	if (!netgame || !usergame || consoleplayer == -1 || demoplayback || NetworkClients.Size() == 1)
 		return;
 
 	// Send a bunch of packets for stability.
 	NetBuffer[0] = NCMD_EXIT;
-	if (NetMode == NET_PacketServer && consoleplayer == Net_Arbitrator)
+	if (consoleplayer == Net_Arbitrator)
 	{
-		// This currently isn't much different from the regular P2P code, but it's being split off into its
-		// own branch should proper host migration be added in the future (i.e. sending over stored event
-		// data rather than just dropping it entirely).
+		// Preserve the host-owned companion configuration explicitly in either
+		// network mode. In particular, this captures an atomic setting accepted
+		// into this host's current event stream just before it exits, which a
+		// normal handoff otherwise drops before it can reach the successor.
+		TArray<uint8_t> companionSnapshot;
+		if (!D_BuildCompanionServerInfoSnapshot(companionSnapshot) ||
+			companionSnapshot.Size() > MAX_MSGLEN - 4 || companionSnapshot.Size() > 0xffff)
+		{
+			Printf(TEXTCOLOR_YELLOW "Could not attach companion roster state to host handoff.\n");
+			companionSnapshot.Clear();
+		}
+
 		int nextHost = 0;
 		for (auto client : NetworkClients)
 		{
@@ -2017,12 +2159,19 @@ void D_QuitNetGame()
 		}
 
 		NetBuffer[1] = nextHost;
+		NetBuffer[2] = uint8_t(companionSnapshot.Size() >> 8);
+		NetBuffer[3] = uint8_t(companionSnapshot.Size());
+		if (companionSnapshot.Size() > 0)
+		{
+			memcpy(&NetBuffer[4], companionSnapshot.Data(), companionSnapshot.Size());
+		}
+		const size_t handoffPacketSize = 4 + companionSnapshot.Size();
 		for (int i = 0; i < 4; ++i)
 		{
 			for (auto client : NetworkClients)
 			{
 				if (client != Net_Arbitrator)
-					HSendPacket(client, 2);
+					HSendPacket(client, handoffPacketSize);
 			}
 
 			I_WaitVBL(1);
@@ -2394,6 +2543,11 @@ void Net_NewClientTic()
 	NetEvents.NewClientTic();
 }
 
+int Net_GetCurrentEventTic()
+{
+	return ClientTic / TicDup;
+}
+
 void Net_Initialize()
 {
 	NetEvents.InitializeEventData();
@@ -2438,6 +2592,11 @@ void Net_WriteBytes(const uint8_t *block, int len)
 {
 	while (len--)
 		NetEvents << *block++;
+}
+
+bool Net_WriteEventAtomic(const uint8_t *block, int len)
+{
+	return len > 0 && NetEvents.WriteAtomic(block, (size_t)len);
 }
 
 //==========================================================================
@@ -2600,11 +2759,11 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 		break;
 
 	case DEM_SINFCHANGED:
-		D_DoServerInfoChange(stream, false);
+		D_DoServerInfoChange(stream, false, player);
 		break;
 
 	case DEM_SINFCHANGEDXOR:
-		D_DoServerInfoChange(stream, true);
+		D_DoServerInfoChange(stream, true, player);
 		break;
 
 	case DEM_GIVECHEAT:
@@ -2648,10 +2807,52 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 	case DEM_CHANGEMAP:
 		// Change to another map without disconnecting other players
 		s = ReadStringConst(stream);
+		if (player != Net_Arbitrator)
+		{
+			// Guests never own a map change. In particular, do not let a forged
+			// ordinary/PROCMAP command erase a peer's staged host archive.
+			Printf(TEXTCOLOR_RED "Rejected non-host map change command.\n");
+			break;
+		}
+		if (!P_IsProceduralMapName(s))
+		{
+			// An ordinary host map change supersedes any abandoned or staged
+			// procedural archive. Do not let it leak into a later manual command.
+			P_ResetNetworkProceduralMapTransferState();
+		}
+		else if (player != Net_Arbitrator || !P_ConfirmNetworkProceduralMapTransition())
+		{
+			// A valid shared transition is only sent by the host after every peer
+			// staged and acknowledged the archive. Refuse a direct or premature
+			// command rather than falling back to local generation on a peer.
+			P_ResetNetworkProceduralMapTransferState();
+			Printf(TEXTCOLOR_RED "Rejected unverified shared procedural map change.\n");
+			break;
+		}
 		// Using LEVEL_NOINTERMISSION tends to throw the game out of sync.
 		// That was a long time ago. Maybe it works now?
 		primaryLevel->flags |= LEVEL_CHANGEMAPCHEAT;
 		primaryLevel->ChangeLevel(s, pos, 0);
+		break;
+
+	case DEM_PROCMAP_BEGIN:
+		P_HandleNetworkProceduralMapBegin(stream, player);
+		break;
+
+	case DEM_PROCMAP_CHUNK:
+		P_HandleNetworkProceduralMapChunk(stream, player);
+		break;
+
+	case DEM_PROCMAP_FINISH:
+		P_HandleNetworkProceduralMapFinish(stream, player);
+		break;
+
+	case DEM_PROCMAP_ACK:
+		P_HandleNetworkProceduralMapAck(stream, player);
+		break;
+
+	case DEM_PROCMAP_ABORT:
+		P_HandleNetworkProceduralMapAbort(stream, player);
 		break;
 
 	case DEM_SUICIDE:
@@ -2659,13 +2860,37 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 		break;
 
 	case DEM_ADDBOT:
-		primaryLevel->BotInfo.TryAddBot(primaryLevel, stream, player);
+		// Bot lifecycle is host-authoritative in a network game. Consume an
+		// unauthorized record so it cannot desynchronize the rest of this tic,
+		// but never let a guest allocate a player slot on every peer.
+		if (!netgame || player == Net_Arbitrator)
+			primaryLevel->BotInfo.TryAddBot(primaryLevel, stream, player);
+		else
+			Net_SkipCommand(DEM_ADDBOT, stream);
 		break;
 
 	case DEM_KILLBOTS:
-		primaryLevel->BotInfo.RemoveAllBots(primaryLevel, true);
-		Printf ("Removed all bots\n");
+		if (!netgame || player == Net_Arbitrator)
+		{
+			primaryLevel->BotInfo.RemoveAllBots(primaryLevel, true);
+			Printf ("Removed all bots\n");
+		}
 		break;
+
+	case DEM_REMOVECOMPANION:
+	{
+		// The record names the replicated stable ID, not an ordinal or player
+		// slot. This remains correct when a selected removal races another
+		// departure or an in-flight add has recycled a slot.
+		i = ReadInt32(stream);
+		const uint32_t companionId = (uint32_t)i;
+		if ((!netgame || player == Net_Arbitrator) && companionId != FCajunMaster::NoCompanionId)
+		{
+			primaryLevel->BotInfo.RemoveCompanionById(primaryLevel, companionId);
+			primaryLevel->BotInfo.NotifyCompanionRemovalProcessed(companionId);
+		}
+		break;
+	}
 
 	case DEM_CENTERVIEW:
 		players[player].centering = true;
@@ -3203,7 +3428,8 @@ bool Net_SkipCommandEx(int cmd, TArrayView<uint8_t>& stream)
 		{
 			size_t slen;
 			ok = BoundedSkipString(stream, 1, slen);
-			skip = 1 + slen + 4;
+			// botshift + NUL userinfo + four skill bytes + profile byte + stable ID
+			skip = 1 + slen + 4 + 1 + 4;
 			break;
 		}
 
@@ -3261,6 +3487,54 @@ bool Net_SkipCommandEx(int cmd, TArrayView<uint8_t>& stream)
 			size_t slen;
 			ok = BoundedSkipString(stream, 1, slen);
 			skip = 1 + slen;
+			break;
+		}
+
+		case DEM_PROCMAP_BEGIN:
+		{
+			// id, seed, IWAD roster, six one-byte recipe fields, raw size,
+			// checksum, chunk count, then the NUL-terminated theme.
+			constexpr size_t headerSize = 27;
+			size_t slen;
+			ok = BoundedSkipString(stream, headerSize, slen);
+			skip = headerSize + slen;
+			break;
+		}
+
+		case DEM_PROCMAP_CHUNK:
+			if (stream.Size() < 10)
+			{
+				ok = false;
+				break;
+			}
+			// Network integers are big-endian. The payload length is deliberately
+			// signed on the writer too, so reject values above INT16_MAX here.
+			{
+				const int payload = (stream[8] << 8) | stream[9];
+				if (payload > 0x7fff)
+					ok = false;
+				else
+					skip = 10 + payload;
+			}
+			break;
+
+		case DEM_PROCMAP_FINISH:
+			skip = 4;
+			break;
+
+		case DEM_PROCMAP_ACK:
+			skip = 8;
+			break;
+
+		case DEM_REMOVECOMPANION:
+			skip = 4;
+			break;
+
+		case DEM_PROCMAP_ABORT:
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 4, slen);
+			skip = 4 + slen;
 			break;
 		}
 		case DEM_MUSICCHANGE:

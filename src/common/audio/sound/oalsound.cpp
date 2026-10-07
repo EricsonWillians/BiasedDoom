@@ -34,6 +34,7 @@
 
 #include <functional>
 #include <chrono>
+#include <new>
 
 #include "c_cvars.h"
 
@@ -43,6 +44,7 @@
 #include "i_module.h"
 #include "cmdlib.h"
 #include "m_fixed.h"
+#include "video_capture_audio.h"
 
 
 const char *GetSampleTypeName(SampleType type);
@@ -215,6 +217,8 @@ class OpenALSoundStream : public SoundStream
 	ALsizei SampleRate;
 	ALenum Format;
 	ALsizei FrameSize;
+	SampleType StreamSampleType;
+	ChannelConfig StreamChannels;
 
 	static const int BufferCount = 4;
 	ALuint Buffers[BufferCount];
@@ -226,6 +230,51 @@ class OpenALSoundStream : public SoundStream
 	ALfloat Volume;
 	uint64_t Offset = 0;
 	std::mutex Mutex;
+	// The stream callback runs under the renderer's StreamLock. Keep its
+	// recorder handoff free of OpenAL calls and contended renderer state; the
+	// main thread periodically publishes the DAC/queue-derived timestamp here.
+	std::atomic<uint64_t> CapturePresentationNS{ 0 };
+	std::atomic<uint64_t> CaptureEpoch{ 0 };
+	std::atomic<float> CaptureGain{ 1.0f };
+
+	static uint64_t CaptureClockNS()
+	{
+		using namespace std::chrono;
+		return (uint64_t)duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+	}
+
+	static uint64_t SaturatingAdd(uint64_t left, uint64_t right)
+	{
+		return left > std::numeric_limits<uint64_t>::max() - right ?
+			std::numeric_limits<uint64_t>::max() : left + right;
+	}
+
+	void CaptureStreamAudio()
+	{
+		if (Renderer == nullptr || Data.Size() == 0 || FrameSize <= 0 || SampleRate <= 0 ||
+			!I_IsVideoRecordingAudioActive())
+		{
+			return;
+		}
+
+		const uint64_t epoch = I_GetVideoRecordingAudioEpoch();
+		const uint64_t now = CaptureClockNS();
+		uint64_t presentationNS = CaptureEpoch.load(std::memory_order_acquire) == epoch ?
+			CapturePresentationNS.load(std::memory_order_acquire) : now;
+		const uint64_t frames = Data.Size() / FrameSize;
+		const uint64_t durationNS = frames > std::numeric_limits<uint64_t>::max() / 1000000000ull ?
+			std::numeric_limits<uint64_t>::max() : frames * 1000000000ull / (uint64_t)SampleRate;
+		// A stale queue clock means a pause, underrun, or a new take. Start the
+		// new block from now instead of placing audible content far in the past.
+		if (presentationNS == 0 || presentationNS + durationNS < now || presentationNS > SaturatingAdd(now, 2000000000ull))
+		{
+			presentationNS = now;
+		}
+		I_RecordVideoRecordingAudioStream(epoch, (uintptr_t)this, Data.Data(), Data.Size(), StreamSampleType,
+			StreamChannels, SampleRate, CaptureGain.load(std::memory_order_relaxed), presentationNS);
+		CaptureEpoch.store(epoch, std::memory_order_release);
+		CapturePresentationNS.store(SaturatingAdd(presentationNS, durationNS), std::memory_order_release);
+	}
 
 	bool SetupSource()
 	{
@@ -362,6 +411,8 @@ public:
 
 		/* Clear the buffer queue, then fill and queue each buffer */
 		Offset = 0;
+		CaptureEpoch.store(I_IsVideoRecordingAudioActive() ? I_GetVideoRecordingAudioEpoch() : 0, std::memory_order_release);
+		CapturePresentationNS.store(CaptureClockNS(), std::memory_order_release);
 		alSourcei(Source, AL_BUFFER, 0);
 		for(int i = 0;i < BufferCount;i++)
 		{
@@ -371,6 +422,7 @@ public:
 					return false;
 				break;
 			}
+			CaptureStreamAudio();
 
 			alBufferData(Buffers[i], Format, &Data[0], Data.Size(), SampleRate);
 			alSourceQueueBuffers(Source, 1, &Buffers[i]);
@@ -416,7 +468,12 @@ public:
 	{
 		if(Renderer == nullptr)
 			return;
-		alSourcef(Source, AL_GAIN, Renderer->MusicVolume*Volume);
+		const float gain = Renderer->MusicVolume * Volume;
+		// CaptureStreamAudio runs on the background stream worker, whereas music
+		// volume is changed on the game thread. Publish its recorder gain without
+		// reading the renderer's mutable scalar from the worker.
+		CaptureGain.store(gain, std::memory_order_release);
+		alSourcef(Source, AL_GAIN, gain);
 		getALError();
 	}
 
@@ -553,6 +610,7 @@ public:
 
 			if(Callback(this, &Data[0], Data.Size(), UserData))
 			{
+				CaptureStreamAudio();
 				alBufferData(bufid, Format, &Data[0], Data.Size(), SampleRate);
 				alSourceQueueBuffers(Source, 1, &bufid);
 			}
@@ -578,6 +636,60 @@ public:
 		return ok;
 	}
 
+	// Called from UpdateSounds on the main thread while StreamLock is held.
+	// It is intentionally outside the stream callback: querying OpenAL here
+	// gives queued buffers a presentation time based on the actual source
+	// cursor and device latency without making the realtime callback re-enter
+	// OpenAL or wait on a stream mutex.
+	void UpdateVideoCaptureClock()
+	{
+		if (Renderer == nullptr || Source == 0 || Data.Size() == 0 || FrameSize <= 0 || SampleRate <= 0 ||
+			!I_IsVideoRecordingAudioActive())
+		{
+			return;
+		}
+
+		const uint64_t epoch = I_GetVideoRecordingAudioEpoch();
+		std::lock_guard<std::mutex> lock(Mutex);
+		if (Renderer == nullptr || Source == 0 || !I_IsVideoRecordingAudioActive() || I_GetVideoRecordingAudioEpoch() != epoch)
+		{
+			return;
+		}
+
+		ALint queued = 0;
+		ALint state = AL_INITIAL;
+		ALint64SOFT offset[2]{};
+		alGetSourcei(Source, AL_BUFFERS_QUEUED, &queued);
+		if (Renderer->AL.SOFT_source_latency)
+		{
+			Renderer->alGetSourcei64vSOFT(Source, AL_SAMPLE_OFFSET_LATENCY_SOFT, offset);
+			offset[0] >>= 32;
+		}
+		else
+		{
+			ALint sampleOffset = 0;
+			alGetSourcei(Source, AL_SAMPLE_OFFSET, &sampleOffset);
+			offset[0] = sampleOffset;
+		}
+		alGetSourcei(Source, AL_SOURCE_STATE, &state);
+		if (alGetError() != AL_NO_ERROR || state == AL_PAUSED || state == AL_STOPPED)
+		{
+			return;
+		}
+
+		const uint64_t framesPerBuffer = Data.Size() / FrameSize;
+		const uint64_t queuedFrames = (uint64_t)std::max(queued, 0) * framesPerBuffer;
+		const uint64_t playedFrames = state == AL_INITIAL ? Offset :
+			SaturatingAdd(Offset, (uint64_t)std::max<ALint64SOFT>(offset[0], 0));
+		const uint64_t queueEnd = SaturatingAdd(Offset, queuedFrames);
+		const uint64_t ahead = queueEnd > playedFrames ? queueEnd - playedFrames : 0;
+		const uint64_t queueNS = ahead > std::numeric_limits<uint64_t>::max() / 1000000000ull ?
+			std::numeric_limits<uint64_t>::max() : ahead * 1000000000ull / (uint64_t)SampleRate;
+		const uint64_t latencyNS = offset[1] > 0 ? (uint64_t)offset[1] : 0;
+		CaptureEpoch.store(epoch, std::memory_order_release);
+		CapturePresentationNS.store(SaturatingAdd(SaturatingAdd(CaptureClockNS(), latencyNS), queueNS), std::memory_order_release);
+	}
+
 	bool Init(SoundStreamCallback callback, int buffbytes, SampleType stype, ChannelConfig chans, int samplerate, void *userdata)
 	{
 		if(Renderer == nullptr)
@@ -588,6 +700,8 @@ public:
 		Callback = callback;
 		UserData = userdata;
 		SampleRate = samplerate;
+		StreamSampleType = stype;
+		StreamChannels = chans;
 
 		Format = GetFormat(stype, chans);
 		if(Format == AL_NONE)
@@ -612,6 +726,13 @@ public:
 #define AREA_SOUND_RADIUS  (32.f)
 
 #define PITCH_MULT (0.7937005f) /* Approx. 4 semitones lower; what Nash suggested */
+
+// Retaining decoded copies lets a take include effects whose OpenAL buffers
+// were loaded before recording began. Keep the idle prewarm cache modest; an
+// active take may grow it to the tap's hard 96 MiB cap so an in-progress run
+// does not lose newly loaded effects just because an old menu sound existed.
+static constexpr uint64_t VIDEO_RECORDING_AUDIO_IDLE_CACHE_BYTES = 24ull * 1024ull * 1024ull;
+static constexpr uint64_t VIDEO_RECORDING_AUDIO_ACTIVE_CACHE_BYTES = 96ull * 1024ull * 1024ull;
 
 static float GetRolloff(const FRolloffInfo *rolloff, float distance)
 {
@@ -1014,6 +1135,9 @@ OpenALSoundRenderer::~OpenALSoundRenderer()
 	}
 
 	alDeleteSources(Sources.Size(), &Sources[0]);
+	VideoRecordingAudioSources.clear();
+	VideoRecordingAudioCacheBytes = 0;
+	VideoRecordingAudioKnownSources.clear();
 	Sources.Clear();
 	FreeSfx.Clear();
 	SfxGroup.Clear();
@@ -1079,6 +1203,71 @@ void OpenALSoundRenderer::RemoveStream(OpenALSoundStream *stream)
 	unsigned int idx = Streams.Find(stream);
 	if(idx < Streams.Size())
 		Streams.Delete(idx);
+}
+
+void OpenALSoundRenderer::CacheVideoRecordingAudioSource(ALuint buffer, const FVideoRecordingAudioSourceRef &source)
+{
+	if (source == nullptr)
+		return;
+	const uint64_t bytes = I_GetVideoRecordingAudioSourceBytes(source);
+	if (bytes == 0)
+		return;
+	const uint64_t target = I_IsVideoRecordingAudioActive() ?
+		VIDEO_RECORDING_AUDIO_ACTIVE_CACHE_BYTES : VIDEO_RECORDING_AUDIO_IDLE_CACHE_BYTES;
+
+	RemoveVideoRecordingAudioSource(buffer);
+	if (bytes > target)
+		return;
+	TrimVideoRecordingAudioCache(target - bytes);
+	if (VideoRecordingAudioCacheBytes > target - bytes)
+	{
+		return;
+	}
+	try
+	{
+		VideoRecordingAudioSources.emplace(buffer, FVideoRecordingAudioCacheEntry{
+			source, bytes, ++VideoRecordingAudioCacheStamp });
+		VideoRecordingAudioCacheBytes += bytes;
+	}
+	catch (const std::bad_alloc &)
+	{
+		// This cache is only a recorder aid. If its bookkeeping cannot grow,
+		// keep the live OpenAL buffer and omit that one capture source.
+		Printf(TEXTCOLOR_YELLOW "Video audio could not index a decoded source because memory is exhausted; that effect will be omitted.\n");
+	}
+}
+
+FVideoRecordingAudioSourceRef OpenALSoundRenderer::FindVideoRecordingAudioSource(ALuint buffer)
+{
+	auto entry = VideoRecordingAudioSources.find(buffer);
+	if (entry == VideoRecordingAudioSources.end())
+		return {};
+	entry->second.LastUse = ++VideoRecordingAudioCacheStamp;
+	return entry->second.Source;
+}
+
+void OpenALSoundRenderer::RemoveVideoRecordingAudioSource(ALuint buffer)
+{
+	auto entry = VideoRecordingAudioSources.find(buffer);
+	if (entry == VideoRecordingAudioSources.end())
+		return;
+	VideoRecordingAudioCacheBytes -= entry->second.Bytes;
+	VideoRecordingAudioSources.erase(entry);
+}
+
+void OpenALSoundRenderer::TrimVideoRecordingAudioCache(uint64_t targetBytes)
+{
+	while (VideoRecordingAudioCacheBytes > targetBytes && !VideoRecordingAudioSources.empty())
+	{
+		auto oldest = VideoRecordingAudioSources.begin();
+		for (auto it = VideoRecordingAudioSources.begin(); it != VideoRecordingAudioSources.end(); ++it)
+		{
+			if (it->second.LastUse < oldest->second.LastUse)
+				oldest = it;
+		}
+		VideoRecordingAudioCacheBytes -= oldest->second.Bytes;
+		VideoRecordingAudioSources.erase(oldest);
+	}
 }
 
 void OpenALSoundRenderer::SetSfxVolume(float volume)
@@ -1220,6 +1409,19 @@ SoundHandle OpenALSoundRenderer::LoadSoundRaw(uint8_t *sfxdata, int length, int 
 		warned = true;
 	}
 
+	const uint32_t sourceFrames = (uint32_t)(length / (channels * bits / 8));
+	const uint32_t sourceLoopStart = loopstart > 0 ? std::min<uint32_t>((uint32_t)loopstart, sourceFrames) : 0;
+	const uint32_t sourceLoopEnd = loopend > (int)sourceLoopStart ?
+		std::min<uint32_t>((uint32_t)loopend, sourceFrames) : sourceFrames;
+	auto captureSource = I_CreateVideoRecordingAudioSource(sfxdata, (size_t)length,
+		bits == 16 ? SampleType_Int16 : SampleType_UInt8,
+		channels == 2 ? ChannelConfig_Stereo : ChannelConfig_Mono, frequency,
+		sourceLoopStart, sourceLoopEnd);
+	if (captureSource != nullptr)
+	{
+		CacheVideoRecordingAudioSource(buffer, captureSource);
+	}
+
 	retval.data = MAKE_PTRID(buffer);
 	return retval;
 }
@@ -1311,6 +1513,13 @@ SoundHandle OpenALSoundRenderer::LoadSound(uint8_t *sfxdata, int length, int def
 		// no console messages here, please!
 	}
 
+	auto captureSource = I_CreateVideoRecordingAudioSource(data.data(), data.size(), type, chans, srate,
+		loop_start, loop_end);
+	if (captureSource != nullptr)
+	{
+		CacheVideoRecordingAudioSource(buffer, captureSource);
+	}
+
 	retval.data = MAKE_PTRID(buffer);
 	return retval;
 }
@@ -1339,6 +1548,7 @@ void OpenALSoundRenderer::UnloadSound(SoundHandle sfx)
 		schan = schan->NextChan;
 	}
 
+	RemoveVideoRecordingAudioSource(buffer);
 	alDeleteBuffers(1, &buffer);
 	getALError();
 }
@@ -1408,12 +1618,14 @@ FISoundChannel *OpenALSoundRenderer::StartSound(SoundHandle sfx, float vol, floa
 	else
 		alSourcef(source, AL_PITCH, pitch);
 
+	float captureStartOffset = 0.0f;
 	if(!reuse_chan || reuse_chan->StartTime == 0)
 	{
 		float sfxlength = (float)GetMSLength(sfx) / 1000.f;
 		float st = (chanflags & SNDF_LOOP)
 				? (sfxlength > 0 ? fmod(startTime, sfxlength) : 0)
 				: clamp<float>(startTime, 0.f, sfxlength);
+		captureStartOffset = st;
 		alSourcef(source, AL_SEC_OFFSET, st);
 	}
 	else
@@ -1426,7 +1638,11 @@ FISoundChannel *OpenALSoundRenderer::StartSound(SoundHandle sfx, float vol, floa
 				std::chrono::steady_clock::now().time_since_epoch() -
 				std::chrono::steady_clock::time_point::duration(reuse_chan->StartTime)
 			).count();
-			if(offset > 0.f) alSourcef(source, AL_SEC_OFFSET, offset);
+			if(offset > 0.f)
+			{
+				captureStartOffset = offset;
+				alSourcef(source, AL_SEC_OFFSET, offset);
+			}
 		}
 	}
 	if(getALError() != AL_NO_ERROR)
@@ -1440,6 +1656,27 @@ FISoundChannel *OpenALSoundRenderer::StartSound(SoundHandle sfx, float vol, floa
 		alSourcei(source, AL_BUFFER, 0);
 		getALError();
 		return NULL;
+	}
+	if (((chanflags & SNDF_NOPAUSE) || !SFXPaused) && I_IsVideoRecordingAudioActive())
+	{
+		auto captureSource = FindVideoRecordingAudioSource(buffer);
+		if (captureSource != nullptr)
+		{
+			ALfloat sourceOffset = captureStartOffset;
+			alGetSourcef(source, AL_SEC_OFFSET, &sourceOffset);
+			alGetError();
+			const float capturePitch = WasInWater && !(chanflags & SNDF_NOREVERB) ? pitch * PITCH_MULT : pitch;
+			const uint64_t captureEpoch = I_GetVideoRecordingAudioEpoch();
+			if (VideoRecordingAudioEpoch != captureEpoch)
+			{
+				VideoRecordingAudioEpoch = captureEpoch;
+				VideoRecordingAudioKnownSources.clear();
+			}
+			I_RecordVideoRecordingAudioEffectStart(captureEpoch, (uintptr_t)source,
+				captureSource, SfxVolume * vol, 0.0f, capturePitch,
+				(chanflags & SNDF_LOOP) != 0, std::max(0.0f, sourceOffset));
+			VideoRecordingAudioKnownSources.insert(source);
+		}
 	}
 
 	if(!(chanflags&SNDF_NOREVERB))
@@ -1580,12 +1817,14 @@ FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener
 	else
 		alSourcef(source, AL_PITCH, pitch);
 
+	float captureStartOffset = 0.0f;
 	if(!reuse_chan || reuse_chan->StartTime == 0)
 	{
 		float sfxlength = (float)GetMSLength(sfx) / 1000.f;
 		float st = (chanflags & SNDF_LOOP)
 				? (sfxlength > 0 ? fmod(startTime, sfxlength) : 0)
 				: clamp<float>(startTime, 0.f, sfxlength);
+		captureStartOffset = st;
 		alSourcef(source, AL_SEC_OFFSET, st);
 	}
 	else
@@ -1598,7 +1837,11 @@ FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener
 				std::chrono::steady_clock::now().time_since_epoch() -
 				std::chrono::steady_clock::time_point::duration(reuse_chan->StartTime)
 			).count();
-			if(offset > 0.f) alSourcef(source, AL_SEC_OFFSET, offset);
+			if(offset > 0.f)
+			{
+				captureStartOffset = offset;
+				alSourcef(source, AL_SEC_OFFSET, offset);
+			}
 		}
 	}
 	if(getALError() != AL_NO_ERROR)
@@ -1612,6 +1855,31 @@ FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener
 		alSourcei(source, AL_BUFFER, 0);
 		getALError();
 		return NULL;
+	}
+	if (((chanflags & SNDF_NOPAUSE) || !SFXPaused) && I_IsVideoRecordingAudioActive())
+	{
+		auto captureSource = FindVideoRecordingAudioSource(buffer);
+		if (captureSource != nullptr)
+		{
+			ALfloat sourceOffset = captureStartOffset;
+			alGetSourcef(source, AL_SEC_OFFSET, &sourceOffset);
+			alGetError();
+			const FVector3 delta = pos - listener->position;
+			const float capturePan = clamp<float>(sinf(atan2f(delta.Y, delta.X) - listener->angle), -1.0f, 1.0f);
+			const float distanceGain = dist_sqr < (0.0004f * 0.0004f) ? 1.0f :
+				GetRolloff(rolloff, sqrtf(dist_sqr) * distscale);
+			const float capturePitch = WasInWater && !(chanflags & SNDF_NOREVERB) ? pitch * PITCH_MULT : pitch;
+			const uint64_t captureEpoch = I_GetVideoRecordingAudioEpoch();
+			if (VideoRecordingAudioEpoch != captureEpoch)
+			{
+				VideoRecordingAudioEpoch = captureEpoch;
+				VideoRecordingAudioKnownSources.clear();
+			}
+			I_RecordVideoRecordingAudioEffectStart(captureEpoch, (uintptr_t)source,
+				captureSource, SfxVolume * vol * distanceGain, capturePan, capturePitch,
+				(chanflags & SNDF_LOOP) != 0, std::max(0.0f, sourceOffset));
+			VideoRecordingAudioKnownSources.insert(source);
+		}
 	}
 
 	if(!(chanflags&SNDF_NOREVERB))
@@ -1663,6 +1931,11 @@ void OpenALSoundRenderer::StopChannel(FISoundChannel *chan)
 		return;
 
 	ALuint source = GET_PTRID(chan->SysChannel);
+	// A reused/evicted OpenAL voice must close a captured loop or sustain at
+	// the same point it stops audibly. One-shots remain naturally length-clipped
+	// by the mixer even when the engine does not send an explicit stop.
+	if (I_IsVideoRecordingAudioActive())
+		I_RecordVideoRecordingAudioEffectStop(I_GetVideoRecordingAudioEpoch(), (uintptr_t)source);
 	// Release first, so it can be properly marked as evicted if it's being killed
 	soundEngine->ChannelEnded(chan);
 
@@ -1677,6 +1950,7 @@ void OpenALSoundRenderer::StopChannel(FISoundChannel *chan)
 		ReverbSfx.Delete(i);
 	if((i=SfxGroup.Find(source)) < SfxGroup.Size())
 		SfxGroup.Delete(i);
+	VideoRecordingAudioKnownSources.erase(source);
 
 	if (!(chan->ChanFlags & CHANF_EVICTED))
 		soundEngine->SoundDone(chan);
@@ -2026,6 +2300,78 @@ bool OpenALSoundRenderer::TryReopenDevice()
 void OpenALSoundRenderer::UpdateSounds()
 {
 	alProcessUpdatesSOFT();
+
+	// Do not make the game tick wait for the music worker. A successful
+	// try-lock publishes a source/latency-derived clock for queued stream
+	// buffers; the worker consumes only that atomic snapshot when it copies
+	// PCM into the recorder tap.
+	if (I_IsVideoRecordingAudioActive())
+	{
+		VideoRecordingAudioCaptureWasActive = true;
+		const uint64_t captureEpoch = I_GetVideoRecordingAudioEpoch();
+		if (VideoRecordingAudioEpoch != captureEpoch)
+		{
+			VideoRecordingAudioEpoch = captureEpoch;
+			VideoRecordingAudioKnownSources.clear();
+		}
+
+		// Capture loops/sustains that were already playing when the user began
+		// recording. A source is claimed once per take; a paused source is left
+		// unclaimed and is picked up only after it actually resumes.
+		for (uint32_t i = 0; i < SfxGroup.Size(); ++i)
+		{
+			const ALuint source = SfxGroup[i];
+			if (VideoRecordingAudioKnownSources.find(source) != VideoRecordingAudioKnownSources.end())
+				continue;
+			ALint state = AL_INITIAL;
+			ALint bufferID = 0;
+			ALint looping = AL_FALSE;
+			ALfloat gain = 0.0f;
+			ALfloat pitch = 1.0f;
+			ALfloat offset = 0.0f;
+			alGetSourcei(source, AL_SOURCE_STATE, &state);
+			alGetSourcei(source, AL_BUFFER, &bufferID);
+			alGetSourcei(source, AL_LOOPING, &looping);
+			alGetSourcef(source, AL_GAIN, &gain);
+			alGetSourcef(source, AL_PITCH, &pitch);
+			alGetSourcef(source, AL_SEC_OFFSET, &offset);
+			if (alGetError() != AL_NO_ERROR || state != AL_PLAYING || bufferID == 0)
+				continue;
+			auto captureSource = FindVideoRecordingAudioSource((ALuint)bufferID);
+			if (captureSource == nullptr)
+			{
+				VideoRecordingAudioKnownSources.insert(source);
+				continue;
+			}
+			I_RecordVideoRecordingAudioEffectStart(captureEpoch, (uintptr_t)source, captureSource,
+				std::max(0.0f, gain), 0.0f, std::max(0.0001f, pitch), looping == AL_TRUE,
+				std::max(0.0f, offset));
+			VideoRecordingAudioKnownSources.insert(source);
+		}
+
+		std::unique_lock<std::mutex> streamLock(StreamLock, std::try_to_lock);
+		if (streamLock.owns_lock())
+		{
+			for (size_t i = 0; i < Streams.Size(); ++i)
+			{
+				Streams[i]->UpdateVideoCaptureClock();
+			}
+		}
+	}
+	else
+	{
+		// A take may temporarily allow the cache to reach 96 MiB so already
+		// loaded effects remain capturable. As soon as capture ends, trim it
+		// deterministically back to the 24 MiB idle LRU target rather than
+		// retaining a recording-sized cache until another sound happens to load.
+		if (VideoRecordingAudioCaptureWasActive || VideoRecordingAudioCacheBytes > VIDEO_RECORDING_AUDIO_IDLE_CACHE_BYTES)
+		{
+			TrimVideoRecordingAudioCache(VIDEO_RECORDING_AUDIO_IDLE_CACHE_BYTES);
+			VideoRecordingAudioCaptureWasActive = false;
+		}
+		VideoRecordingAudioEpoch = 0;
+		VideoRecordingAudioKnownSources.clear();
+	}
 
 	if(ALC.EXT_disconnect)
 	{

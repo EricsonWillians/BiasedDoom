@@ -33,6 +33,7 @@
 */
 
 #include <stdint.h>
+#include <ctype.h>
 
 #include "cmdlib.h"
 #include "keydef.h"
@@ -159,7 +160,8 @@ FKeyBindings AutomapBindings;
 static bool BindIsCommand(const char *bind, const char *command, size_t commandLength)
 {
 	return bind != nullptr && strnicmp(bind, command, commandLength) == 0 &&
-		(bind[commandLength] == '\0' || bind[commandLength] == ' ');
+		(bind[commandLength] == '\0' || bind[commandLength] == ';' ||
+			isspace(static_cast<unsigned char>(bind[commandLength])));
 }
 
 static bool BindIsScreenshotCommand(const char *bind)

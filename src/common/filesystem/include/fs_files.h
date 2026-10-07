@@ -387,11 +387,21 @@ public:
 	virtual ptrdiff_t Tell();
 	virtual ptrdiff_t Seek(ptrdiff_t offset, int mode);
 	size_t Printf(const char *fmt, ...);
+	// Most legacy callers intentionally ignore close errors. Exporters that
+	// need to guarantee a completed artifact can use this to observe failures
+	// reported only when stdio flushes buffered data at close time.
+	bool CloseChecked()
+	{
+		if (File == nullptr) return true;
+		const int flushResult = fflush(File);
+		const int closeResult = fclose(File);
+		File = nullptr;
+		return flushResult == 0 && closeResult == 0;
+	}
 
 	virtual void Close()
 	{
-		if (File != NULL) fclose(File);
-		File = nullptr;
+		(void)CloseChecked();
 	}
 
 protected:

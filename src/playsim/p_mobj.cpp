@@ -6588,11 +6588,6 @@ AActor *FLevelLocals::SpawnPlayer (FPlayerStart *mthing, int playernum, int flag
 		StatusBar->AttachToPlayer (p);
 	}
 
-	if (multiplayer)
-	{
-		P_SpawnTeleportFog(mobj, mobj->Vec3Angle(20., mobj->Angles.Yaw, 0.), false, true);
-	}
-
 	// "Fix" for one of the starts on exec.wad MAP01: If you start inside the ceiling,
 	// drop down below it, even if that means sinking into the floor.
 	if (mobj->Top() > mobj->ceilingz)
@@ -6600,40 +6595,61 @@ AActor *FLevelLocals::SpawnPlayer (FPlayerStart *mthing, int playernum, int flag
 		mobj->SetZ(mobj->ceilingz - mobj->Height, false);
 	}
 
-	// [BC] Do script stuff
-	if (!(flags & SPF_TEMPPLAYER) || oldactor == nullptr)
+	// [BC] Do script stuff. Companion placement can ask to defer the
+	// externally-visible half until it has validated the pawn's final position.
+	if (!(flags & SPF_DEFERPLAYEREVENTS) && (!(flags & SPF_TEMPPLAYER) || oldactor == nullptr))
 	{
-		if (state == PST_ENTER || (state == PST_LIVE && !savegamerestore))
-		{
-			Behaviors.StartTypedScripts (SCRIPT_Enter, p->mo, true);
-			localEventManager->PlayerSpawned(PlayerNum(p));
-		}
-		else if (state == PST_REBORN)
-		{
-			assert (oldactor != NULL);
-
-			// before relocating all pointers to the player all sound targets
-			// pointing to the old actor have to be NULLed. Otherwise all
-			// monsters who last targeted this player will wake up immediately
-			// after the player has respawned.
-			AActor *th;
-			auto it = GetThinkerIterator<AActor>();
-			while ((th = it.Next()))
-			{
-				if (th->LastHeard == oldactor) th->LastHeard = nullptr;
-			}
-			for(auto &sec : sectors)
-			{
-				if (sec.SoundTarget == oldactor) sec.SoundTarget = nullptr;
-			}
-
-			PlayerPointerSubstitution (oldactor, p->mo, false);
-
-			localEventManager->PlayerRespawned(PlayerNum(p));
-			Behaviors.StartTypedScripts (SCRIPT_Respawn, p->mo, true);
-		}
+		FinishDeferredPlayerSpawn(playernum, oldactor, state);
 	}
 	return mobj;
+}
+
+void FLevelLocals::FinishDeferredPlayerSpawn(int playernum, AActor *oldactor, uint8_t state)
+{
+	if ((unsigned)playernum >= (unsigned)MAXPLAYERS || !PlayerInGame(playernum))
+	{
+		return;
+	}
+
+	player_t *p = Players[playernum];
+	AActor *mobj = p->mo;
+	if (mobj == nullptr)
+	{
+		return;
+	}
+
+	if (multiplayer)
+	{
+		// This must use the final accepted location. In particular, companion
+		// fallback placement may have moved the provisional pawn several times.
+		P_SpawnTeleportFog(mobj, mobj->Vec3Angle(20., mobj->Angles.Yaw, 0.), false, true);
+	}
+
+	if (state == PST_ENTER || (state == PST_LIVE && !savegamerestore))
+	{
+		Behaviors.StartTypedScripts(SCRIPT_Enter, mobj, true);
+		localEventManager->PlayerSpawned(PlayerNum(p));
+	}
+	else if (state == PST_REBORN && oldactor != nullptr)
+	{
+		// Before relocating all pointers to the player all sound targets
+		// pointing to the old actor have to be NULLed. Otherwise all monsters
+		// who last targeted this player will wake up immediately after respawn.
+		AActor *th;
+		auto it = GetThinkerIterator<AActor>();
+		while ((th = it.Next()))
+		{
+			if (th->LastHeard == oldactor) th->LastHeard = nullptr;
+		}
+		for (auto &sec : sectors)
+		{
+			if (sec.SoundTarget == oldactor) sec.SoundTarget = nullptr;
+		}
+
+		PlayerPointerSubstitution(oldactor, mobj, false);
+		localEventManager->PlayerRespawned(PlayerNum(p));
+		Behaviors.StartTypedScripts(SCRIPT_Respawn, mobj, true);
+	}
 }
 
 //

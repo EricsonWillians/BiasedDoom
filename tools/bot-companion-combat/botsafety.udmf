@@ -1,0 +1,23 @@
+namespace = "zdoom";
+
+// The solid friendly imp fills this narrow corridor.  Player 1 is behind the
+// companion and never fires; a valid companion must see the hostile behind the
+// blocker as a no-fire lane, not an autoaim opportunity.  The 64-unit width
+// also prevents the companion from walking around the blocker during the
+// observation window.
+thing { x = 64.0;  y = 32.0; angle = 0;   type = 1;     skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; single = true; coop = true; dm = true; }
+thing { x = 160.0; y = 32.0; angle = 0;   type = 2;     skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; single = true; coop = true; dm = true; }
+thing { x = 320.0; y = 32.0; angle = 180; type = 32001; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; single = true; coop = true; dm = true; id = 32001; }
+thing { x = 480.0; y = 32.0; angle = 180; type = 32000; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; single = true; coop = true; dm = true; id = 32000; }
+
+vertex { x = 0.0;   y = 0.0; }
+vertex { x = 640.0; y = 0.0; }
+vertex { x = 640.0; y = 64.0; }
+vertex { x = 0.0;   y = 64.0; }
+
+sector { heightfloor = 0; heightceiling = 128; lightlevel = 192; texturefloor = "FLOOR4_8"; textureceiling = "CEIL3_5"; }
+sidedef { sector = 0; texturemiddle = "STARTAN3"; }
+linedef { v1 = 0; v2 = 3; sidefront = 0; }
+linedef { v1 = 3; v2 = 2; sidefront = 0; }
+linedef { v1 = 2; v2 = 1; sidefront = 0; }
+linedef { v1 = 1; v2 = 0; sidefront = 0; }

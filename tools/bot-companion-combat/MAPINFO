@@ -1,0 +1,9 @@
+map BOTFIGHT "Companion Combat"
+{
+    sky1 = "SKY1"
+}
+
+map BOTSFE "Companion Combat Safety"
+{
+    sky1 = "SKY1"
+}

@@ -64,6 +64,63 @@ struct RenderingPresets native version("4.15")
 	native static int GetGraphicsPresetFog(int preset);
 }
 
+// The companion roster is engine-owned data: it may come from bots.cfg or
+// from BiasedDoom's fallback roster, and it is available before either a
+// normal map or a procedural map begins. Keep the menu-facing surface small
+// and profile-specific so UI code cannot mutate arbitrary player userinfo.
+struct CompanionBots native version("4.15")
+{
+	// The roster is profile-backed rather than a blind count. These accessors
+	// keep the menu truthful about a zero-sized squad, host authority, and the
+	// distinction between a planned, joining, and active companion.
+	native static bool CanManage();
+	native static int GetEnabledCount();
+	native static int GetCapacity();
+	native static bool IsProfileEnabled(int profile);
+	// 0 = inactive, 1 = planned, 2 = active, 3 = joining, 4 = waiting for a
+	// free co-op place. The text accessor is the UI-facing form.
+	native static int GetProfileState(int profile);
+	native static String GetProfileStateText(int profile);
+	native static String GetProfileLiveName(int profile);
+	// False for a current or selected deathmatch. Profiles can still be saved
+	// there for a later cooperative run.
+	native static bool CanDeploy();
+	// True only when a new profile and an actually usable roster identity both
+	// exist. It deliberately does not require an open co-op place, because a
+	// squad can be prepared for a later map.
+	native static bool CanBeginDraft();
+	native static int BeginDraft();
+	// Starts a normal draft with a fully host-selected random identity,
+	// skin/default, appearance style, and combat skill. The result stays a
+	// draft until the player explicitly deploys it.
+	native static int BeginRandomDraft();
+	native static int GetDraftProfile();
+	// Re-rolls the currently open draft without changing membership or spawning
+	// a pawn. The host commits all four profile fields atomically.
+	native static bool RandomizeDraft();
+	native static int DeployDraft();
+	native static void CancelDraft();
+	native static bool RemoveProfile(int profile);
+
+	native static int GetRosterCount();
+	native static String GetRosterName(int index);
+	// 0 = available, 1 = joining, 2 = active.
+	native static int GetRosterState(int index);
+	native static int GetSkinCount();
+	native static String GetSkinName(int index);
+
+	native static String GetProfileName(int profile);
+	native static String GetProfileSkin(int profile);
+	native static int GetProfileStyle(int profile);
+	native static int GetProfileSkill(int profile);
+	native static String GetStyleName(int style);
+	native static String GetSkillName(int skill);
+	native static bool SetProfileName(int profile, String value);
+	native static bool SetProfileSkin(int profile, String value);
+	native static bool SetProfileStyle(int profile, int style);
+	native static bool SetProfileSkill(int profile, int skill);
+}
+
 struct JoystickConfig native version("2.4")
 {
 	enum EJoyAxis

@@ -203,6 +203,11 @@ public:
 	AActor *SpawnMapThing(FMapThing *mthing, int position);
 	AActor *SpawnMapThing(int index, FMapThing *mt, int position);
 	AActor *SpawnPlayer(FPlayerStart *mthing, int playernum, int flags = 0);
+	void ReportPredictionObjectWarning(const char *verb, const char *className);
+	// Completes the externally-visible portion of a deferred SpawnPlayer call.
+	// Companion placement uses this after its collision-clear position has been
+	// proven, so a rejected provisional pad cannot fire spawn scripts or fog.
+	void FinishDeferredPlayerSpawn(int playernum, AActor *oldactor, uint8_t spawnState);
 	void StartLightning();
 	void ForceLightning(int mode, FSoundID tempSound = NO_SOUND);
 	void ClearDynamic3DFloorData();
@@ -262,13 +267,18 @@ public:
 	// g_Game
 	void PlayerReborn (int player);
 	bool CheckSpot (int playernum, FPlayerStart *mthing);
-	void DoReborn (int playernum, bool force = false);
+	// joiningCompanion is only true for a freshly replicated companion add.
+	// It lets the bot lifecycle discard an impossible spawn without emitting a
+	// disconnect event for a player that never finished entering the map.
+	void DoReborn (int playernum, bool force = false, bool joiningCompanion = false);
 	void QueueBody (AActor *body);
 	double PlayersRangeFromSpot (FPlayerStart *spot);
 	FPlayerStart *SelectFarthestDeathmatchSpot (size_t selections);
 	FPlayerStart *SelectRandomDeathmatchSpot (int playernum, unsigned int selections);
 	void DeathMatchSpawnPlayer (int playernum);
 	FPlayerStart *PickPlayerStart(int playernum, int flags = 0);
+	FPlayerStart *PickCompanionStart(int playernum, FPlayerStart &fallback, AActor *occupancyProbe = nullptr,
+		const TArray<DVector2> *rejected = nullptr);
 	bool DoCompleted(FString nextlevel, wbstartstruct_t &wminfo);
 	void StartTravel();
 	void AddToTravellingList(DThinker* th);
@@ -462,7 +472,9 @@ public:
 	DThinker *CreateThinker(PClass *cls, int statnum = STAT_DEFAULT)
 	{
 		if (bPredictionGuard)
-			DPrintf(DMSG_WARNING, TEXTCOLOR_RED "Spawned non-client-side Thinker %s while predicting\n", cls->TypeName.GetChars());
+		{
+			P_ReportPredictionObjectWarning("Spawned non-client-side Thinker", cls->TypeName.GetChars());
+		}
 		DThinker *thinker = static_cast<DThinker*>(cls->CreateNew());
 		assert(thinker->IsKindOf(RUNTIME_CLASS(DThinker)));
 		thinker->ObjectFlags |= OF_JustSpawned;
@@ -528,6 +540,7 @@ public:
 	float SectorBleedInvWidth = 0.0f;
 	float SectorBleedInvHeight = 0.0f;
 	uint64_t SectorBleedHash = 0;
+	uint64_t SectorBleedLastCheck = 0;		// I_msTimeFS() stamp of the last full sector-input validation
 	uint64_t SectorBleedLastRebuild = 0;	// I_msTimeFS() stamp of the last rebuild/upload
 	float SectorBleedDistance = 0.0f;
 	TArray<uint8_t> SectorBleedData;
@@ -623,6 +636,11 @@ public:
 	FInterpolator interpolator;
 
 	uint64_t	ShaderStartTime = 0;	// tell the shader system when we started the level (forces a timer restart)
+	// Prediction compatibility diagnostics are deliberately per-map. They are
+	// not game state and do not belong in saves; their sole purpose is to keep a
+	// broken client-side effect from turning warning output into a resource leak.
+	unsigned int PredictionObjectWarningCount = 0;
+	bool PredictionObjectWarningsSuppressed = false;
 
 	static const int BODYQUESIZE = 32;
 	TObjPtr<AActor*> bodyque[BODYQUESIZE];

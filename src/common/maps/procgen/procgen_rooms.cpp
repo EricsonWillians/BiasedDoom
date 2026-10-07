@@ -1642,10 +1642,13 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 			for (int x = 0; x < W; ++x)
 			{
 				const ProcGenCell& source = Grid[y][x];
+				// The selected edge still belongs to this exact source cell even when
+				// coherence merged it with support cells. Requiring a singleton room
+				// here used to discard otherwise feasible mandatory stair fallbacks.
 				if (!source.present || !source.onMainPath || source.lockStage != constraint.stage ||
 					source.hasPlayerStart || source.hasKey || source.hasExit || source.isLocked ||
 					source.verticalAnchor || source.roomId < 0 ||
-					source.roomId >= (int)Rooms.Size() || Rooms[source.roomId].cellCount != 1)
+					source.roomId >= (int)Rooms.Size())
 					continue;
 				for (int direction = 0; direction < 4; ++direction)
 				{
@@ -2116,7 +2119,12 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 	// component-graph chain here, after every door terrace and eight-unit stair
 	// relation is known.  This solves only group bases; vertical beat offsets
 	// remain rigid, and every graph edge is still clamped to a 64-unit walk.
-	const bool wantsExtremeTerrain = Verticality == 2 && Size >= 3 &&
+	// Moderate runs carry the same minimum 96-unit relief contract as the
+	// emitted-map validator. Re-anchor their signed horizon after safe terrace
+	// projection just as we do dramatic runs; the solver still proves every
+	// inter-room transition is no more than a 64-unit stair.
+	const bool wantsExtremeTerrain =
+		((Verticality == 2 && Size >= 3) || Verticality == 1) &&
 		blueprint.MainRouteElevationTarget != 0 && startGroup >= 0;
 	if (wantsExtremeTerrain)
 	{
@@ -2994,9 +3002,18 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			room.healthType = majorFight ? 2012 : 2011;
 			room.healthCount = majorFight || plannedReserve ? 2 : 1;
 		}
-		if ((!room.hasHealth && room.onMainPath && (RNG() % 100) < 55) ||
-			(!room.onMainPath && room.branchDepth >= 2))
-			room.healthBonusCount = 2 + (room.branchDepth >= 2 ? 2 : 0);
+		const bool deepOptional = !room.onMainPath && room.branchDepth >= 2;
+		if ((!room.hasHealth && room.onMainPath && (RNG() % 100) < 55) || deepOptional)
+		{
+			// Every deep limb remains visibly rewarding, but four health bonuses in
+			// every one turn a large, branch-heavy run into thousands of redundant
+			// actors. Hash-select the richer trail without consuming layout RNG; the
+			// later cache/secret passes still promote their deliberate rewards to four.
+			const bool extendedTrail = deepOptional &&
+				(RoomPlanHash(blueprint.RecipeHash, room.id, room.branchDepth,
+					0xb0a5) & 1u) != 0u;
+			room.healthBonusCount = deepOptional ? (extendedTrail ? 4 : 2) : 2;
+		}
 		if (room.hasKey || room.hasBoss || (room.isDeadEnd && room.branchDepth >= 2 && (RNG() % 100) < 40))
 		{
 			room.hasArmor = true;
@@ -3247,6 +3264,85 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 			directRecovery++;
 			if (directRecovery >= minimumDirectRecovery) break;
 		}
+	}
+
+	// Health bonuses make distant side routes legible at a glance, but they are
+	// still individual actors. A large, branch-heavy layout used to give every
+	// deep optional room two or four bonuses, which could overwhelm the authored
+	// combat/recovery actors at the supported extreme sizes. Keep the rewarding
+	// reads while applying one deterministic map-scale ledger: route-critical
+	// reserves, secrets, and deliberate caches are retained before incidental
+	// deep-branch trails. This is presentation-only planning, so it neither
+	// changes the shared RNG stream nor weakens the direct-recovery contract.
+	struct HealthBonusLedgerEntry
+	{
+		int roomId;
+		int priority;
+		uint32_t rank;
+	};
+	TArray<HealthBonusLedgerEntry> healthBonusLedger;
+	for (const RoomInfo& room : Rooms)
+	{
+		if (room.id < 0 || room.healthBonusCount <= 0) continue;
+		int priority = 10;
+		if (room.hasPlayerStart)
+			priority = 100;
+		else if (room.hasKey || room.hasExit || room.hasBoss ||
+			room.rewardPlan == PGRW_KeyReserve || room.rewardPlan == PGRW_FinaleReserve)
+			priority = 90;
+		else if (room.isSecret)
+			priority = 80;
+		else if (room.onMainPath)
+			priority = 70;
+		else if (room.recoveryBudget > 0 || room.encounterCard == PGEC_SetPiece ||
+			room.encounterCard == PGEC_HoldingLine)
+			priority = 60;
+		else if (room.optionalArmory || room.rewardPlan == PGRW_Cache ||
+			room.rewardPlan == PGRW_Armory)
+			priority = 50;
+		else if (room.isDeadEnd && room.branchDepth >= 2)
+			priority = 40;
+		for (int bonus = 0; bonus < room.healthBonusCount; ++bonus)
+		{
+			HealthBonusLedgerEntry entry;
+			entry.roomId = room.id;
+			entry.priority = priority;
+			entry.rank = RoomPlanHash(blueprint.RecipeHash, room.id, bonus, 0xb0a6);
+			healthBonusLedger.Push(entry);
+		}
+	}
+	const int healthBonusBudget = std::max(24, Size *
+		(Detail == 2 ? 18 : (Detail == 0 ? 10 : 14)));
+	for (unsigned int index = 0; index < healthBonusLedger.Size(); ++index)
+	{
+		unsigned int best = index;
+		for (unsigned int candidate = index + 1;
+			candidate < healthBonusLedger.Size(); ++candidate)
+		{
+			const HealthBonusLedgerEntry& left = healthBonusLedger[candidate];
+			const HealthBonusLedgerEntry& right = healthBonusLedger[best];
+			if (left.priority > right.priority ||
+				(left.priority == right.priority &&
+					(left.rank > right.rank ||
+						(left.rank == right.rank && left.roomId < right.roomId))))
+				best = candidate;
+		}
+		if (best != index)
+		{
+			HealthBonusLedgerEntry saved = healthBonusLedger[index];
+			healthBonusLedger[index] = healthBonusLedger[best];
+			healthBonusLedger[best] = saved;
+		}
+	}
+	for (RoomInfo& room : Rooms)
+		room.healthBonusCount = 0;
+	const unsigned int retainedHealthBonuses = std::min(
+		healthBonusLedger.Size(), (unsigned int)healthBonusBudget);
+	for (unsigned int index = 0; index < retainedHealthBonuses; ++index)
+	{
+		const int roomId = healthBonusLedger[index].roomId;
+		if (roomId >= 0 && roomId < (int)Rooms.Size())
+			Rooms[roomId].healthBonusCount++;
 	}
 
 	for (int y = 0; y < H; y++)

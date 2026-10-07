@@ -53,6 +53,7 @@
 #include "c_dispatch.h"
 #include "filesystem.h"
 #include "p_local.h" 
+#include "p_checkposition.h"
 #include "gstrings.h"
 #include "r_sky.h"
 #include "g_game.h"
@@ -1263,6 +1264,7 @@ void G_Ticker ()
 		switch (gameaction)
 		{
 		case ga_recordgame:
+			G_CommitQueuedDemoRecording();
 			G_CheckDemoStatus();
 			G_RecordDemo(newdemoname.GetChars());
 			G_BeginRecording(newdemomap.GetChars());
@@ -1339,6 +1341,12 @@ void G_Ticker ()
 
 	// get commands
 	const int curTic = gametic / TicDup;
+
+	// A host streams an already-generated procedural archive through ordinary
+	// tic events before it emits the normal map-change event. Keeping this in
+	// the game tick gives the transfer the engine's normal ordering and resend
+	// guarantees without blocking the current co-op map.
+	P_TickNetworkProceduralMapTransfer();
 
 	//Added by MC: For some of that bot stuff. The main bot function.
 	primaryLevel->BotInfo.Main (primaryLevel);
@@ -1801,7 +1809,126 @@ void FLevelLocals::QueueBody (AActor *body)
 // G_DoReborn
 //
 EXTERN_CVAR(Bool, sv_singleplayerrespawn)
-void FLevelLocals::DoReborn (int playernum, bool force)
+
+namespace
+{
+	bool IsRejectedCompanionStart(const FPlayerStart& start, const TArray<DVector2>* rejected)
+	{
+		if (rejected == nullptr)
+		{
+			return false;
+		}
+		for (const DVector2& point : *rejected)
+		{
+			if (point.X == start.pos.X && point.Y == start.pos.Y)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	FPlayerStart* PickOpenCompanionStart(FLevelLocals& level, int playernum,
+		const TArray<DVector2>* rejected)
+	{
+		// Prefer an actually clear native co-op start over a random fallback.
+		// This covers ordinary maps that provide P2–P8 without treating a
+		// blocked start as permission to overlap a player.
+		for (unsigned int index = 0; index < level.AllPlayerStarts.Size(); ++index)
+		{
+			FPlayerStart* start = &level.AllPlayerStarts[index];
+			if (!IsRejectedCompanionStart(*start, rejected) && level.CheckSpot(playernum, start))
+				return start;
+		}
+		return nullptr;
+	}
+
+	bool FindCompanionStartNearTeam(FLevelLocals& level, int playernum, FPlayerStart& result,
+		const TArray<DVector2>* rejected)
+	{
+		// These rings are deliberately larger than a player diameter and stay
+		// in the anchor sector. They are only a last resort for old maps with a
+		// single player start, so they can never place a companion through a
+		// locked doorway or into an unrelated sector.
+		static const DVector2 offsets[] =
+		{
+			// The Cajun follower's comfortable band begins around 153 map
+			// units. Starting at 96 made a newly added companion immediately
+			// walk backwards into the spawn geometry, which is especially
+			// visible on generated maps that only contain a P1 start.
+			DVector2(176, 0), DVector2(-176, 0), DVector2(0, 176), DVector2(0, -176),
+			DVector2(176, 176), DVector2(-176, 176), DVector2(176, -176), DVector2(-176, -176),
+			DVector2(224, 0), DVector2(-224, 0), DVector2(0, 224), DVector2(0, -224),
+			DVector2(224, 224), DVector2(-224, 224), DVector2(224, -224), DVector2(-224, -224),
+			// Compact legacy starts can still use a nearer clear slot, but only
+			// after every sensible follower-distance placement was tried.
+			DVector2(128, 0), DVector2(-128, 0), DVector2(0, 128), DVector2(0, -128),
+			DVector2(96, 0), DVector2(-96, 0), DVector2(0, 96), DVector2(0, -96),
+		};
+
+		for (unsigned int anchorNum = 0; anchorNum < MAXPLAYERS; ++anchorNum)
+		{
+			if (anchorNum == (unsigned int)playernum || !level.PlayerInGame(anchorNum) ||
+				level.Players[anchorNum]->Bot != nullptr || level.Players[anchorNum]->mo == nullptr)
+			{
+				continue;
+			}
+			AActor* anchor = level.Players[anchorNum]->mo;
+			if (anchor->Sector == nullptr)
+				continue;
+			for (const DVector2& offset : offsets)
+			{
+				const DVector2 point = anchor->Pos().XY() + offset;
+				sector_t* sector = level.PointInSector(point);
+				if (sector != anchor->Sector)
+					continue;
+				FPlayerStart candidate;
+				candidate.pos = DVector3(point, 0);
+				candidate.angle = (int16_t)anchor->Angles.Yaw.Degrees();
+				candidate.type = (int16_t)(playernum + 1);
+				if (!IsRejectedCompanionStart(candidate, rejected) && level.CheckSpot(playernum, &candidate))
+				{
+					result = candidate;
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+}
+
+FPlayerStart* FLevelLocals::PickCompanionStart(int playernum, FPlayerStart& fallback,
+	AActor* occupancyProbe, const TArray<DVector2>* rejected)
+{
+	// A travelling player may not have a map doll for its slot (ordinary IWADs
+	// commonly stop at P4). Use its real pawn while testing starts so CheckSpot
+	// performs the normal full collision check instead of its first-spawn
+	// same-coordinate shortcut.
+	AActor* const savedPawn = Players[playernum]->mo;
+	if (occupancyProbe != nullptr)
+		Players[playernum]->mo = occupancyProbe;
+
+	FPlayerStart* start = nullptr;
+	if (!(flags2 & LEVEL2_RANDOMPLAYERSTARTS) &&
+		playerstarts[playernum].type != 0 &&
+		!IsRejectedCompanionStart(playerstarts[playernum], rejected) &&
+		CheckSpot(playernum, &playerstarts[playernum]))
+	{
+		start = &playerstarts[playernum];
+	}
+	else
+	{
+		start = PickOpenCompanionStart(*this, playernum, rejected);
+		if (start == nullptr && FindCompanionStartNearTeam(*this, playernum, fallback, rejected))
+			start = &fallback;
+	}
+
+	if (occupancyProbe != nullptr)
+		Players[playernum]->mo = savedPawn;
+	return start;
+}
+
+void FLevelLocals::DoReborn (int playernum, bool force, bool joiningCompanion)
 {
 	if (!multiplayer && !(flags2 & LEVEL2_ALLOWRESPAWN) && !sv_singleplayerrespawn &&
 		!G_SkillProperty(SKILLP_PlayerRespawn))
@@ -1847,8 +1974,12 @@ void FLevelLocals::DoReborn (int playernum, bool force)
 			DPrintf(DMSG_NOTIFY, "Player class NOT defined: unfriendly is %i\n", isUnfriendly);
 		}
 
-		// respawn at the start
-		// first disassociate the corpse
+		// Respawn at the start. Preserve the previous pawn/state before
+		// disassociating it: a companion's provisional spawn defers the
+		// player-facing callbacks until its collision-clear position is proven.
+		AActor *oldactor = players[playernum].mo;
+		const uint8_t spawnState = players[playernum].playerstate;
+		// First disassociate the corpse.
 		if (players[playernum].mo)
 		{
 			QueueBody (players[playernum].mo);
@@ -1862,7 +1993,67 @@ void FLevelLocals::DoReborn (int playernum, bool force)
 			return;
 		}
 
-		if (!(flags2 & LEVEL2_RANDOMPLAYERSTARTS) &&
+		const bool isCompanion = players[playernum].Bot != nullptr;
+		if (isCompanion)
+		{
+			FPlayerStart fallback;
+			TArray<DVector2> rejectedStarts;
+			// Before the companion has a real pawn, CheckSpot can only spot exact
+			// coordinate duplicates. Keep every occupied player position out of
+			// the first choice; after SpawnPlayer creates the actual companion,
+			// the loop below uses its true collision volume for every remaining
+			// candidate.
+			for (unsigned int other = 0; other < MAXPLAYERS; ++other)
+			{
+				if (other != (unsigned int)playernum && PlayerInGame(other) &&
+					Players[other]->mo != nullptr)
+				{
+					rejectedStarts.Push(Players[other]->mo->Pos().XY());
+				}
+			}
+
+			FPlayerStart* start = PickCompanionStart(playernum, fallback, nullptr, &rejectedStarts);
+			AActor* mo = start != nullptr ? SpawnPlayer(start, playernum, SPF_DEFERPLAYEREVENTS) : nullptr;
+			while (mo != nullptr && start != nullptr)
+			{
+				// SpawnPlayer establishes the player/DBot relationship once. Test
+				// the actual class-sized pawn at each candidate and move that same
+				// pawn instead of repeating PlayerReborn or accepting the first
+				// nominal start that happens to be blocked by scenery or an actor.
+				FCheckPosition position;
+				if (BotInfo.SafeCheckPosition(mo, start->pos.X, start->pos.Y, position) &&
+					position.ceilingz - position.floorz >= mo->Height &&
+					P_TeleportMove(mo, DVector3(start->pos.X, start->pos.Y, position.floorz), false, true))
+				{
+					mo->Angles.Yaw = DAngle::fromDeg(start->angle);
+					break;
+				}
+
+				rejectedStarts.Push(start->pos.XY());
+				start = PickCompanionStart(playernum, fallback, nullptr, &rejectedStarts);
+				if (start == nullptr)
+				{
+					mo = nullptr;
+				}
+			}
+			if (mo == nullptr)
+			{
+				// Some legacy maps ship only P1. Never retain a live player slot
+				// without a pawn when that pad and every same-sector fallback are
+				// blocked: the engine quite reasonably treats such a slot as corrupt.
+				// The desired squad survives and will retry after the next map load.
+				BotInfo.RejectUnplaceableCompanion(this, playernum, !joiningCompanion);
+				Printf(TEXTCOLOR_YELLOW "No collision-clear companion spawn position was found; that companion will retry on the next map.\n");
+			}
+			else
+			{
+				// SpawnPlayer has completed its internal player setup, but deliberately
+				// held back teleport fog and player-facing spawn/respawn callbacks while
+				// this pawn was only a candidate. Emit them once at the accepted pad.
+				FinishDeferredPlayerSpawn(playernum, oldactor, spawnState);
+			}
+		}
+		else if (!(flags2 & LEVEL2_RANDOMPLAYERSTARTS) &&
 			playerstarts[playernum].type != 0 &&
 			CheckSpot (playernum, &playerstarts[playernum]))
 		{
@@ -3310,8 +3501,10 @@ bool G_CheckDemoStatus (void)
 		if (fw != nullptr)
 		{
 			const size_t size = demo_p.Data() - demobuffer.Data();
-			saved = fw->Write(demobuffer.Data(), size) == size;
+			const bool wrote = fw->Write(demobuffer.Data(), size) == size;
+			const bool closed = fw->CloseChecked();
 			delete fw;
+			saved = wrote && closed;
 			if (!saved) RemoveFile(demoname.GetChars());
 		}
 		demobuffer.Reset();

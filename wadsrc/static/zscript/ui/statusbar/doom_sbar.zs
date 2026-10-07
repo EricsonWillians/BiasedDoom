@@ -59,7 +59,11 @@ class DoomStatusBar : BaseStatusBar
 			DrawBarWeapons();
 		}
 		
-		if (multiplayer)
+		// STFBANY is the bright player-color backing used to distinguish real
+		// multiplayer portraits. Local companion squads set multiplayer for game
+		// rules, but the backing leaks through deliberately transparent legacy
+		// faces (including Year Zero's), so retain the normal single-player bar.
+		if (multiplayer && !IsLocalCompanionCoop())
 		{
 			DrawImage("STFBANY", (143, 168), DI_ITEM_OFFSETS|DI_TRANSLATABLE);
 		}

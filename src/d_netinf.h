@@ -56,7 +56,29 @@ void D_UserInfoChanged (FBaseCVar *info);
 
 bool D_SendServerInfoChange (FBaseCVar *cvar, UCVarValue value, ECVarType type);
 bool D_SendServerFlagChange (FBaseCVar *cvar, int bitnum, bool set, bool silent);
-void D_DoServerInfoChange (TArrayView<uint8_t>& stream, bool singlebit);
+// A small transactional group for host-owned companion settings. It either
+// queues every serialized CVar record and then applies them locally, or leaves
+// both the local roster configuration and the network event stream unchanged.
+// The caller owns string storage until this function returns.
+struct FCompanionServerInfoChange
+{
+	FBaseCVar *CVar;
+	UCVarValue Value;
+	ECVarType Type;
+};
+bool D_ApplyCompanionServerInfoChangesAtomically(const FCompanionServerInfoChange *changes, unsigned count);
+// Host migration carries this self-contained authoritative
+// companion snapshot with the host's exit packet, including any edit queued
+// for the current tic but not yet broadcast in a normal command stream.
+bool D_BuildCompanionServerInfoSnapshot(TArray<uint8_t> &snapshot);
+bool D_ApplyCompanionServerInfoSnapshot(TArrayView<uint8_t> &snapshot, int sender);
+// `sender` is needed for the small set of host-owned server settings whose
+// values must not be delegated to a generic settings controller.
+void D_DoServerInfoChange (TArrayView<uint8_t>& stream, bool singlebit, int sender);
+// True only while a replicated server-CVar record is being forced locally.
+// Custom CVars use this to distinguish an inbound projection from a player's
+// explicit local edit without guessing from network role or event timing.
+bool D_IsApplyingServerInfoChange();
 
 FString D_GetUserInfoStrings(int pnum, bool compact = false);
 void D_ReadUserInfoStrings (int player, TArrayView<uint8_t>& stream, bool update);

@@ -560,6 +560,25 @@ struct ProcGenAccessibilityAnchor
 	double clearRadius = 0.0;
 };
 
+// Doom's native map grammar has eight numbered cooperative player starts.
+// Keep their post-emission evidence separate from the canonical P1
+// progression anchor: every generated map emits all eight starts regardless of
+// the current party, while the symbolic key solver deliberately begins at P1.
+// The records name final UDMF things and the landmark sector that owns their
+// clear pads so manifests and regression tooling can independently audit the
+// co-op staging contract.
+struct ProcGenCooperativeStart
+{
+	int player = 0; // Native Doom player slot, one-based (P1 through P8).
+	int thingIndex = -1;
+	int thingType = 0;
+	int roomId = -1;
+	int landmarkSector = -1;
+	double x = 0.0;
+	double y = 0.0;
+	double clearRadius = 0.0;
+};
+
 // A final collision lane owned by one proven coarse-cell connection.  A
 // room-merge lane intentionally has no portal linedef: its two cells share a
 // sector only after the emitter has kept this explicit clear capsule.  The
@@ -648,6 +667,10 @@ public:
 
 	bool Generate();
 	const FString& GetUDMFText() const { return UDMFBuffer; }
+	// The level loader owns a private copy while a procedural level is live.
+	// Once that level has finished, discard this cached source instead of
+	// retaining its potentially large allocation until the next generated map.
+	void DiscardUDMFText() { UDMFBuffer = ""; }
 	const char* GetLastError() const { return LastError.GetChars(); }
 
 	static FProceduralMapGenerator& GetInstance();
@@ -693,6 +716,7 @@ private:
 	int AccessibilityRequiredKeyMask = 0;
 	int AccessibilityExitKeyMask = 0;
 	TArray<ProcGenAccessibilityAnchor> AccessibilityAnchors;
+	TArray<ProcGenCooperativeStart> CooperativeStarts;
 	int AccessibilityRoomMergeCorridors = 0;
 	int AccessibilitySwitchCacheActions = 0;
 	int AccessibilitySwitchCacheRewards = 0;
@@ -745,6 +769,11 @@ bool P_IsProceduralMapName(const char* mapname);
 FString P_GetProceduralMusic();
 const FProceduralMapArchiveData* P_GetCurrentProceduralMapArchive();
 
+// Release the active map's source archive after level-completion processing.
+// This intentionally keeps CompletedProceduralMap, which stores only the
+// compact replay recipe, intact.
+void P_ReleaseCurrentProceduralMapArchive();
+
 // A completed procedural map can be replayed from the menu with a fresh seed
 // while retaining its exact seven non-seed recipe settings. The completion
 // marker is deliberately runtime-only: savegames continue to restore their
@@ -754,3 +783,24 @@ bool P_PrepareNextProceduralMap();
 
 bool P_StageProceduralMapArchive(int seed, const char* theme, int difficulty,
 	int size, int layout, int verticality, int detail, int outdoors, FString udmf);
+
+// Multiplayer keeps generator output authoritative without assuming the
+// participants have matching IWAD map data or prior generator output. The
+// current host prepares one exact archive, transfers it over the normal
+// reliable tic-event path, and only then broadcasts the regular PROCMAP
+// change. These APIs deliberately expose no new recipe setting.
+bool P_StartNetworkProceduralMapTransfer();
+void P_TickNetworkProceduralMapTransfer();
+bool P_IsNetworkProceduralMapTransferActive();
+void P_CancelNetworkProceduralMapTransfer(const char* reason = nullptr);
+// Local teardown for network/session/map-transition paths. Unlike Cancel it
+// never emits a late event after the network buffers have gone away.
+void P_ResetNetworkProceduralMapTransferState();
+// Validates and consumes only the transfer bookkeeping for the final host
+// map-change event. The staged archive remains available for P_Open...().
+bool P_ConfirmNetworkProceduralMapTransition();
+void P_HandleNetworkProceduralMapBegin(TArrayView<uint8_t>& stream, int player);
+void P_HandleNetworkProceduralMapChunk(TArrayView<uint8_t>& stream, int player);
+void P_HandleNetworkProceduralMapFinish(TArrayView<uint8_t>& stream, int player);
+void P_HandleNetworkProceduralMapAck(TArrayView<uint8_t>& stream, int player);
+void P_HandleNetworkProceduralMapAbort(TArrayView<uint8_t>& stream, int player);

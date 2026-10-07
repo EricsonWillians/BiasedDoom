@@ -1,0 +1,42 @@
+namespace = "zdoom";
+
+// Player 1 begins in the west room. Before the companion joins, the fixture
+// moves Player 1 into the north room.  The direct ray crosses a wall, while a
+// valid two-portal path goes east through the middle room and then north.
+thing { x = -80.0; y = 0.0; angle = 0; type = 1; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; single = true; coop = true; dm = true; }
+thing { x = -16.0; y = 0.0; angle = 0; type = 2; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; single = true; coop = true; dm = true; }
+
+vertex { x = -128.0; y = -64.0; }
+vertex { x = 0.0; y = -64.0; }
+vertex { x = 0.0; y = 64.0; }
+vertex { x = -128.0; y = 64.0; }
+vertex { x = 128.0; y = -64.0; }
+vertex { x = 128.0; y = 64.0; }
+vertex { x = 64.0; y = 64.0; }
+vertex { x = 128.0; y = 256.0; }
+vertex { x = 64.0; y = 256.0; }
+
+sector { heightfloor = 0; heightceiling = 128; lightlevel = 192; texturefloor = "FLOOR4_8"; textureceiling = "CEIL3_5"; }
+sector { heightfloor = 0; heightceiling = 128; lightlevel = 176; texturefloor = "FLOOR4_8"; textureceiling = "CEIL3_5"; }
+sector { heightfloor = 0; heightceiling = 128; lightlevel = 160; texturefloor = "FLOOR4_8"; textureceiling = "CEIL3_5"; }
+
+sidedef { sector = 0; texturemiddle = "STARTAN3"; }
+sidedef { sector = 1; texturemiddle = "STARTAN3"; }
+sidedef { sector = 2; texturemiddle = "STARTAN3"; }
+
+// West room, including its shared east boundary with the middle room.
+linedef { v1 = 0; v2 = 3; sidefront = 0; }
+linedef { v1 = 3; v2 = 2; sidefront = 0; }
+linedef { v1 = 2; v2 = 1; sidefront = 0; sideback = 1; }
+linedef { v1 = 1; v2 = 0; sidefront = 0; }
+
+// East middle room. The northern 64 units are shared with the north room.
+linedef { v1 = 1; v2 = 4; sidefront = 1; }
+linedef { v1 = 4; v2 = 5; sidefront = 1; }
+linedef { v1 = 5; v2 = 6; sidefront = 2; sideback = 1; }
+linedef { v1 = 6; v2 = 2; sidefront = 1; }
+
+// North room.
+linedef { v1 = 5; v2 = 7; sidefront = 2; }
+linedef { v1 = 7; v2 = 8; sidefront = 2; }
+linedef { v1 = 8; v2 = 6; sidefront = 2; }

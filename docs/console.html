@@ -1306,9 +1306,76 @@ default: 1.0
 			</div>
 			<div id="bots">
 				<h2>Bots</h2>
+				<div class="v" id="bot_companion_count">bot_companion_count</div>
+				<div class="t">integer: 0 (range 0-7)</div>
+				<div class="d">Compatibility count for friendly companion bots. The roster menu starts
+					at zero and uses saved profiles; setting this legacy count selects the first
+					N profiles on the local settings controller or network host. It does not open
+					the Add Companion draft or select a particular member to remove. The effective
+					count is limited to seven bots and eight total cooperative occupants, so
+					connected human players consume companion slots. It is a local archived projection;
+					the replicated membership mask remains authoritative. A non-zero co-op squad enables
+					the server's normal <code>sv_coopsharekeys</code> setting.
+				</div>
+				<div class="v" id="bot_companion_enabled_mask">bot_companion_enabled_mask</div>
+				<div class="t">integer: 0 (seven profile bits)</div>
+				<div class="d">Menu-managed archived and replicated membership for the seven stable
+					companion profiles. It permits sparse squads, but should not be edited directly:
+					use the Companion Bots menu or the supported companion commands instead.
+				</div>
+				<div class="v" id="bot_companion_respawn">bot_companion_respawn</div>
+				<div class="t">boolean: true</div>
+				<div class="d">Controls whether cooperative companions use the normal in-level respawn
+					flow after death. It does not change human-player respawn rules or legacy
+					deathmatch bot behavior.
+				</div>
+				<div class="v" id="bot_companion_name1">bot_companion_name1 &hellip; bot_companion_name7</div>
+				<div class="t">string: &quot;&quot;</div>
+				<div class="d">Saved identity fields for the seven companion profiles. The roster menu
+					validates identity availability and resolves an unset identity when a draft is
+					explicitly deployed.
+				</div>
+				<div class="v" id="bot_companion_skin1">bot_companion_skin1 &hellip; bot_companion_skin7</div>
+				<div class="t">string: &quot;&quot;</div>
+				<div class="d">Optional saved skin overrides for companion profiles. An empty value uses
+					the normal skin for the selected player class.
+				</div>
+				<div class="v" id="bot_companion_style1">bot_companion_style1 &hellip; bot_companion_style7</div>
+				<div class="t">integer: 0 (range 0-11)</div>
+				<div class="d">Saved appearance-style values for companion profiles. Zero preserves the
+					roster style; one through eleven select stable palette colours.
+				</div>
+				<div class="v" id="bot_companion_skill1">bot_companion_skill1 &hellip; bot_companion_skill7</div>
+				<div class="t">integer: 0 (range 0-3)</div>
+				<div class="d">Saved combat-skill values for companion profiles: roster default, Gentle
+					helper, Balanced, or Veteran.
+				</div>
+				<div class="c" id="addcompanion">addcompanion [<i>name</i>]</div>
+				<div class="b">Active-level command that creates and deploys one persistent companion
+					profile on a normal or procedural cooperative map. With no name, it resolves
+					and saves an available default identity; with a name, the active roster is
+					searched case-insensitively. It does not open the profile draft. Use the
+					Companion Bots menu to choose identity, skin, appearance style, and combat skill
+					first. Only the local settings controller or network host can add a companion.
+				</div>
+				<div class="c" id="removecompanion">removecompanion [<i>1-7</i>]</div>
+				<div class="b">Active-level command that removes a persistent companion profile and
+					clears its saved configuration. Give a profile number from one through seven to
+					remove that exact companion; without one, the highest-numbered squad member is
+					removed deterministically. The roster menu provides the visible selected-profile
+					removal UI. Only the local settings controller or network host can remove a
+					companion.
+				</div>
+				<div class="c" id="dismisscompanions">dismisscompanions</div>
+				<div class="b">Removes the active and queued companion squad, clears every saved
+					companion profile, and resets
+					<a href="#bot_companion_count">bot_companion_count</a> to zero.
+				</div>
 				<div class="c" id="addbot">addbot [<i>name</i>]</div>
-				<div class="b">Spawns a bot. If a name is given, the corresponding bot in bots.cfg 
-					will be spawned. Otherwise, a bot will be picked at random from bots.cfg.
+				<div class="b">Legacy bot command. In cooperative play it creates a persistent companion
+					profile using the supplied identity or resolving and saving an available one; in
+					deathmatch it keeps classic transient-bot behavior. It does not open the
+					Companion Bots profile draft.
 				</div>
 				<div class="v" id="bot_allowspy">bot_allowspy</div>
 				<div class="t">boolean: false</div>
@@ -1325,12 +1392,16 @@ default: 1.0
 					and bots will ignore him.
 				</div>
 				<div class="c" id="listbots">listbots</div>
-				<div class="b">Lists the bots available in bots.cfg, and indicates which are 
-					currently playing.
+				<div class="b">Lists the active bot roster and indicates which identities are
+					currently playing. A valid bots.cfg roster takes precedence; otherwise the
+					built-in companion roster is listed.
 				</div>
 				<div class="c" id="removebots">removebots</div>
-				<div class="b">Removes any bots from the game. Bots will also be automatically 
-					removed from network games when the arbitrator quits.
+				<div class="b">Legacy broad bot-removal command. In cooperative play it is an alias for
+					Dismiss all companions: it removes live/queued companions and clears their saved
+					profiles so they do not return on the next map. In deathmatch it retains classic
+					broad bot removal; bots are also automatically removed from network games when
+					the arbitrator quits. Use selected-profile removal for one roster member.
 				</div>
 			</div>
 			<div id="automap">
@@ -3130,6 +3201,7 @@ alias -creep "joy_speedmultiplier 1.0"</pre>
 				<a href="#_use">+/-use</a></p>
 			<h4>A</h4>
 			<p><a href="#addbot">addbot</a><br />
+				<a href="#addcompanion">addcompanion</a><br />
 				<a href="#addkeysection">addkeysection</a><br />
 				<a href="#addmenukey">addmenukey</a><br />
 				<a href="#addrocketexplosion">addrocketexplosion</a><br />
@@ -3175,6 +3247,13 @@ alias -creep "joy_speedmultiplier 1.0"</pre>
 			<p><a href="#bind">bind</a><br />
 				<a href="#binddefaults">binddefaults</a><br />
 				<a href="#bot_allowspy">bot_allowspy</a><br />
+				<a href="#bot_companion_count">bot_companion_count</a><br />
+				<a href="#bot_companion_enabled_mask">bot_companion_enabled_mask</a><br />
+				<a href="#bot_companion_name1">bot_companion_name1&hellip;7</a><br />
+				<a href="#bot_companion_respawn">bot_companion_respawn</a><br />
+				<a href="#bot_companion_skin1">bot_companion_skin1&hellip;7</a><br />
+				<a href="#bot_companion_skill1">bot_companion_skill1&hellip;7</a><br />
+				<a href="#bot_companion_style1">bot_companion_style1&hellip;7</a><br />
 				<a href="#bot_next_color">bot_next_color</a><br />
 				<a href="#bot_observer">bot_observer</a><br />
 				<a href="#bumpgamma">bumpgamma</a></p>
@@ -3255,6 +3334,7 @@ alias -creep "joy_speedmultiplier 1.0"</pre>
 				<a href="#defaultbind">defaultbind</a><br />
 				<a href="#demo_compress">demo_compress</a><br />
 				<a href="#developer">developer</a><br />
+				<a href="#dismisscompanions">dismisscompanions</a><br />
 				<a href="#dimamount">dimamount</a><br />
 				<a href="#dimcolor">dimcolor</a><br />
 				<a href="#dir">dir</a><br />
@@ -3436,6 +3516,7 @@ alias -creep "joy_speedmultiplier 1.0"</pre>
 				<a href="#r_viewsize">r_viewsize</a><br />
 				<a href="#r_visibility">r_visibility</a><br />
 				<a href="#rebind">rebind</a><br />
+				<a href="#removecompanion">removecompanion</a><br />
 				<a href="#removebots">removebots</a></p>
 			<h4>S</h4>
 			<p><a href="#say">say</a><br />

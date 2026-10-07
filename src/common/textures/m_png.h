@@ -43,17 +43,55 @@ enum ESSType
 {
 	SS_PAL,
 	SS_RGB,
-	SS_BGRA
+	SS_BGRA,
+	// Continuous Vulkan/OpenGL recording can retain this native four-byte
+	// readback until the background writer converts it. Keeping that conversion
+	// off the render thread is materially cheaper than assembling an RGB image
+	// before every presented frame.
+	SS_RGBA
 };
 
 // PNG Writing --------------------------------------------------------------
+
+// A reusable, single-threaded PNG deflate workspace. Ordinary one-shot
+// screenshots can continue to use M_CreatePNG directly; continuous video
+// recording keeps one of these on its writer thread so each frame does not
+// repeatedly allocate and free miniz's compressor state and row scratch.
+// The workspace deliberately owns no file state and can be reset between
+// takes to release its high-water allocation.
+class FPNGEncoder
+{
+public:
+	FPNGEncoder();
+	~FPNGEncoder();
+	FPNGEncoder(const FPNGEncoder &) = delete;
+	FPNGEncoder &operator=(const FPNGEncoder &) = delete;
+
+	bool SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height, int pitch,
+		FileWriter *file, int compressionLevel = -1);
+	void Reset();
+
+private:
+	struct FState;
+	FState *State = nullptr;
+};
 
 // Start writing an 8-bit palettized PNG file.
 // The passed file should be a newly created file.
 // This function writes the PNG signature and the IHDR, gAMA, PLTE, and IDAT
 // chunks.
 bool M_CreatePNG (FileWriter *file, const uint8_t *buffer, const PalEntry *pal,
-				  ESSType color_type, int width, int height, int pitch, float gamma);
+				  ESSType color_type, int width, int height, int pitch, float gamma,
+				  int compressionLevel = -1, float configuredGamma = 0.0f,
+				  bool useConfiguredGamma = false);
+
+// Equivalent to M_CreatePNG, but lets a continuous producer retain its
+// single-threaded encoder workspace between images. Keep M_CreatePNG's
+// established signature intact for all existing one-shot callers.
+bool M_CreatePNGWithEncoder(FileWriter *file, const uint8_t *buffer, const PalEntry *pal,
+	ESSType color_type, int width, int height, int pitch, float gamma,
+	int compressionLevel, float configuredGamma, bool useConfiguredGamma,
+	FPNGEncoder *encoder);
 
 // Creates a grayscale 1x1 PNG file. Used for savegames without savepics.
 bool M_CreateDummyPNG (FileWriter *file);
@@ -67,7 +105,8 @@ bool M_AppendPNGText (FileWriter *file, const char *keyword, const char *text);
 // Appends the IEND chunk to a PNG file.
 bool M_FinishPNG (FileWriter *file);
 
-bool M_SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height, int pitch, FileWriter *file);
+bool M_SaveBitmap(const uint8_t *from, ESSType color_type, int width, int height, int pitch,
+	FileWriter *file, int compressionLevel = -1);
 
 // PNG Reading --------------------------------------------------------------
 

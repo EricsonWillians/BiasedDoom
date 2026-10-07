@@ -29,10 +29,11 @@ BiasedDoom keeps GZDoom's WAD/PK3, DECORATE, ZScript, ACS, MD2, MD3, voxel, and 
 | Materials | PBR-oriented metallic-roughness workflow for modern model assets |
 | Rendering | OpenGL, Vulkan, GLES2, and software renderer support inherited from GZDoom, plus live runtime backend switching (`vid_preferbackend`) that rebuilds renderer resources at a frame boundary |
 | Lighting | Dynamic light shaping, falloff controls, shadows, GI-style ambient, specular/emissive tuning |
-| Post-processing | Searchable graphics/lighting/fog preset browsers (64 graphics, 38 lighting, 16 fog), atmosphere/fog, overhauled bloom with threshold/soft-knee/intensity controls, tonemapping, color grading, CRT/VHS/NTSC, SSAO, FXAA |
+| Post-processing | Searchable graphics/lighting/fog preset browsers (100 graphics, 75 lighting, 53 fog), atmosphere/fog, overhauled bloom with threshold/soft-knee/intensity controls, tonemapping, color grading, CRT/VHS/NTSC, SSAO, FXAA |
 | Camera | Menu-driven third-person camera with presets, shoulder offsets, collision padding, pitch modes, and projected crosshair |
 | Procedural levels | Recipe-derived run blueprints, five architectural themes, staged keys with collision-proven access, extreme-but-walkable terrain, and map sizes from 1 to 160 |
-| Capture and demos | Lossless PNG-frame or raw RGB-AVI capture, a configurable export folder, native ZDEM takes, and menu-bindable recording shortcuts |
+| Cooperative companions | Zero-to-seven, host-authoritative bot rosters for normal maps and Doom procedural runs; each companion has a saved identity and individual customization within an eight-occupant co-op cap |
+| Capture and demos | Lossless PNG-frame capture with synchronized WAV audio or raw RGB-AVI with PCM audio, a configurable export folder, native ZDEM takes, and menu-bindable recording shortcuts |
 | Player customization | Mod-resistant player skins plus independently configurable horizontal and vertical autoaim |
 | HUD customization | Runtime mugshot scale and position controls for stock ZScript and legacy SBARINFO status bars |
 | Scripting | Opt-in embedded CPython alongside unchanged ACS and ZScript support |
@@ -67,7 +68,7 @@ BiasedDoom exposes a large lighting stack from the in-game menus:
 
 Important controls include:
 
-- 38 lighting-style presets selectable from the searchable **Browse Lighting Presets** picker with active-preset highlighting (Custom plus Classic Balanced, Warm Cinematic, Horror Contrast, Neon Glow, Hellfire Glow, Void Dread, and 32 more).
+- 75 lighting-style presets selectable from the searchable **Browse Lighting Presets** picker with active-preset highlighting, from Classic Balanced and Warm Cinematic through Absolution and its themed variants.
 - Sector-edge light bleed smoothing (`bd_sectorlight_bleed`, `bd_sectorlight_distance`, `bd_sectorlight_strength`): a low-resolution world-space light map softens floor/ceiling sector-light transitions on OpenGL, Vulkan, and GLES.
 - Sector light mode and fog mode controls.
 - Dynamic lights for sprites and particles.
@@ -90,11 +91,11 @@ Post-processing is organized as a set of practical submenus:
 
 `Options -> Display Options -> Advanced -> Postprocess`
 
-The top-level menu includes a 64-preset Graphics selector, the searchable **Browse Graphics Presets** submenu, a Preset Locked toggle, PostFX enable, and PostFX Quality. The detailed submenus are:
+The top-level menu opens **Rendering Presets**, the single home for the 100-preset Graphics selector, 75-preset Lighting selector, 53-preset Fog selector, their searchable browsers, and **Link Preset Layers**. With linking on (the default), selecting a graphics look also applies its named lighting/fog pairing; choosing a lighting or fog preset directly makes the graphics selector **Custom**. With linking off, the three selectors can be mixed independently. PostFX enable and quality remain on the main Postprocess menu. The detailed submenus are:
 
 | Menu | What It Controls |
 |------|------------------|
-| Atmosphere / Fog | 16 searchable fog presets, atmospheric palettes, fog mode, fog color, density, scale, sky fog, wall fog, fog gradients, and fog direction |
+| Atmosphere / Fog | 53 searchable fog presets, atmospheric palettes, fog mode, fog color, density, scale, sky fog, wall fog, fog gradients, and fog direction |
 | Image Effects | Overhauled bloom with threshold, soft-knee, and intensity controls; lens effects, vignette, chromatic aberration, film grain, sharpening, and retro pixelation |
 | Color / Tonemap | Tonemap mode, palette tonemapping, color grading, color grade strength, and LUT selection |
 | Lighting / Materials | The lighting/material controls listed above |
@@ -105,7 +106,7 @@ Tonemapping includes classic and cinematic options such as Uncharted2, Hejl-Daws
 
 Atmosphere modes include Gothic, Blood, Sepia, Toxic, Hellfire, Cyberpunk, Fogbound, Bleak Blue, Otherworld, and Sodium Vapor.
 
-Preset selectors are category-independent: tweaking a lighting or fog feature marks only that family as Custom, while graphics presets reset advanced renderer features to a deterministic baseline before applying.
+Individual slider changes preserve the visible selectors while layers are linked, so a curated pairing remains easy to recognize. In unlinked mode, changing a graphics, lighting, or fog feature marks only its own family as **Custom**; a newly selected graphics preset still resets its own image-pipeline settings before applying.
 
 See [Rendering presets, bloom, and sector light bleed](docs/engine/rendering-presets.md) for the full controls and backend notes.
 
@@ -193,6 +194,25 @@ the exact generated UDMF. After a normal or secret exit, **Next Random Run
 (Same Setup)** keeps the completed setup while choosing a different seed for a
 fresh run.
 
+Friendly companion bots can join ordinary maps and generated Doom runs through
+**Options → Gameplay or Multiplayer → Companion Bots**. Procedural Game uses
+that same central roster rather than exposing a second companion setup. The
+shared roster starts at zero: **Add Companion…** opens a draft where the local
+settings controller or network host chooses identity, skin, appearance style,
+and combat skill before explicitly deploying that one companion. **Add Random
+Companion…** fills a reviewable draft with a host-replicated random identity,
+skin/default, style, and helper skill. Profiles save resolved identities across
+maps, can be removed one at a time, and **Dismiss all companions** resets the
+squad and its saved profiles.
+Network guests can inspect the roster but cannot change it. The seven-bot limit
+shares eight classic cooperative starts with human players. Network procedural
+runs transfer one host-authored, checksummed UDMF archive rather than asking
+clients to regenerate from a seed; all peers need compatible Doom-family game
+data and the same Doom/Ultimate Doom or Doom II roster context, and shared
+procedural sessions support up to eight human participants. See
+[Companion bots](docs/engine/companion-bots.md) for controls, shared-key
+behavior, limits, and host-handoff rules.
+
 See the [player and mod-author guide](docs/engine/procedural-map-generation.md)
 for the complete interface and contracts, and the
 [implementation and evaluation paper](docs/engine/procedural-generation-research-paper.md)
@@ -214,6 +234,25 @@ BiasedDoom is still a DOOM-family engine:
 - Existing GZDoom-style WAD/PK3 mods remain the baseline compatibility target.
 - Classic model formats are still supported.
 - DECORATE, ZScript, ACS, and existing renderer choices remain available.
+
+### DEHACKED, DECOHack, And MBF21 Mods
+
+Classic `.deh` and `.bex` patches continue to load through the usual command
+line, configuration, and embedded-lump paths. Current builds also recognize
+DSDHacked-format patches (`Doom version = 2021`), including the sparse
+`[SPRITES]` numbers commonly emitted by DECOHack-based MBF21 weapon mods.
+Those extended sprite mappings are stored sparsely rather than forcing a giant
+legacy sprite table: valid signed 32-bit IDs such as the conventional `8000`
+range resolve normally, while the engine caps a load at 262,144 distinct
+extended mappings to retain a predictable memory bound.
+
+This removes the historical legacy-growth rejection that could leave otherwise
+valid DECOHack weapon sprites invisible. It is not a blanket guarantee that
+every gameplay mod is compatible: a mod can still depend on missing resources,
+another mod, a particular load order, or unsupported game behavior. See
+[classic-mod compatibility](docs/engine/mod-compatibility.md) and the
+[troubleshooting guide](TROUBLESHOOTING.md) when a patch still reports a
+missing sprite.
 
 ### Python, ACS, And ZScript
 
@@ -331,7 +370,9 @@ The `-norun` diagnostic path intentionally pauses before closing in Windows GUI 
 
 ## Running The Game
 
-You need an IWAD file from a supported game:
+You need an IWAD file from a supported game. These are common examples rather
+than the complete bundled IWAD catalog; use `-findiwads` to see the titles the
+current build actually recognizes:
 
 | Game | IWAD |
 |------|------|
@@ -341,7 +382,10 @@ You need an IWAD file from a supported game:
 | Final DOOM | `TNT.WAD`, `PLUTONIA.WAD` |
 | Heretic | `HERETIC.WAD` |
 | Hexen | `HEXEN.WAD` |
+| Hexen: Deathkings | `HEXDD.WAD` plus `HEXEN.WAD` |
 | Strife | `STRIFE1.WAD` |
+| Freedoom | `FREEDOOM1.WAD`, `FREEDOOM2.WAD` |
+| Chex Quest | `CHEX.WAD`, `CHEX3.WAD` |
 
 Examples:
 
@@ -357,7 +401,7 @@ Modern and legacy Steam libraries, including Linux
 `~/.steam/debian-installation`, external libraries, Flatpak/Snap layouts,
 macOS Steam, and Windows registry/Program Files installs are supported. See
 [IWAD discovery](docs/engine/iwad-discovery.md) for search order, environment
-variables, custom recursive paths, and troubleshooting.
+variables, custom recursive paths, supported-game scope, and troubleshooting.
 
 ## Build System
 

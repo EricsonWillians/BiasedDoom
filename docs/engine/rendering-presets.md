@@ -392,14 +392,19 @@ open map for explicit settings and for every fog preset.
 
 ## Combining presets by hand
 
-Auto-pairings are starting points, not rules. Because explicit choices win,
-you can compose your own look:
+Auto-pairings are starting points, not rules. To compose your own look, turn
+off **Link Preset Layers** first; graphics, lighting, and fog selectors then
+remain independent until you turn linking back on. With linking enabled, a
+new graphics selection deliberately re-applies its named lighting/fog pair,
+and choosing lighting or fog directly visibly changes the graphics selector to
+**Custom**.
 
-1. Pick a graphics preset for the image pipeline (tonemap, filters, exposure).
-2. Pick a lighting preset for the dynamic-light character.
-3. Pick a fog preset for depth cueing.
+1. Turn off **Link Preset Layers**.
+2. Pick a graphics preset for the image pipeline (tonemap, filters, exposure).
+3. Pick a lighting preset for the dynamic-light character.
+4. Pick a fog preset for depth cueing.
 
-The graphics preset will never override steps 2-3 afterward. Example recipes:
+Example recipes:
 
 - **Modern AAA**: graphics 31 (Cinematic Ultra), then lighting 6 (PBR
   Showcase) and fog 3 (Natural Haze) for a brighter showcase.
@@ -408,7 +413,7 @@ The graphics preset will never override steps 2-3 afterward. Example recipes:
 - **Boomer-shooter night patrol**: graphics 14 (Cyberpunk Rain), then fog 1
   (Disabled) for crisp rooftops while keeping neon bloom.
 - **Hand-tuned looks**: enable `bd_preset_locked` before adjusting individual
-  sliders so your tweaks don't mark the family `Custom`.
+  sliders so your tweaks retain the visible curated selector labels.
 
 ## Bloom
 

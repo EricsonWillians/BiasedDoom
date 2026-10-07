@@ -147,8 +147,31 @@ DEFINE_ACTION_FUNCTION_NATIVE(AActor, ShouldPassThroughPlayer, P_ShouldPassThrou
 //
 //==========================================================================
 
+static bool P_IsCompanionPawn(const AActor *actor)
+{
+	return !deathmatch && actor != nullptr && actor->player != nullptr &&
+		actor->player->mo == actor && actor->player->Bot != nullptr;
+}
+
+static bool P_ShouldPassThroughCompanion(AActor *self, AActor *other)
+{
+	return self != nullptr && other != nullptr && self->player != nullptr &&
+		self->player->mo == self && other->player != nullptr &&
+		other->player->mo == other && self->IsTeammate(other) &&
+		(P_IsCompanionPawn(self) || P_IsCompanionPawn(other));
+}
+
 bool P_CanCollideWith(AActor *tmthing, AActor *thing)
 {
+	// Keep cooperative companions physically passable to their teammates.
+	// Do this here instead of changing actor flags: they must still collide
+	// with the map and monsters, and friendly projectiles must retain their
+	// normal behavior.
+	if (P_ShouldPassThroughCompanion(tmthing, thing))
+	{
+		return false;
+	}
+
 	static unsigned VIndex = ~0u;
 	if (VIndex == ~0u)
 	{
@@ -2552,8 +2575,30 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 		//Added by MC: To prevent bot from getting into dangerous sectors.
 		if (thing->player && thing->player->Bot != NULL && thing->flags & MF_SHOOTABLE)
 		{
-			if (tm.sector != thing->Sector
-				&& thing->Level->BotInfo.IsDangerous(tm.sector))
+			// A damaging 3D floor can be entered without changing the base sector.
+			// Compare the actual old and prospective support volumes, not only the
+			// sector pointer: otherwise a bot walks from a safe base floor onto a
+			// harmful 3D platform in the very same sector. Check both the visual
+			// sector (which owns 3D-floor damage) and a portal support sector.
+			const auto supportIsDangerous = [thing](sector_t *baseSector, sector_t *supportSector,
+				const DVector2 &position, double floorz)
+			{
+				const auto isDangerous = [thing, &position, floorz](sector_t *sector)
+				{
+					return sector != nullptr && thing->Level->BotInfo.IsDangerous(thing, sector,
+						position, floorz);
+				};
+				return isDangerous(baseSector) ||
+					(supportSector != baseSector && isDangerous(supportSector));
+			};
+			sector_t *oldBaseSector = thing->Sector;
+			sector_t *oldSupportSector = thing->floorsector != nullptr ? thing->floorsector : oldBaseSector;
+			sector_t *newSupportSector = tm.floorsector != nullptr ? tm.floorsector : tm.sector;
+			const bool wasDangerous = supportIsDangerous(oldBaseSector, oldSupportSector,
+				thing->Pos().XY(), thing->floorz);
+			const bool entersDanger = supportIsDangerous(tm.sector, newSupportSector,
+				tm.pos.XY(), tm.floorz);
+			if (entersDanger && !wasDangerous)
 			{
 				thing->player->Bot->prev = thing->player->Bot->dest;
 				thing->player->Bot->dest = nullptr;

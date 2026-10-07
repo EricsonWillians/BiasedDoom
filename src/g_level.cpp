@@ -123,6 +123,11 @@ extern uint8_t globalfreeze, globalchangefreeze;
 int startpos = 0; // [RH] Support for multiple starts per level
 int laststartpos = 0;
 
+// This is deliberately separate from multiplayer itself. The latter can be
+// owned by a real network game or an explicit local co-op launch; only this
+// marker may be undone when the final automatic companion leaves.
+static bool automatic_companion_multiplayer_mode = false;
+
 #define SNAP_ID			MAKE_ID('s','n','A','p')
 #define DSNP_ID			MAKE_ID('d','s','N','p')
 #define VIST_ID			MAKE_ID('v','i','S','t')
@@ -188,6 +193,7 @@ static FRandom pr_classchoice ("RandomPlayerClassChoice");
 
 extern level_info_t TheDefaultLevelInfo;
 extern bool timingdemo;
+EXTERN_CVAR(Int, bot_companion_count)
 
 // Start time for timing demos
 int starttime;
@@ -205,6 +211,36 @@ void *statcopy;					// for statistics driver
 
 FLevelLocals level;			// info about current level
 FLevelLocals *primaryLevel = &level;	// level for which to display the user interface.
+
+void FLevelLocals::ReportPredictionObjectWarning(const char *verb, const char *className)
+{
+	// A malformed compatibility effect can create *and* destroy a large number
+	// of non-client-side objects inside prediction. This deliberately covers
+	// both paths with one map-scoped allowance; independent spawn/destroy caps
+	// would still let a mod turn developer logging into continuous I/O.
+	constexpr unsigned int MaxPredictionObjectWarnings = 8;
+	if (PredictionObjectWarningCount < MaxPredictionObjectWarnings)
+	{
+		DPrintf(DMSG_WARNING, TEXTCOLOR_RED "%s %s while predicting\n", verb, className);
+		++PredictionObjectWarningCount;
+	}
+	else if (!PredictionObjectWarningsSuppressed)
+	{
+		DPrintf(DMSG_WARNING, TEXTCOLOR_RED "Further non-client-side object warnings are suppressed for this map\n");
+		PredictionObjectWarningsSuppressed = true;
+	}
+}
+
+void P_ReportPredictionObjectWarning(const char *verb, const char *className)
+{
+	// Prediction always happens in the console player's active level. Avoid
+	// producing an unbounded shutdown-time fallback if a third-party object is
+	// destroyed after that level has already gone away.
+	if (primaryLevel != nullptr)
+	{
+		primaryLevel->ReportPredictionObjectWarning(verb, className);
+	}
+}
 FLevelLocals *currentVMLevel = &level;	// level which currently ticks. Used as global input to the VM and some functions called by it.
 static PType* maprecordtype;
 
@@ -365,6 +401,30 @@ CCMD (map)
 //
 //==========================================================================
 
+// recorddemo temporarily starts a fresh single-player run. Keep the previous
+// mode while that request is only queued so a second toggle can cancel without
+// silently changing the current session's deathmatch/co-op setup.
+static bool configuredDemoQueueModePending = false;
+static bool configuredDemoPreviousDeathmatch = false;
+static bool configuredDemoPreviousMultiplayerNext = false;
+
+static void RestoreConfiguredDemoQueueMode()
+{
+	if (!configuredDemoQueueModePending)
+	{
+		return;
+	}
+
+	deathmatch = configuredDemoPreviousDeathmatch;
+	multiplayernext = configuredDemoPreviousMultiplayerNext;
+	configuredDemoQueueModePending = false;
+}
+
+void G_CommitQueuedDemoRecording()
+{
+	configuredDemoQueueModePending = false;
+}
+
 static void StartConfiguredDemoRecording(const char *requestedName = nullptr, const char *requestedMap = nullptr)
 {
 	if (netgame)
@@ -421,6 +481,9 @@ static void StartConfiguredDemoRecording(const char *requestedName = nullptr, co
 			return;
 		}
 
+		configuredDemoPreviousDeathmatch = deathmatch;
+		configuredDemoPreviousMultiplayerNext = multiplayernext;
+		configuredDemoQueueModePending = true;
 		deathmatch = false;
 		multiplayernext = false;
 		G_DeferedInitNew(mapName.GetChars());
@@ -431,6 +494,7 @@ static void StartConfiguredDemoRecording(const char *requestedName = nullptr, co
 	}
 	catch (CRecoverableError &error)
 	{
+		RestoreConfiguredDemoQueueMode();
 		if (error.GetMessage())
 		{
 			Printf("%s", error.GetMessage());
@@ -462,6 +526,7 @@ static void StopConfiguredDemoRecording()
 		gameaction = ga_nothing;
 		newdemoname = "";
 		newdemomap = "";
+		RestoreConfiguredDemoQueueMode();
 		Printf("Queued demo recording cancelled.\n");
 	}
 	else
@@ -583,6 +648,32 @@ UNSAFE_CCMD (open)
 //
 //==========================================================================
 
+void G_ConfigureNewGameMultiplayerMode()
+{
+	// A local companion squad is co-op from the point the map is populated,
+	// not merely after its first pawn joins. This needs to run on every fresh
+	// game entry path: menu/deferred starts call G_NewInit(), while command-line
+	// autostarts (+map/-warp) enter G_InitNew() directly.
+	//
+	// Configured demos deliberately remain single-player. Their serialized
+	// companion settings describe the surrounding configuration, not a request
+	// to change their recorded thing filters or player setup.
+	const bool automaticCompanions = !demorecording && !demoplayback;
+	const bool requestedMultiplayer = multiplayernext;
+	// The profile mask is canonical. Keep the legacy count in the condition as
+	// well so an old INI is already co-op before BotInfo::Init() migrates it.
+	const bool configuredCompanions = BotCompanionEnabledProfileCount() > 0 || bot_companion_count > 0;
+	automatic_companion_multiplayer_mode = !netgame && !requestedMultiplayer &&
+		automaticCompanions && !deathmatch && configuredCompanions;
+	multiplayer = netgame || requestedMultiplayer || automatic_companion_multiplayer_mode;
+	multiplayernext = false;
+}
+
+bool G_IsAutomaticCompanionMultiplayerMode()
+{
+	return automatic_companion_multiplayer_mode;
+}
+
 void G_NewInit ()
 {
 	unsigned int i;
@@ -608,8 +699,7 @@ void G_NewInit ()
 
 	G_ClearSnapshots ();
 	netgame = false;
-	multiplayer = multiplayernext;
-	multiplayernext = false;
+	G_ConfigureNewGameMultiplayerMode();
 	if (demoplayback)
 	{
 		C_RestoreCVars ();
@@ -702,6 +792,14 @@ void G_InitNew (const char *mapname, bool bTitleLevel)
 {
 	bool wantFast;
 	unsigned int i;
+
+	// Loading a save does not go through the fresh-start planner. Its owning
+	// level serializes the companion-mode marker and restores it after the base
+	// map is built, so do not inherit a stale marker from an earlier session.
+	if (savegamerestore)
+	{
+		automatic_companion_multiplayer_mode = false;
+	}
 
 	primaryLevel->lightlists.wall_dlist.Clear();
 	primaryLevel->lightlists.flat_dlist.Clear();
@@ -985,7 +1083,7 @@ void FLevelLocals::ChangeLevel(const char *levelname, int position, int inflags,
 			// If this is co-op, respawn any dead players now so they can
 			// keep their inventory on the next map.
 			if ((multiplayer || flags2 & LEVEL2_ALLOWRESPAWN || sv_singleplayerrespawn || !!G_SkillProperty(SKILLP_PlayerRespawn))
-				&& !deathmatch && player->playerstate == PST_DEAD)
+				&& !deathmatch && player->playerstate == PST_DEAD && player->mo != nullptr)
 			{
 				// Copied from the end of P_DeathThink [[
 				player->cls = NULL;		// Force a new class if the player is using a random class
@@ -1276,6 +1374,14 @@ void G_DoCompleted (void)
 	P_FreeStrifeConversations ();
 
 	bool playinter = primaryLevel->DoCompleted(nextlevel, staticWmInfo);
+	if (P_IsProceduralMapName(primaryLevel->MapName.GetChars()))
+	{
+		// The level loader owns the TEXTMAP it used to build this world. At this
+		// point completion/snapshot handling is done, so retain only the compact
+		// replay recipe and release the source archive before an intermission or
+		// the next level can keep a maximum-size run resident unnecessarily.
+		P_ReleaseCurrentProceduralMapArchive();
+	}
 	S_StopAllChannels();
 	for (auto Level : AllLevels())
 	{
@@ -1555,6 +1661,10 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 		laststartpos = position;
 
 	Init();
+	// Retry any desired companion squad for this newly loaded map. A previous
+	// map can explicitly suppress additions after exhausting every safe spawn
+	// candidate; carrying that suppression forward would strand the squad.
+	BotInfo.BeginCompanionMap();
 	StatusBar->DetachAllMessages ();
 
 	// Force 'teamplay' to 'true' if need be.
@@ -1863,8 +1973,14 @@ void FLevelLocals::StartTravel()
 	{
 		for (size_t i = 0u; i < MAXPLAYERS; ++i)
 		{
-			if (PlayerInGame(i) && Players[i]->health > 0)
+			// A companion can be in the player roster while it is waiting for a
+			// valid spawn, or while a failed placement is being removed.  Those
+			// states deliberately have no map pawn.  Travelling a null pawn is not
+			// useful and used to dereference it below when a map transition happened
+			// in that narrow lifecycle window.
+			if (PlayerInGame(i) && Players[i]->mo != nullptr && Players[i]->health > 0)
 				AddToTravellingList(Players[i]->mo);
+
 		}
 	}
 
@@ -1984,7 +2100,37 @@ static int RemoveTravellingObjects(FLevelLocals& level, TArray<DThinker*>& toCal
 		auto mapDoll = mo->player->mo;
 		assert(mo != mapDoll);
 
-		auto start = level.PickPlayerStart(pNum, 0);
+		const bool isCompanion = mo->player->Bot != nullptr;
+		FPlayerStart companionFallback;
+		auto start = isCompanion
+			? level.PickCompanionStart(pNum, companionFallback, mo)
+			: level.PickPlayerStart(pNum, 0);
+		if (isCompanion && start == nullptr)
+		{
+			// Do not preserve a PlayerInGame companion without a pawn. It is not a
+			// supported engine lifecycle state (saving, ticking, redirects, and
+			// scripts all rely on a live player having one). Drop only this map's
+			// incarnation and let the desired roster retry on the next map.
+			if (mapDoll == nullptr)
+			{
+				// A destination map normally has a temporary player doll which the
+				// ordinary companion-removal path can use for its disconnect hooks.
+				// If it does not, the travelling pawn is the only valid participant
+				// left. Notify while it is still linked and owns its player pointer;
+				// clearing first used to silently lose PlayerDisconnected and ACS
+				// SCRIPT_Disconnect on this rare travel-failure path.
+				level.localEventManager->PlayerDisconnected(pNum);
+				level.Behaviors.StartTypedScripts(SCRIPT_Disconnect, mo, true, pNum, true);
+			}
+			mo->player = nullptr;
+			mo->Destroy();
+			// This bot was active on the prior map even if the destination map did
+			// not provide a temporary player doll for its slot. Preserve one normal
+			// disconnect notification for that established participant.
+			level.BotInfo.RejectUnplaceableCompanion(&level, pNum, mapDoll != nullptr);
+			Printf(TEXTCOLOR_YELLOW "No collision-clear companion travel position was found; that companion will retry on the next map.\n");
+			continue;
+		}
 		if (start == nullptr)
 		{
 			if (mapDoll != nullptr)
@@ -2055,6 +2201,20 @@ int FLevelLocals::FinishTravel()
 	// otherwise they'll pile up infinitely.
 	Thinkers.CleanUpTravellers(savegamerestore);
 	ClientSideThinkers.CleanUpTravellers(savegamerestore);
+
+	// Player pawns and their companion thinkers may retain object pointers
+	// across travel, but every sector number, waypoint, door wait, and movement
+	// direction was planned against the old map. Reset that transient state only
+	// after all traveller pawns have been placed in this level, before scripts
+	// or the next bot tick can observe it.
+	for (size_t i = 0u; i < MAXPLAYERS; ++i)
+	{
+		if (PlayerInGame(i) && Players[i]->Bot != nullptr &&
+			!(Players[i]->Bot->ObjectFlags & OF_EuthanizeMe))
+		{
+			Players[i]->Bot->ResetNavigationAfterTravel();
+		}
+	}
 
 	// Some ZScript will be called here so we have to do this last.
 	for (size_t i = 0u; i < MAXPLAYERS; ++i)

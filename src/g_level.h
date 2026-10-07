@@ -11,6 +11,12 @@ extern bool savegamerestore;
 
 void G_InitNew (const char *mapname, bool bTitleLevel);
 
+// A saved local companion squad puts a fresh solo map into co-op before map
+// thing filtering runs. This records whether that mode was automatic, so
+// dismissing the final companion cannot disturb a real co-op or network game.
+void G_ConfigureNewGameMultiplayerMode();
+bool G_IsAutomaticCompanionMultiplayerMode();
+
 // Can be called by the startup code or M_Responder.
 // A normal game starts at map 1,
 // but a warp test can start elsewhere
@@ -40,4 +46,3 @@ void G_WriteSnapshots (TArray<FString> &, TArray<FCompressedBuffer> &);
 void G_WriteVisited(FSerializer &arc);
 void G_ReadVisited(FSerializer &arc);
 void G_ClearHubInfo();
-

@@ -6,11 +6,12 @@
 
 **Implementation paper — October 2026**
 
-> **Current-status note (2026-10-03).** The companion
+> **Current-status note (2026-10-07).** The companion
 > [procedural map generation guide](procedural-map-generation.md) is the
 > canonical operational reference for the shipping generator: it documents the
 > automatic RunBlueprint, current accessibility proof, active-IWAD behavior,
-> endless-run flow, and current test commands. This paper explains the design
+> endless-run flow, cooperative archive-transfer contract, and current test
+> commands. This paper explains the design
 > and retains historical benchmark tables; those tables are not a promise that
 > a modern engine build will reproduce their exact sector counts or hashes.
 
@@ -32,7 +33,9 @@ mission-graph construction. It selects one of five gameplay profiles, a
 cardinal route direction, shuffled key order, planned encounter/recovery
 beats, feature motifs, an arsenal track, and a finale card without consuming
 the layout RNG. This changes campaign rhythm between runs while retaining the
-same static UDMF, single-player, IWAD-safe implementation model.
+same static UDMF, IWAD-safe implementation model. Local cooperative and
+host-authored network runs use the same serialized map rather than a separate
+generation algorithm.
 
 The central design choice is to separate *progression topology* from *physical
 geometry*. A randomized spanning tree is used only as an embedding substrate.
@@ -174,8 +177,9 @@ configuration is intentionally small:
 All numeric settings clamp out-of-range values. The archived CVars
 `procgen_seed`, `procgen_theme`, `procgen_difficulty`, `procgen_size`,
 `procgen_layout`, `procgen_verticality`, `procgen_detail`, and
-`procgen_outdoors` expose the contract to the console and menu. `procmap` starts a single-player game on
-the virtual map name `PROCMAP`; `dumpprocudmf` serializes the same result to
+`procgen_outdoors` expose the contract to the console and menu. `procmap`
+loads the virtual map name `PROCMAP` in local play, or starts a host-authored
+archive transfer in a network session. `dumpprocudmf` serializes the same result to
 `/tmp/procmap_test.udmf` for inspection; `dumpprocmanifest` serializes the
 schema-1 run plan to `/tmp/procmap_manifest.json`, including each room's
 realized manual-interaction role (`none`, keyed door, switch cache, or secret
@@ -197,11 +201,13 @@ optional output path.
 
 The map-loading boundary is important. `P_OpenMapData` asks
 `P_OpenProceduralMapData` to handle names equal to `PROCMAP` or beginning with
-`PROC`. Immediately before generation, the factory re-applies all eight CVars
-and re-seeds the generator. The resulting string is installed as the
-`ML_TEXTMAP` lump of a newly allocated textual `MapData`. The rest of the
-engine—including parsing, node construction, sector creation, and actor
-spawning—uses the ordinary map path.
+`PROC`. For a fresh local run, the factory re-applies all eight CVars,
+re-seeds the generator, and installs the resulting string as the `ML_TEXTMAP`
+lump of a newly allocated textual `MapData`. For a shared run, the host has
+already generated one checksummed UDMF archive; peers stage and consume those
+exact bytes rather than regenerating from their local recipe. In both paths,
+the ordinary loader performs parsing, node construction, sector creation, and
+actor spawning.
 
 This boundary gives the generator the following observable contract:
 
@@ -1220,9 +1226,12 @@ things.
 
 The output begins with `namespace = "zdoom"` and serializes vertices, sectors,
 sidedefs, linedefs, then things. Every thing is enabled for skills 1–5 and for
-single-player, cooperative, and deathmatch flags; procedural launch itself is
-currently restricted to single-player because generation and network-session
-coordination are separate concerns.
+single-player, cooperative, and deathmatch flags. Generated start landmarks
+also reserve protected P1–P8 pads: P1 remains the progression start and P2–P8
+serve ordinary human or companion cooperative placement. Participant count is
+not part of the recipe or UDMF. Schema-1 manifests expose the resulting proof
+at `accessibility.collision_navigation.cooperative_starts`, with native slot,
+landmark, position, clearance, and canonical-P1 evidence.
 
 The emitter returns success only if at least one vertex, sector, and linedef
 exists. The loader additionally rejects an empty string. Semantic and geometric
@@ -1258,7 +1267,8 @@ The pipeline is organized around the following invariants.
    sectors.
 6. Each door face uses the correct special, activation flags, lock, texture
    native width/height, centered crop-or-repeat phase, and vertical scale.
-7. There is exactly one player start and one player-cross exit trigger.
+7. There is exactly one canonical P1 start, seven protected native co-op
+   starts, and one player-cross exit trigger.
 8. Every generated map has a readable room-scale sky landmark and at least one
    `SECRET_MASK` room behind a hidden door, with a tangible reward in every
    counted secret.
@@ -1501,6 +1511,13 @@ explicitly reject every known Doom II-only actor in the generator vocabulary,
 and load every theme through the node builder to verify its shared switch,
 exit, keyed-border, material, and prop vocabulary.
 
+The driver cannot create two synchronized peers in its short headless process,
+so `test_procgen.sh network` is a focused source-level state-machine check. It
+asserts the ACK-commit ordering that keeps a staged client archive alive through
+an already queued map change and verifies that abandoned archives are released
+on each reset path. Packet-loss and multi-peer lifecycle fuzzing remain future
+integration coverage.
+
 The menu regression reads the packed `MENUDEF`, verifies every setup control,
 checks native reinsertion into mod-replaced main menus, validates persistent
 defaults and random seed generation, and enters a randomized Hell map through
@@ -1576,10 +1593,21 @@ UDMF syntax. This substantially limits injection risk. Nevertheless, the
 generated text deliberately passes through the normal parser and node builder,
 which provides the same structural checks used for external maps.
 
-The singleton is synchronous and is not designed for concurrent generation.
-Network games are rejected by the launch command because deterministic map text
-alone does not implement peer negotiation, content verification, or synchronized
-new-game lifecycle.
+The singleton is synchronous and is not designed for concurrent generation. In
+a network session the host/settings controller generates once, packages the
+result as a checksummed embedded UDMF archive, and transfers it to each peer
+before issuing the ordinary map change. Each peer validates, stages, and
+acknowledges that exact archive; clients never regenerate from a seed. Peers
+must use compatible Doom-family game data and the same Ultimate Doom/Doom II
+roster context; the host rejects mismatches instead of translating Doom II-only
+content for a different IWAD. Shared procedural sessions permit at most eight
+human participants before companion capacity is considered. Before the final
+map-change event is committed, a failed, cancelled, or timed-out transfer
+leaves the current map intact, and a host handoff during transfer cancels it
+safely.
+Join-in-progress is unavailable while the archive transfer is active. The host
+starts a transfer from the existing live cooperative session; it completes
+before the normal map change and is unavailable in deathmatch.
 
 ## 18. Limitations
 
@@ -1596,7 +1624,8 @@ The present system has deliberate boundaries:
 - Encounter balance uses counts and tiered families, not a formal estimate of
   hit points, damage exposure, infighting opportunity, or player inventory
   simulation.
-- Multiplayer launch is unsupported.
+- Network procedural transfer is deliberately host-authored; clients cannot
+  independently generate or join while an archive transfer is in progress.
 - Generated things enable every skill flag because generation difficulty is
   applied while constructing the map; one serialized map is not a five-skill
   remix.
@@ -1629,8 +1658,8 @@ it:
 5. Add visibility and crossfire metrics after node construction, feeding a
    bounded repair pass that can adjust portals or encounter anchors without
    changing progression.
-6. Support deterministic cooperative generation through server-authored
-   settings, map checksums, and explicit peer synchronization.
+6. Add packet-loss, timeout, cancellation, and host-handoff fuzz coverage for
+   the existing server-authored archive-transfer lifecycle.
 7. Store a generator schema/version beside shared seeds so older generation
    semantics can be reproduced intentionally.
 8. Add automated play traces for reachability, key acquisition, door use,
@@ -1645,6 +1674,7 @@ cmake --build build --config Release
 ./test_procgen.sh validate
 ./test_procgen.sh determinism
 ./test_procgen.sh replayability
+./test_procgen.sh network
 ./test_procgen.sh features
 ./test_procgen.sh doors
 ./test_procgen.sh rewards

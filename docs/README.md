@@ -28,8 +28,10 @@ or assets they describe.
 | Use the `GLTFModel` mixin | [ZScript usage](gltf/zscript-usage.md) | [ZScript API](gltf/zscript-api.md) |
 | Build a trusted Python mod | [Focused example suite](../examples/python/) | [Complete Python guide](scripting/python.md) |
 | Find installed Doom IWADs | [IWAD discovery](engine/iwad-discovery.md) | [Engine features](engine/README.md) |
+| Diagnose a DECOHack or MBF21 weapon mod | [Classic-mod compatibility](engine/mod-compatibility.md) | [Root troubleshooting](../TROUBLESHOOTING.md) |
 | Tune rendering presets and bloom | [Rendering presets and light bleed](engine/rendering-presets.md) | Root [changelog](../CHANGELOG.md) |
 | Record lossless footage or a replayable demo | [Recording and export](engine/recording-and-export.md) | [Engine features](engine/README.md) |
+| Add friendly bots to a co-op run | [Companion bots](engine/companion-bots.md) | [Procedural map generation](engine/procedural-map-generation.md) |
 | Set up a gamepad (or fix mod autoaim) | [Gamepad support](engine/gamepad.md) | Root [changelog](../CHANGELOG.md) |
 | Generate a mod skeleton | [glTF tools](gltf/tools.md) | [Script robustness notes](development/create-gltf-replacement-script-improvements.md) |
 | Understand the implementation | [glTF implementation](development/gltf-implementation.md) | [Implementation status](development/gltf-implementation-status.md) |
@@ -81,7 +83,9 @@ is still limited, so external textures are the safest modding workflow.
 - [Engine section index](engine/README.md)
 - [Rendering presets, bloom, and sector light bleed](engine/rendering-presets.md)
 - [Recording and export](engine/recording-and-export.md)
+- [Companion bots](engine/companion-bots.md)
 - [Automatic IWAD discovery](engine/iwad-discovery.md)
+- [Classic-mod compatibility](engine/mod-compatibility.md)
 - [Procedural map generation](engine/procedural-map-generation.md)
 - [Procedural generation research paper](engine/procedural-generation-research-paper.md)
 - [Mugshot scaling](engine/mugshot-scaling.md)
@@ -91,6 +95,7 @@ is still limited, so external textures are the safest modding workflow.
 - [Embedded Python example suite](../examples/python/)
 - [Release section index](release/README.md)
 - [Release checklist](release/releasing.md)
+- [BiasedDoom 4.15.18 release notes](release/4.15.18.md)
 - [BiasedDoom 4.15.10 release notes](release/4.15.10.md)
 - [BiasedDoom 4.15.9 release notes](release/4.15.9.md)
 - [BiasedDoom 4.15.8 release notes](release/4.15.8.md)

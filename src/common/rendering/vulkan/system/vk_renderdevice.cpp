@@ -22,6 +22,7 @@
 
 #include <zvulkan/vulkanobjects.h>
 
+#include <cstring>
 #include <inttypes.h>
 
 #include "v_video.h"
@@ -69,6 +70,8 @@
 #include "engineerrors.h"
 #include "c_dispatch.h"
 
+#include <new>
+
 FString JitCaptureStackTrace(int framesToSkip, bool includeNativeFrames, int maxFrames = -1);
 
 EXTERN_CVAR(Int, gl_tonemap)
@@ -76,6 +79,29 @@ EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
 
 CVAR(Bool, vk_raytrace, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+// Keep continuous capture bounded even on unusually large output modes. The
+// recorder itself has a 128 MiB final-RGB frame ceiling; a Vulkan readback is
+// RGBA, so a 96 MiB staging cap leaves room for the reusable conversion image
+// and avoids a capture feature becoming a device-memory leak.
+static constexpr size_t MAX_VIDEO_READBACK_STAGING_BYTES = 96ull * 1024ull * 1024ull;
+
+struct VulkanRenderDevice::FVideoReadbackSlot
+{
+	FVideoReadbackSlot(int width, int height) : Presentation(width, height, PixelFormat::Rgba8)
+	{
+		Presentation.TransferSource = true;
+	}
+
+	// The present shader writes straight to this RGBA8 target.  It replaces the
+	// old screenshot-style R16F pipeline target plus a second full-image blit.
+	PPTexture Presentation;
+	std::unique_ptr<VulkanBuffer> Staging;
+	int Width = 0;
+	int Height = 0;
+	uint64_t CaptureTimeNS = 0;
+	bool Pending = false;
+};
 
 // Physical device info
 static std::vector<VulkanCompatibleDevice> SupportedDevices;
@@ -138,6 +164,7 @@ VulkanRenderDevice::VulkanRenderDevice(void *hMonitor, bool fullscreen, std::sha
 VulkanRenderDevice::~VulkanRenderDevice()
 {
 	vkDeviceWaitIdle(device->device); // make sure the GPU is no longer using any objects before RAII tears them down
+	ResetVideoCapture();
 
 	// PPShader backends in the global postprocess chain point back at this
 	// device; reset them while it is still valid.
@@ -249,7 +276,7 @@ void VulkanRenderDevice::Update()
 
 	Flush3D.Unclock();
 
-	mCommands->WaitForCommands(true);
+	WaitForCommands(true);
 	mCommands->UpdateGpuStats();
 
 	Super::Update();
@@ -435,11 +462,19 @@ void VulkanRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data)
 	mCommands->GetDrawCommands()->copyImageToBuffer(image.Image->image, image.Layout, staging->buffer, 1, &region);
 
 	// Submit command buffers and wait for device to finish the work
-	mCommands->WaitForCommands(false);
+	WaitForCommands(false);
 
 	// Map and convert from rgba8 to rgb8
 	uint8_t *dest = (uint8_t*)data;
 	uint8_t *pixels = (uint8_t*)staging->Map(0, w * h * 4);
+	if (pixels == nullptr)
+	{
+		return;
+	}
+	// GPU_TO_CPU allocations are not necessarily HOST_COHERENT. The command
+	// wait above completes the copy, but non-coherent mappings still need an
+	// explicit invalidate before their bytes are consumed by the CPU.
+	staging->Invalidate(0, w * h * 4);
 	int dindex = 0;
 	for (int y = 0; y < h; y++)
 	{
@@ -489,6 +524,281 @@ TArray<uint8_t> VulkanRenderDevice::GetScreenshotBuffer(int &pitch, ESSType &col
 	return ScreenshotBuffer;
 }
 
+//===========================================================================
+//
+// Bounded frame-delayed video readback
+//
+// A normal screenshot is intentionally synchronous: the caller needs pixels
+// during this Update(). Continuous recording does not. Vulkan's frame manager
+// completes its submitted work at the end of an Update(), so retain one
+// staging image/buffer pair and consume it on the following capture request.
+// This removes the old per-frame VMA allocations and the extra, mid-frame
+// WaitForCommands(false) that made the renderer submit and stall twice for a
+// single recorded frame. It deliberately does not alter the backend's global
+// fence/deferred-destruction model.
+//
+//===========================================================================
+
+void VulkanRenderDevice::ReleaseVideoReadback()
+{
+	if (!mVideoReadback)
+	{
+		return;
+	}
+
+	if (mCommands)
+	{
+		mVideoReadback->Presentation.ResetBackend();
+		mCommands->DrawDeleteList->Add(std::move(mVideoReadback->Staging));
+		// DrawDeleteList owns the old image/staging pair until the next command
+		// retirement. Hold capture for that one boundary rather than allocating a
+		// second large pair while the old one remains resident.
+		mVideoReadbackRetirementPending = true;
+	}
+	else
+	{
+		mVideoReadback->Presentation.ResetBackend();
+		mVideoReadback->Staging.reset();
+	}
+	mVideoReadback.reset();
+}
+
+void VulkanRenderDevice::ResetVideoCapture()
+{
+	mVideoReadbackIssueFailed = false;
+	ReleaseVideoReadback();
+}
+
+void VulkanRenderDevice::AbandonPendingVideoCaptureReadbacks()
+{
+	// GetVideoCaptureBuffer() is serviced only after the previous Update()'s
+	// WaitForCommands(true), so a pending slot here has completed GPU work. The
+	// CPU writer cannot accept its pixels, however; discard that sample while
+	// preserving the reusable presentation image and staging allocation.
+	if (mVideoReadback && mVideoReadback->Pending)
+	{
+		mVideoReadback->CaptureTimeNS = 0;
+		mVideoReadback->Pending = false;
+	}
+}
+
+bool VulkanRenderDevice::IssueVideoReadback(uint64_t requestTimeNS)
+{
+	if (mVideoReadbackRetirementPending)
+	{
+		return false;
+	}
+	const int width = SCREENWIDTH;
+	const int height = SCREENHEIGHT;
+	if (width <= 0 || height <= 0)
+	{
+		return false;
+	}
+	const uint64_t pixels = (uint64_t)width * (uint64_t)height;
+	if (pixels > std::numeric_limits<uint64_t>::max() / 4ull)
+	{
+		return false;
+	}
+	const uint64_t rgbaBytes = pixels * 4ull;
+	if (rgbaBytes == 0 || rgbaBytes > MAX_VIDEO_READBACK_STAGING_BYTES)
+	{
+		return false;
+	}
+
+	if (mVideoReadback && (mVideoReadback->Pending || mVideoReadback->Width != width ||
+		mVideoReadback->Height != height || mVideoReadback->Presentation.Backend == nullptr ||
+		mVideoReadback->Staging == nullptr))
+	{
+		ReleaseVideoReadback();
+		return false;
+	}
+	if (!mVideoReadback)
+	{
+		try
+		{
+			mVideoReadback = std::make_unique<FVideoReadbackSlot>(width, height);
+			// GetTexture materializes the backend before DrawPresentTexture selects
+			// it as an output target.  The PP texture remains persistent across the
+			// take instead of allocating a capture image every sampled frame.
+			mTextureManager->GetTexture(PPTextureType::PPTexture, &mVideoReadback->Presentation);
+			mVideoReadback->Staging = BufferBuilder()
+				.Size((size_t)rgbaBytes)
+				.Usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_TO_CPU)
+				.DebugName("VideoCaptureReadbackStaging")
+				.Create(device.get());
+			mVideoReadback->Width = width;
+			mVideoReadback->Height = height;
+		}
+		catch (const CVulkanError &)
+		{
+			// Capture is optional.  A device-memory allocation failure must end the
+			// take through the normal empty-frame path, not unwind through the render
+			// loop or retain a partially materialized PP texture/staging buffer.
+			mVideoReadbackIssueFailed = true;
+			ReleaseVideoReadback();
+			return false;
+		}
+		catch (const std::bad_alloc &)
+		{
+			// Keep host-allocation pressure symmetric with device allocation pressure:
+			// discard the partially constructed optional capture slot and let the
+			// recorder stop cleanly rather than turning it into a process failure.
+			mVideoReadbackIssueFailed = true;
+			ReleaseVideoReadback();
+			return false;
+		}
+	}
+
+	IntRect box;
+	box.left = 0;
+	box.top = 0;
+	box.width = width;
+	box.height = height;
+
+	// Draw the same fully postprocessed presentation texture a normal screenshot
+	// uses, but directly into the persistent RGBA8 readback target.  The former
+	// path rendered to the next R16F pipeline image and then blitted that whole
+	// image again before the download.  Keeping this pass out of the pipeline
+	// also avoids perturbing the live present's current-image index.
+	VkTextureImage *captureImage = mTextureManager->GetTexture(PPTextureType::PPTexture,
+		&mVideoReadback->Presentation);
+	mPostprocess->DrawPresentTexture(box, true, true, &mVideoReadback->Presentation);
+	VkImageTransition()
+		.AddImage(captureImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, false)
+		.Execute(mCommands->GetDrawCommands());
+
+	VkBufferImageCopy region = {};
+	region.imageExtent.width = (uint32_t)width;
+	region.imageExtent.height = (uint32_t)height;
+	region.imageExtent.depth = 1;
+	region.imageSubresource.layerCount = 1;
+	region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	mCommands->GetDrawCommands()->copyImageToBuffer(captureImage->Image->image,
+		captureImage->Layout, mVideoReadback->Staging->buffer, 1, &region);
+		mVideoReadback->CaptureTimeNS = requestTimeNS;
+		mVideoReadback->Pending = true;
+		mVideoReadbackIssueFailed = false;
+		return true;
+}
+
+TArray<uint8_t> VulkanRenderDevice::ConsumeVideoReadback(int &width, int &height, int &pitch, ESSType &color_type,
+	float &gamma, uint64_t &captureTimeNS, bool &bottomUp)
+{
+	if (!mVideoReadback || !mVideoReadback->Pending || mVideoReadback->Staging == nullptr)
+	{
+		return TArray<uint8_t>();
+	}
+
+	const int captureWidth = mVideoReadback->Width;
+	const int captureHeight = mVideoReadback->Height;
+	const uint64_t rgbaBytes = (uint64_t)captureWidth * (uint64_t)captureHeight * 4ull;
+	if (captureWidth <= 0 || captureHeight <= 0 || rgbaBytes > mVideoReadback->Staging->size ||
+		rgbaBytes > 0xffffffffull)
+	{
+		ReleaseVideoReadback();
+		return TArray<uint8_t>();
+	}
+
+	uint8_t *pixels = static_cast<uint8_t *>(mVideoReadback->Staging->Map(0, (size_t)rgbaBytes));
+	if (pixels == nullptr)
+	{
+		ReleaseVideoReadback();
+		return TArray<uint8_t>();
+	}
+	// The prior frame fence makes the transfer complete, but completion alone
+	// does not invalidate a non-coherent GPU_TO_CPU mapping. Refresh its CPU
+	// cache before copying native RGBA rows into the recorder-owned buffer.
+	mVideoReadback->Staging->Invalidate(0, (size_t)rgbaBytes);
+
+	// Keep the native rows in a single bulk copy. PNG and AVI already own a
+	// background writer, so they perform the RGB packing/orientation there
+	// instead of making every recorded frame run a per-pixel loop on the
+	// renderer's critical path.
+	TArray<uint8_t> result((unsigned int)rgbaBytes, true);
+	memcpy(result.Data(), pixels, (size_t)rgbaBytes);
+	mVideoReadback->Staging->Unmap();
+
+	captureTimeNS = mVideoReadback->CaptureTimeNS;
+	mVideoReadback->CaptureTimeNS = 0;
+	mVideoReadback->Pending = false;
+	width = captureWidth;
+	height = captureHeight;
+	pitch = captureWidth * 4;
+	color_type = SS_RGBA;
+	bottomUp = true;
+	gamma = 1.0f;
+	return result;
+}
+
+TArray<uint8_t> VulkanRenderDevice::GetVideoCaptureBuffer(int &width, int &height, int &pitch, ESSType &color_type,
+	float &gamma, uint64_t requestTimeNS, uint64_t &captureTimeNS, bool &pending, bool &bottomUp, bool issueNext)
+{
+	width = SCREENWIDTH;
+	height = SCREENHEIGHT;
+	pending = false;
+	bottomUp = false;
+	captureTimeNS = requestTimeNS;
+	if (mVideoReadbackRetirementPending)
+	{
+		// A discarded allocation still has to retire through DrawDeleteList, but
+		// an allocation failure is terminal for this take.  Returning pending here
+		// would otherwise turn a persistent device/host OOM into an endless stream
+		// of deferred samples instead of letting the recorder begin its bounded
+		// stop/drain path.
+		pending = !mVideoReadbackIssueFailed;
+		return TArray<uint8_t>();
+	}
+
+	// A delayed slot belongs to the output geometry that created it. During a
+	// live take, never hand an old-resolution frame to the recorder as if it
+	// described the current SCREENWIDTH/SCREENHEIGHT. During finalization,
+	// however, its own stored dimensions remain valid: poll it once without
+	// issuing a replacement so a resize cannot discard a ready tail frame.
+	if (issueNext && mVideoReadback && mVideoReadback->Pending &&
+		(mVideoReadback->Width != SCREENWIDTH || mVideoReadback->Height != SCREENHEIGHT))
+	{
+		ReleaseVideoReadback();
+	}
+
+	if (mVideoReadback && mVideoReadback->Pending)
+	{
+		TArray<uint8_t> result = ConsumeVideoReadback(width, height, pitch, color_type, gamma, captureTimeNS, bottomUp);
+		if (result.Size() != 0)
+		{
+			// Queue the next transfer only after mapping the prior one. The normal
+			// end-of-frame fence makes that prior slot safe to reuse here.
+			if (issueNext)
+			{
+				IssueVideoReadback(requestTimeNS);
+			}
+			return result;
+		}
+	}
+
+	if (issueNext && IssueVideoReadback(requestTimeNS))
+	{
+		pending = true;
+		return TArray<uint8_t>();
+	}
+	if (mVideoReadbackRetirementPending)
+	{
+		pending = !mVideoReadbackIssueFailed;
+		return TArray<uint8_t>();
+	}
+
+	// Do not fall back to the old synchronous screenshot path here: a very
+	// large mode must fail the take cleanly instead of reintroducing the
+	// mid-frame GPU wait and temporary allocations that this bounded path
+	// exists to prevent. CaptureFrame reports the unavailable final frame and
+	// stops the take without retaining a growing resource family.
+	return TArray<uint8_t>();
+}
+
+bool VulkanRenderDevice::HasPendingVideoCapture() const
+{
+	return mVideoReadbackRetirementPending || (mVideoReadback != nullptr && mVideoReadback->Pending);
+}
+
 void VulkanRenderDevice::BeginFrame()
 {
 	SetViewportRects(nullptr);
@@ -527,6 +837,10 @@ void VulkanRenderDevice::Draw2D()
 void VulkanRenderDevice::WaitForCommands(bool finish)
 {
 	mCommands->WaitForCommands(finish);
+	// WaitForCommands() retires the current DrawDeleteList before returning, so
+	// a later sampled capture can allocate after a discarded readback without
+	// transiently keeping two large image/staging pairs alive.
+	mVideoReadbackRetirementPending = false;
 }
 
 unsigned int VulkanRenderDevice::GetLightBufferBlockSize() const

@@ -59,6 +59,8 @@
 **
 */
 
+#include <cstdint>
+
 #include "a_keys.h"
 #include "a_morph.h"
 #include "actorinlines.h"
@@ -152,6 +154,49 @@ static player_t PredictionPlayerBackup;
 static AActor *PredictionActor;
 static TArray<uint8_t> PredictionActorBackupArray;
 static TArray<AActor *> PredictionSectorListBackup;
+
+// Actor allocations are naturally aligned, while TMap uses power-of-two
+// buckets. Mix the pointer before hashing so dense transient effects do not
+// concentrate a large snapshot in only a few buckets.
+struct FPredictionActorHash
+{
+	hash_t Hash(AActor *const key)
+	{
+		uintptr_t value = reinterpret_cast<uintptr_t>(key) >> 4;
+		value ^= value >> (sizeof(value) * 4);
+		value *= static_cast<uintptr_t>(0x9e3779b1u);
+		value ^= value >> (sizeof(value) * 4);
+		return static_cast<hash_t>(value);
+	}
+
+	int Compare(AActor *const left, AActor *const right)
+	{
+		return left != right;
+	}
+};
+
+enum EPredictionSectorMembership : uint8_t
+{
+	PSM_Snapshot = 1,
+	PSM_Current = 2,
+};
+
+// The player snapshot has to restore the original sector-list order, but
+// client-side presentation code can create ordinary compatibility actors
+// after that snapshot. Keep both memberships in one retained lookup so
+// rollback can retain those actors without quadratic scans or per-tic hash
+// allocations on busy maps.
+static TMap<AActor *, uint8_t, FPredictionActorHash> PredictionSectorListMembers;
+
+// Prediction runs every client tic. Preserve the bucket allocation for dense
+// client-side visual effects, but reset TMap's collision-spill watermark as
+// well: repeated Remove()/Insert() cycles otherwise eventually rehash despite
+// an empty logical map.
+static void ClearPredictionSectorListBackup()
+{
+	PredictionSectorListMembers.ClearKeepCapacity();
+	PredictionSectorListBackup.Clear();
+}
 
 static TArray<sector_t *> PredictionTouchingSectorsBackup;
 static TArray<msecnode_t *> PredictionTouchingSectors_sprev_Backup;
@@ -1544,7 +1589,7 @@ void P_PredictPlayer (player_t *player)
 	BackupNodeList(act, act->touching_sectorlist, &sector_t::touching_thinglist, PredictionTouchingSectors_sprev_Backup, PredictionTouchingSectorsBackup);
 
 	// Keep an ordered list off all actors in the linked sector.
-	PredictionSectorListBackup.Clear();
+	ClearPredictionSectorListBackup();
 	if (!(act->flags & MF_NOSECTOR))
 	{
 		AActor *link = act->Sector->thinglist;
@@ -1552,6 +1597,7 @@ void P_PredictPlayer (player_t *player)
 		while (link != NULL)
 		{
 			PredictionSectorListBackup.Push(link);
+		PredictionSectorListMembers.Insert(link, PSM_Snapshot);
 			link = link->snext;
 		}
 	}
@@ -1711,19 +1757,88 @@ void P_UnPredictPlayer ()
 			sector_t *sec = act->Sector;
 			AActor *me, *next;
 			AActor **link;// , **prev;
+			TArray<AActor *> lateSectorActors;
+			TArray<AActor *> discardedSectorActors;
 
-			// The thinglist is just a pointer chain. We are restoring the exact same things, so we can NULL the head safely
-			sec->thinglist = NULL;
-
-			for (i = PredictionSectorListBackup.Size(); i-- > 0;)
+			// P_RunClientSideLogic normally executes while the player is
+			// predicted. Older client-side ACS effects sometimes create or move
+			// ordinary transient actors there (for example, flashlight beam
+			// lights). They are not part of the player rollback state, so do not
+			// discard their sector links when reconstructing the snapshot.
+			for (me = sec->thinglist; me != nullptr; me = next)
 			{
-				me = PredictionSectorListBackup[i];
-				link = &sec->thinglist;
+				next = me->snext;
+				uint8_t *membership = PredictionSectorListMembers.CheckKey(me);
+				if (membership == nullptr)
+				{
+					membership = &PredictionSectorListMembers.Insert(me, PSM_Current);
+				}
+				else
+				{
+					*membership |= PSM_Current;
+				}
+				const bool wasSnapshotActor = (*membership & PSM_Snapshot) != 0;
+				const bool canKeepSectorLink = me == act ||
+					(me->Sector == sec && !(me->flags & MF_NOSECTOR) &&
+						(wasSnapshotActor || !me->IsClientSide()) &&
+						!(me->ObjectFlags & OF_EuthanizeMe));
+				if (!canKeepSectorLink)
+				{
+					discardedSectorActors.Push(me);
+				}
+				else if (me != act && !wasSnapshotActor)
+				{
+					lateSectorActors.Push(me);
+				}
+			}
+
+			// A malformed transient actor can be marked for destruction without
+			// unlinking itself. It will not survive this restoration, so remove
+			// its stale sector-list pointers before replacing the list head.
+			for (auto discarded : discardedSectorActors)
+			{
+				discarded->snext = nullptr;
+				discarded->sprev = nullptr;
+			}
+
+			auto LinkToRestoredSector = [&]()
+			{
 				next = *link;
 				if ((me->snext = next))
 					next->sprev = &me->snext;
 				me->sprev = link;
 				*link = me;
+			};
+
+			// The thinglist is just a pointer chain. Restore the snapshot actors
+			// that remain in this sector in their exact prior order. Actors moved
+			// to another sector by presentation code are already linked there and
+			// must not be inserted into this sector a second time.
+			sec->thinglist = NULL;
+
+			for (i = PredictionSectorListBackup.Size(); i-- > 0;)
+			{
+				me = PredictionSectorListBackup[i];
+				const uint8_t *membership = PredictionSectorListMembers.CheckKey(me);
+				if (me != act &&
+					(membership == nullptr || !(*membership & PSM_Current) ||
+						me->Sector != sec || (me->flags & MF_NOSECTOR) ||
+						(me->ObjectFlags & OF_EuthanizeMe)))
+				{
+					continue;
+				}
+				link = &sec->thinglist;
+				LinkToRestoredSector();
+			}
+
+			// Newly-created actors were at the head of the old intrusive list.
+			// Reinserting in reverse scan order retains that ordering while giving
+			// every survivor fresh sector-list pointers.
+			for (i = lateSectorActors.Size(); i-- > 0;)
+			{
+				me = lateSectorActors[i];
+				link = &sec->thinglist;
+				LinkToRestoredSector();
 			}
 
 			// Only the touching list actually needs to be restored to avoid impacting gameplay. The rest is just clientside fluff that can
@@ -1750,6 +1865,7 @@ void P_UnPredictPlayer ()
 
 		actInvSel = InvSel;
 		player->inventorytics = inventorytics;
+		ClearPredictionSectorListBackup();
 
 		bPredictionGuard = false;
 	}

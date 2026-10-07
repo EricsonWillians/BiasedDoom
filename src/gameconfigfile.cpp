@@ -33,6 +33,7 @@
 */
 
 #include <stdio.h>
+#include <ctype.h>
 
 #include "gameconfigfile.h"
 #include "c_cvars.h"
@@ -85,6 +86,31 @@ EXTERN_CVAR(Bool, i_soundinbackground)
 #ifdef _WIN32
 EXTERN_CVAR(Int, in_mouse)
 #endif
+
+namespace
+{
+	// Bindings are command strings rather than a structured command list. Keep
+	// the migration conservative: recognize a command at the beginning of a
+	// binding, including an optional argument or a following command, without
+	// mistaking a prefix such as "togglevideorecording_extra" for the video
+	// toggle.
+	bool BindingStartsCommand(const char *binding, const char *command)
+	{
+		if (binding == nullptr)
+		{
+			return false;
+		}
+
+		const size_t length = strlen(command);
+		if (strnicmp(binding, command, length) != 0)
+		{
+			return false;
+		}
+
+		const unsigned char delimiter = static_cast<unsigned char>(binding[length]);
+		return delimiter == '\0' || delimiter == ';' || isspace(delimiter);
+	}
+}
 
 FGameConfigFile::FGameConfigFile ()
 {
@@ -761,6 +787,41 @@ void FGameConfigFile::DoKeySetup(const char *gamename)
 				bindings->DoBind(key, value);
 			}
 		}
+	}
+
+	// F12 historically used the stock `spynext` binding. It is now the direct
+	// video-recording toggle, but a loaded game-specific Bindings section
+	// replaces the packaged defaults wholesale. Version 1 only changed the
+	// exact stock binding and then marked every old configuration complete.
+	//
+	// Version 2 repairs those already-marked configurations without stealing a
+	// player's chosen single-tap action. An old stock F12 (or an unbound F12)
+	// becomes the direct video toggle. Any other single-tap action, including
+	// screenshot, stays intact and gets a double-tap video toggle when that
+	// separate binding slot is free. A user with both slots deliberately bound
+	// is left entirely alone and can choose a shortcut from the menu.
+	strncpy(subsection, "RecordingControlMigration", sublen);
+	const bool recordingControlMigrationSeen = SetSection(section) &&
+		GetValueForKey("F12VideoToggleV2") != NULL;
+	if (!recordingControlMigrationSeen)
+	{
+		const char *f12Binding = Bindings.GetBind(KEY_F12);
+		const char *f12DoubleBinding = DoubleBindings.GetBind(KEY_F12);
+		const bool directVideo = BindingStartsCommand(f12Binding, "togglevideorecording");
+		const bool doubleVideo = BindingStartsCommand(f12DoubleBinding, "togglevideorecording");
+		if (!directVideo && !doubleVideo)
+		{
+			if (f12Binding == nullptr || stricmp(f12Binding, "spynext") == 0)
+			{
+				Bindings.SetBind(KEY_F12, "togglevideorecording");
+			}
+			else if (f12DoubleBinding == nullptr)
+			{
+				DoubleBindings.SetBind(KEY_F12, "togglevideorecording");
+			}
+		}
+		SetSection(section, true);
+		SetValueForKey("F12VideoToggleV2", "1");
 	}
 
 	if (b226ResetGamepad == true)

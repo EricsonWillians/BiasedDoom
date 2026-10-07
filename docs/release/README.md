@@ -3,6 +3,7 @@
 Release and packaging notes for maintainers.
 
 - [Release checklist](releasing.md)
+- [BiasedDoom 4.15.18 release notes](4.15.18.md)
 - [BiasedDoom 4.15.10 release notes](4.15.10.md)
 - [BiasedDoom 4.15.9 release notes](4.15.9.md)
 - [BiasedDoom 4.15.8 release notes](4.15.8.md)

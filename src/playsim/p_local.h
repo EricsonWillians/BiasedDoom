@@ -92,6 +92,7 @@ void	P_PredictionLerpReset();
 
 #define SPF_TEMPPLAYER		1	// spawning a short-lived dummy player
 #define SPF_WEAPONFULLYUP	2	// spawn with weapon already raised
+#define SPF_DEFERPLAYEREVENTS	4	// caller validates a provisional player position before fog/spawn callbacks
 
 bool P_SeekerMissile (AActor *actor, DAngle thresh, DAngle turnMax, bool precise = false, bool usecurspeed=false);
 

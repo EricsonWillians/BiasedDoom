@@ -4,22 +4,126 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.18] - 2026-10-07
+
 ### Added
 
+- **Companion roster for cooperative runs:** Options → Gameplay or Multiplayer
+  → Companion Bots now manages friendly companions on ordinary maps and
+  generated runs from a shared roster that starts at zero. The Procedural Game
+  screen deliberately uses that central roster instead of exposing a second
+  companion setup. **Add Companion…** opens a per-companion draft for identity,
+  skin, appearance style, and combat skill before explicit deployment; **Add
+  Random Companion…** fills a reviewable draft with a host-replicated random
+  identity, skin/default, appearance style, and helper skill; resolved
+  identities are saved, a selected roster member can be removed on its own, and
+  **Dismiss all companions** clears the squad and its saved profiles. The local
+  settings controller or network host owns mutations while guests inspect a
+  read-only roster. `bot_companion_count` remains a compatibility count view;
+  `addcompanion [name]` and co-op `addbot` create persistent profiles,
+  `removecompanion [1-7]` targets an exact profile (or the highest-numbered
+  member by default), and `dismisscompanions` and `listbots` retain matching
+  console workflows. Human players and companions deliberately share eight
+  supported co-op slots, automatic `sv_coopsharekeys` key sharing, and the
+  active `bots.cfg` or fallback built-in roster. Membership/profile resets are
+  atomic, and a packet-server host handoff includes a final authoritative
+  roster snapshot so a just-accepted edit is not lost. Current companions
+  fight and follow without tactical-order controls.
+- **Host-authored procedural co-op:** network procedural runs now generate
+  once at the host/settings controller, distribute a checksummed embedded UDMF
+  archive for peer validation and acknowledgement, and then use the ordinary
+  map change. Clients never regenerate from a seed; peers need compatible
+  Doom-family game data and the same Doom/Ultimate Doom or Doom II roster
+  context, with mismatches rejected before transfer. Shared procedural sessions
+  cap human participants at eight before companion capacity is considered;
+  cancelled, failed, timed-out, or host-handoff transfers leave the current map
+  intact. Generated start landmarks reserve protected P1–P8 pads without
+  changing a recipe, manifest, or archived savegame.
 - **Lossless capture and recording workflow:** Options → System → Recording &
   Export now provides a typeable or pasteable shared export folder for video
   and demo takes, output-folder copy/open/reset actions, collision-safe output
   families (including interrupted PNG/AVI remnants), native ZDEM start/stop
   controls, and a focused shortcut-binding page.
   Final composited frames can be recorded as an exact PNG image sequence or
-  uncompressed RGB AVI at 24–240 wall-clock FPS, independent of game speed;
-  an active capture finalizes before graphics shutdown, and AVI parts roll
-  safely for resolution changes or large files. Demo recording normalizes game
-  speed before a take begins. `startvideorecording [name]`, `stopvideorecording`,
+  uncompressed RGB AVI at a best-effort 24–240 wall-clock FPS, independent of
+  game speed. The writer is bounded and asynchronous: storage pressure skips
+  frames instead of backfilling a render-thread backlog, stop returns control
+  while its one active write closes in the background (an immediate new start
+  is queued safely until that close completes), and captures retain a
+  4 GiB volume reserve, use no more than half of the free space available at
+  take start, and have a 32 GiB per-take ceiling. Buffered close failures
+  discard an affected artifact instead of reporting it as complete. An active
+  capture finalizes before graphics
+  shutdown, and AVI parts roll safely for resolution changes or large files.
+  Demo recording normalizes game speed before a take begins.
+  `startvideorecording [name]`, `stopvideorecording`,
   `togglevideorecording [name]`, `recorddemo [name] [map]`,
   `stopdemorecording`, and `toggledemorecording` expose the same workflow to
-  the console and configurable controls. Video capture is intentionally
-  visual-only; native demos remain the compact replayable-recording format.
+  the console and configurable controls. Video capture includes synchronized
+  game audio, but deliberately excludes system, external-application, and
+  voice-chat audio; native demos remain the compact replayable-recording
+  format.
+- **Non-blocking hardware capture:** OpenGL recording now treats a saturated
+  PBO ring as a skipped sample instead of calling `glFinish`, and retires
+  stop/restart/resize readbacks through zero-wait fence polling. Vulkan now
+  renders its final capture pass directly into a reusable RGBA8 readback target,
+  eliminating a capture-only full-screen intermediate and blit. These paths
+  remain byte- and memory-bounded under GPU or storage pressure rather than
+  forcing the game to wait for the capture pipeline.
+
+### Fixed
+
+- **Transparent classic mugshots in local companion co-op:** local companion
+  squads use cooperative gameplay rules without being a second human player.
+  The Doom status bar therefore no longer draws the bright `STFBANY`
+  multiplayer portrait backing for that local-only case, preventing it from
+  bleeding through transparent mugshot art such as Year Zero's. Real network
+  and split-screen multiplayer retain the normal player-colour backing.
+- **Map-agnostic bot navigation and combat safety:** Cajun bots now use a
+  bounded, deterministic sector-route guide when a direct safe route is not
+  available, so companions and ordinary bots can recover around normal-map
+  corners, loops, stairs, recognized manual doors, and lifts as well as
+  procedural layouts. Route edges validate real line openings, clearance,
+  step/drop limits, damaging/crushing space, width, keys (including animated
+  doors), activation side, local-only mover targets, and actual use range;
+  unknown scripted actions, exits, and puzzle triggers are not guessed. Follow,
+  combat, strafing, and recovery input now receive the
+  same final collision/hazard gate, with fast stuck-lane recovery and a
+  short negative-route cache for closed paths. Pickup selection is local and
+  directly reachable, cooperative bots favor human leaders, stale targets are
+  released, inbound missiles are ranked rather than latched forever, and fire
+  checks now protect first-hit lanes, blast radii, and the bot's own explosive
+  safety margin. A leader-only, geometry-proven 64-unit ordinary descent now
+  covers common IWAD ledges such as Doom II MAP01's opening platform; combat
+  and pickup goals yield while that bounded transition is verified, and every
+  other cliff rule remains conservative. The emergency co-op catch-up path is
+  restricted to a
+  line-free local segment, so it cannot teleport through map geometry or an
+  objective boundary.
+- **Reliable sustained AVI recording:** RGB AVI no longer terminates a normal
+  60-FPS take after a few accumulated missed capture slots. The background
+  writer now repeats its most recent completed image for every selected-rate
+  slot, preserving the full elapsed video and PCM timeline without growing the
+  bounded producer queue. A real safe-output limit still finalizes the valid
+  portion already written.
+- **OpenGL capture back-pressure:** when the bounded CPU writer is full, a
+  pending PBO is now abandoned once and its reusable storage retained instead
+  of leaving presentation gated behind a sample the recorder has already
+  dropped. This prevents a slow disk or encoder from turning recording into a
+  prolonged render freeze.
+- **DSDHacked/DECOHack weapon sprites:** sparse `[SPRITES]` IDs used by
+  DECOHack-based MBF21 weapon mods no longer go through the legacy dense-table
+  growth guard that could reject normal extended IDs such as `8000` and leave
+  weapons invisible. Valid signed 32-bit IDs are now stored sparsely, with a
+  bounded 262,144-entry extended mapping budget so malformed patch data cannot
+  force an unbounded allocation. The new regression fixture covers `8000`,
+  `INT_MAX`, more than 65,536 sparse entries, and safe overflow rejection.
+- **Brutal Doom flashlight rollback:** transient flashlight actors created by
+  older client-side ACS effects during prediction no longer corrupt the
+  sector-list restoration path. The engine keeps valid late compatibility
+  actors linked while restoring the player snapshot and caps repeated
+  prediction diagnostics per map, preventing the high-density flashlight path
+  from escalating into a crash, runaway warning stream, or a stuck session.
 - Procedural maps now derive an automatic, deterministic **Run Blueprint** from
   the existing recipe. Expedition, Assault, Infiltration, Circuit, and Siege
   profiles vary cardinal route orientation, key order, branch/loop emphasis,
@@ -49,8 +153,8 @@ All notable changes to this project will be documented in this file.
 - **Next Random Run (Same Setup)** in the Procedural Game menu, backed by the
   `procmap_next` command. After a real procedural-map exit it copies the
   completed recipe's theme, difficulty, size, and style settings, selects a
-  distinct seed, and starts a fresh single-player run without changing
-  savegame or hub restoration behavior.
+  distinct seed, and starts a fresh local run or a host-authored shared-run
+  transfer without changing savegame or hub restoration behavior.
 - Active-IWAD procedural content compatibility: Ultimate Doom now receives
   normalized stock-Doom replacements for every Doom II-only thing type emitted
   by the procedural generator, while Doom II retains its expanded roster. The

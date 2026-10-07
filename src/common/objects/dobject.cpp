@@ -340,7 +340,7 @@ bool bPredictionGuard = false;
 static void NativeDestroy(DObject* self)
 {
 	if (bPredictionGuard && !(self->ObjectFlags & OF_ClientSide) && ((self->ObjectFlags & OF_Networked) || self->IsKindOf(NAME_Thinker)))
-		DPrintf(DMSG_WARNING, TEXTCOLOR_RED "Destroyed non-client-side Object %s while predicting\n", self->GetClass()->TypeName.GetChars());
+		P_ReportPredictionObjectWarning("Destroyed non-client-side Object", self->GetClass()->TypeName.GetChars());
 	if (!(self->ObjectFlags & OF_EuthanizeMe))
 		self->Destroy();
 }
@@ -871,4 +871,3 @@ DEFINE_ACTION_FUNCTION_NATIVE(DObject, GetNetworkEntity, GetNetworkEntity)
 
 	ACTION_RETURN_OBJECT(NetworkEntityManager::GetNetworkEntity(id));
 }
-

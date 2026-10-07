@@ -94,7 +94,20 @@ void I_InitGraphics ()
 	}
 	else
 	{
-		Printf("Using video driver %s\n", SDL_GetCurrentVideoDriver());
+		const char *videoDriver = SDL_GetCurrentVideoDriver();
+		// SDL may fall back to its offscreen backend when neither X11 nor
+		// Wayland is usable. It can create a nominal window, but it has no
+		// composed presentation surface and several OpenGL drivers stall while
+		// creating the context. That is neither a usable interactive backend nor
+		// a valid source for the video recorder; require an explicit -headless
+		// run instead of appearing to start and then hanging.
+		if (videoDriver != nullptr && stricmp(videoDriver, "offscreen") == 0)
+		{
+			I_FatalError("SDL selected its offscreen video driver. Start with a working display, or use -headless for a non-rendering run.\n");
+			return;
+		}
+
+		Printf("Using video driver %s\n", videoDriver != nullptr ? videoDriver : "unknown");
 
 		extern IVideo *gl_CreateVideo();
 		Video = gl_CreateVideo();

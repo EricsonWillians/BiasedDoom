@@ -107,7 +107,7 @@ enum EDemoCommand
 	DEM_DROPPLAYER,		// 13 Not implemented, takes a byte
 	DEM_CHANGEMAP,		// 14 Name of map to change to
 	DEM_SUICIDE,		// 15 Player wants to die
-	DEM_ADDBOT,			// 16 Byte: botshift, String: userinfo for bot, 4 Bytes: skill (aiming, perfection, reaction, isp)
+	DEM_ADDBOT,			// 16 Byte: botshift, String: userinfo, 4 Bytes: skill, Byte: profile (0xff legacy), Int: stable companion ID
 	DEM_KILLBOTS,		// 17 Remove all bots from the world
 	DEM_INVUSEALL,		// 18 Use every item (panic!)
 	DEM_INVUSE,			// 19 4 bytes: ID of item to use
@@ -168,7 +168,17 @@ enum EDemoCommand
 	DEM_ZSC_CMD,		// 74 String: Command, Word: Byte size of command
 	DEM_CHANGESKILL,	// 75 Int: Skill
 	DEM_KICK,			// 76 Byte: Player number
-	DEM_READIED,		// 77 
+	DEM_READIED,		// 77
+	// Procedural co-op maps are generated once by the host, then shipped as a
+	// bounded, checksummed embedded TEXTMAP before the ordinary change-map
+	// event. Keep these append-only: demos and network streams persist command
+	// numbers.
+	DEM_PROCMAP_BEGIN,	// 78 transfer metadata and recipe
+	DEM_PROCMAP_CHUNK,	// 79 transfer id, ordered archive bytes
+	DEM_PROCMAP_FINISH,	// 80 transfer id; receiver validates and stages archive
+	DEM_PROCMAP_ACK,	// 81 transfer id and canonical archive checksum
+	DEM_PROCMAP_ABORT,	// 82 transfer id and reason
+	DEM_REMOVECOMPANION, // 83 Int: replicated stable companion ID
 };
 
 // The following are implemented by cht_DoCheat in m_cheat.cpp

@@ -1,6 +1,6 @@
 # Procedural Map Generation
 
-> **Living Document** — This page is updated whenever the procedural generator is modified. Last updated: 2026-10-03.
+> **Living Document** — This page is updated whenever the procedural generator is modified. Last updated: 2026-10-07.
 
 BiasedDoom includes a runtime procedural dungeon generator that synthesizes complete UDMF maps in memory. Maps are generated on demand when the engine loads the special map name `PROCMAP` (or any name starting with `PROC`). No WAD/PK3 editing is required.
 
@@ -16,6 +16,7 @@ BiasedDoom includes a runtime procedural dungeon generator that synthesizes comp
 - [Current Generation Pipeline](#current-generation-pipeline)
 - [Planning Versus Realization](#planning-versus-realization)
 - [Compatibility, Determinism, and Savegames](#compatibility-determinism-and-savegames)
+- [Cooperative and Network Runs](#cooperative-and-network-runs)
 - [Console Commands](#console-commands)
 - [CVars](#cvars)
 - [ZScript API](#zscript-api)
@@ -61,15 +62,26 @@ Choose **Procedural Game** from Doom's main menu. The setup screen contains ever
 - **Architecture Detail** — Sparse restrains landmark growth, interactive structures, trim, and props; Detailed is the default; Lavish expands landmarks and adds more reveal caches, perches, lifts, architectural trim, and collision-checked decoration.
 - **Outdoor Spaces** — Enclosed keeps nearly all rooms roofed, Mixed alternates interior and courtyard beats, and Open-Air turns many eligible landmarks into sky spaces. The finale remains a readable outdoor landmark in every mode.
 - **Run Blueprint** — every recipe automatically derives an Expedition, Assault, Infiltration, Circuit, or Siege run identity. It changes route direction, key order, branch/loop emphasis, combat beats, feature motifs, arsenal track, rewards, and finale without adding a selector or archived setting. The generated map shows its profile and one-line briefing together once on a fresh load.
-- **Generate & Play** — starts `PROCMAP` with the displayed settings.
+- **Companion Bots** — configure the shared friendly co-op squad in
+  **Options → Gameplay or Multiplayer → Companion Bots** before a run. The
+  Procedural Game screen deliberately has no separate companion setup, so it
+  cannot create a second squad; the same central controls are available for
+  every ordinary map. They are owned by local play's settings controller or
+  the network host and share eight native co-op slots with human players. See
+  [Companion bots](companion-bots.md) for capacity, commands, key behavior,
+  and host-transfer details.
+- **Generate & Play** — starts a local `PROCMAP` run with the displayed
+  settings, or begins a host-authored transfer when the settings controller
+  uses it in a live cooperative session.
 - **New Random Map** — chooses a new seed and starts it in one action.
 - **Next Random Run (Same Setup)** — after you exit a procedural map through
   its normal or secret exit,
-  starts a fresh single-player run from that completed map's theme, difficulty,
-  size, and style settings while choosing a guaranteed-different seed. It is a
-  quick endless-play loop, not a savegame/hub shortcut: inventory and world
-  state are reset exactly as with **Generate & Play**, and saves still restore
-  their archived map unchanged.
+  starts a fresh local run, or a host-authored shared run when invoked by the
+  settings controller in a live co-op session, from that completed map's theme,
+  difficulty, size, and style settings while choosing a guaranteed-different
+  seed. It is a quick endless-play loop, not a savegame/hub shortcut: a local
+  run resets inventory and world state exactly as **Generate & Play** does, and
+  saves still restore their archived map unchanged.
 - **Restore Defaults** — returns to seed `0`, Techbase, Classic Doom difficulty, size `3`, and the Balanced/Varied/Detailed/Mixed style defaults.
 
 All eight settings are archived, so the setup survives a restart. The blueprint is a pure result of those settings, not an additional saved control. The entry is restored after mod MENUDEF processing, remains present in classic and localized text-only layouts, and oversized replacement main menus scroll with the wheel, arrows, Page Up/Down, Home, and End.
@@ -81,9 +93,15 @@ Procedural savegames are self-contained. A save stores the complete eight-field 
 Open the console (default key is `` ` ``) and type:
 
 ```
-procmap          // generate and load using current CVars
-map PROCMAP      // load PROCMAP; CVars control generation
+procmap          // local generation, or host-authoritative co-op transfer
+map PROCMAP      // local load only; network peers require the host archive
 ```
+
+In a live network game, only the host/settings controller may use `procmap`.
+It first creates one exact UDMF archive, then changes maps only after every
+peer has validated and acknowledged that archive. A direct `map PROCMAP`
+request is deliberately rejected on a network peer because it would bypass the
+archive hand-off.
 
 ### From the Linux terminal
 
@@ -311,21 +329,26 @@ map.
 
 ### 6. Load, replay, and inspection
 
-`P_OpenProceduralMapData()` owns fresh runtime generation when the engine
-loads `PROCMAP` (or a `PROC...` map name). It reconfigures the singleton from
-the archived CVars immediately before generating, then exposes the resulting
-text as an in-memory `TEXTMAP` to the ordinary map loader and node builder. A
-fresh load shows the profile and briefing once; savegame and hub restoration
-reuse the archived UDMF and intentionally suppress that repeat notification.
+For a fresh local run, `P_OpenProceduralMapData()` owns runtime generation when
+the engine loads `PROCMAP` (or a `PROC...` map name). It reconfigures the
+singleton from the archived CVars immediately before generating, then exposes
+the resulting text as an in-memory `TEXTMAP` to the ordinary map loader and
+node builder. A shared run takes the other path: its host creates and stages
+the archive before the map change, and every participant consumes those exact
+verified bytes. A fresh load shows the profile and briefing once; savegame and
+hub restoration reuse the archived UDMF and intentionally suppress that repeat
+notification.
 
 Exiting a real procedural map records its recipe in runtime-only state. The
 Procedural Game menu's **Next Random Run (Same Setup)** action (and
-`procmap_next`) copies the seven non-seed fields, chooses a guaranteed-different
-positive seed, and starts a fresh single-player game. It deliberately does not
-modify a savegame or a hub restoration. `dumpprocudmf` exports the emitted
-TEXTMAP; `dumpprocmanifest` exports the recipe-derived plan plus realized
-geometry, material, resource, visual, and accessibility witnesses used by
-tests and external tooling.
+`procmap_next`) copies the seven non-seed fields and chooses a
+guaranteed-different positive seed. It starts a fresh local game in local play;
+in a live cooperative session, the host/settings controller instead prepares a
+new authoritative archive transfer. It deliberately does not modify a savegame
+or a hub restoration. `dumpprocudmf` exports the emitted TEXTMAP;
+`dumpprocmanifest` exports the recipe-derived plan plus realized geometry,
+material, resource, visual, and accessibility witnesses used by tests and
+external tooling.
 
 ## Planning Versus Realization
 
@@ -364,27 +387,74 @@ why a procedural savegame archives both the complete recipe and the exact
 generated UDMF. Loading such a save restores that historical base map even when
 current CVars—or the generator itself—have changed.
 
+## Cooperative and Network Runs
+
+Companion bots work on all ordinary maps and on Doom-family procedural maps.
+They occupy normal cooperative player slots. A nonzero companion target enables
+the server's `sv_coopsharekeys` rule, so a key collected by any human or
+companion serves the whole group; a companion never bypasses a lock or receives
+a private procedural key path. Generated maps reserve protected P1–P8 pads in
+the start landmark; P1 remains the canonical progression start and the other
+native starts give human players and companions clear placement. Participant
+and companion count never enter the recipe, so they cannot change a generated
+map's UDMF or manifest. The schema-1 manifest records this proof at
+`accessibility.collision_navigation.cooperative_starts`, including the eight
+native slots, canonical P1 origin, actual minimum separation, and each start's
+thing, landmark, position, and clear-pad evidence.
+
+In a network game, only the host/settings controller can begin a procedural
+run. It generates the recipe exactly once, transfers a checksummed embedded
+UDMF archive to every peer, and waits for each peer to validate, stage, and
+acknowledge that archive before the ordinary map change. Clients do not
+regenerate from a shared seed, so there is no cross-release shared-seed
+compatibility promise. Every peer must use compatible Doom-family game data and
+the same procedural roster context (Ultimate Doom or Doom II); the host rejects
+an IWAD/roster mismatch rather than converting Doom II-only content for another
+IWAD. A shared procedural session permits at most eight human participants,
+before companion capacity is considered. Join-in-progress is unavailable during
+that transfer. Before the final map-change event is committed, a validation
+failure, cancellation, or timeout keeps everyone on the current map. The host
+starts it from the existing live cooperative session; it finishes before the
+standard map change and is unavailable in deathmatch.
+
+After a normal network host handoff, the new host/settings controller may
+start a later procedural run and manage the companion squad. A handoff during
+an active transfer cancels that transfer safely rather than allowing competing
+map changes. Savegames remain self-contained because they retain the exact
+archived UDMF.
+
 ---
 
 ## Console Commands
 
 ### `procmap [seed|random]`
 
-Generates a procedural map using the current CVars and loads it immediately.
+Starts a procedural run from the current CVars. In local play it loads the map
+through the ordinary new-game path. In a live cooperative network game, the
+host/settings controller first generates a single archive and transfers it to
+the connected peers; the normal map change follows only after every peer has
+validated and acknowledged the archive.
 
 - If `seed` is provided, it overrides `procgen_seed` for this invocation. `random` chooses a new positive seed first.
-- The actual generation happens inside `P_OpenProceduralMapData()` when the engine loads `PROCMAP`, ensuring a single deterministic generation per map load.
+- For a local fresh run, generation happens inside `P_OpenProceduralMapData()`
+  when the engine loads `PROCMAP`. A shared run instead builds one archive on
+  the host before the map change; peers consume that verified archive rather
+  than generating a second copy.
 - The console prints the selected run profile and briefing. A fresh map load shows them together once as a mid-screen notification; savegame and hub restoration deliberately do not repeat it.
+- A network client cannot start, edit, or locally regenerate a shared run. It
+  accepts only the host's verified archive; shared runs require a live,
+  non-recording co-op game and are unavailable in deathmatch.
 
 ### `procmap_next`
 
 After completing a procedural map through its normal or secret exit, prepares
 and starts the next endless-play run. It copies the completed map's theme,
 difficulty, size, layout, verticality, detail, and outdoor settings, then
-chooses a different positive seed. The action intentionally starts a fresh
-single-player game instead of modifying a save or hub restoration. Before a
-procedural map has been completed, it safely explains that no completed recipe
-is available.
+chooses a different positive seed. In local play it starts a fresh game; in a
+live co-op session the host/settings controller uses the same host-authored
+archive-transfer path as `procmap`. The action never alters a save or hub
+restoration. Before a procedural map has been completed, it safely explains
+that no completed recipe is available.
 
 ### Menu helper commands
 
@@ -393,7 +463,18 @@ is available.
 - `procmap_next` is the menu's post-completion **Next Random Run (Same
   Setup)** action; it preserves the last completed recipe except for its new
   seed.
-- Startup `+procmap` invocations enter the engine's normal autostart path; live menu/console invocations defer a new single-player game on the next tick.
+- Startup `+procmap` invocations enter the engine's normal autostart path; live
+  menu/console invocations defer the appropriate local or host-authoritative
+  new-game path on the next tick.
+
+### Shared-run transfer controls
+
+`procmap_transfer_status` reports the active host transfer or client receive
+state, including chunk progress and whether a client archive has been verified.
+`procmap_cancel` safely cancels an active hand-off before its final map-change
+event has been committed. A cancellation, checksum failure, roster change, or
+timeout then leaves the current map in place; clients do not fall back to
+locally regenerating `PROCMAP`.
 
 ### `dumpprocudmf <seed> [theme] [difficulty] [size] [layout] [verticality] [detail] [outdoors] [output]`
 
@@ -770,7 +851,10 @@ The generator emits a complete UDMF TEXTMAP with the following sections:
    - **2-sided lift edges**: four usable, repeatable `Plat_DownWaitUpStay` faces around an optional reward platform.
    - **remote activation lines**: one-sided, repeatable usable switches use `Door_Open` (11) against a tagged supply-cache slab; this special is never player-cross activated.
    - **raised-platform edges**: two-sided retaining lines around a split stair opening, plus two or three 16-unit stair tiers whose entire access route is player- and monster-open.
-6. **Things** — Player start, staged keys, paced enemies from static encounter cards, elevated ranged enemies, weapons/resources, optional boss, and collision-checked theme/role decorations.
+6. **Things** — One canonical P1 start plus protected P2–P8 cooperative
+   starts, staged keys, paced enemies from static encounter cards, elevated
+   ranged enemies, weapons/resources, an optional boss, and collision-checked
+   theme/role decorations.
 
 ### Winding Order
 
@@ -792,7 +876,7 @@ This ensures the Doom renderer never sees reversed or void-facing walls.
 | File | Purpose |
 |------|---------|
 | `src/common/maps/procgen.h` | `FProceduralMapGenerator` class declaration, `ProcGenCell` struct |
-| `src/common/maps/procgen.cpp` | CVars, console commands, and `P_OpenProceduralMapData()` |
+| `src/common/maps/procgen.cpp` | CVars, console commands, local map opening, save/archive staging, and host-authoritative procedural archive transfer |
 | `src/common/maps/procgen/procgen_core.cpp` | Route embedding, mission graph, key gates, branches, loops, and landmarks |
 | `src/common/maps/procgen/procgen_rooms.cpp` | Room composition, visual zones, encounter pacing, and weapon/resource progression |
 | `src/common/maps/procgen/procgen_udmf.cpp` | Closed chamber/corridor architecture, functional doors, shaped perimeter, UDMF geometry, and thing emission |
@@ -808,10 +892,12 @@ This ensures the Doom renderer never sees reversed or void-facing walls.
    CVars. `procmap` reports the hash-derived identity, then asks the normal
    new-game path to load `PROCMAP`; it deliberately does not generate a second
    preview map.
-2. `P_OpenMapData()` reaches `P_OpenProceduralMapData()`, which re-applies the
-   current recipe to the singleton, runs `Generate()`, and presents the emitted
-   string as an in-memory `TEXTMAP`. The normal parser and node builder then
-   own map loading.
+2. In local play, `P_OpenMapData()` reaches `P_OpenProceduralMapData()`, which
+   re-applies the current recipe to the singleton, runs `Generate()`, and
+   presents the emitted string as an in-memory `TEXTMAP`. In a shared run, the
+   host has already generated and transferred that exact text; each peer stages
+   the verified archive and consumes it without local regeneration. The normal
+   parser and node builder then own map loading in both cases.
 3. `procgen_core.cpp` rebuilds the pure `RunBlueprint`, re-seeds `FRandom`,
    constructs the graph scaffold, selects the critical route/keys/gates,
    allocates same-stage loops and landmarks, and assigns protected connector
@@ -883,6 +969,22 @@ bool P_IsProceduralMapName(const char* mapname);
 
 ### `test_procgen.sh`
 
+The standard modes require a Doom II IWAD. Supply one explicitly with
+`--iwad /path/to/doom2.wad`, or set `IWAD` (the long-standing form) or
+`BIASEDDOOM_TEST_IWAD`. The `doom1`, `alignment`, `features`, and `music`
+modes also compare against Doom/Ultimate Doom; give them `--doom1-iwad
+/path/to/doom.wad` or set `DOOM1_IWAD` / `BIASEDDOOM_TEST_DOOM1_IWAD`.
+When omitted, the script checks its repository and binary directories followed
+by `DOOMWADDIR` and `DOOMWADPATH`; it does not depend on a developer-local
+installation path. Each invocation uses a temporary private engine config and
+the null video/dummy-audio backends, so it does not inherit local controls,
+display settings, or audio-device state. Put global options before the mode:
+
+```bash
+./test_procgen.sh --iwad /path/to/doom2.wad replayability
+./test_procgen.sh --iwad /path/to/doom2.wad --doom1-iwad /path/to/doom.wad alignment
+```
+
 ```bash
 # Run the representative structural validation matrix (default)
 ./test_procgen.sh validate
@@ -893,6 +995,11 @@ bool P_IsProceduralMapName(const char* mapname);
 # Verify automatic RunBlueprint coverage, same-recipe UDMF/manifest determinism,
 # planned encounter/economy contracts, visual-proof metadata, and player-visible run-plan diversity
 ./test_procgen.sh replayability
+
+# Check the source-level co-op transfer ordering contract: a staged client
+# retains its archive through the host's committed map change and abandoned
+# archives are released on every reset path
+./test_procgen.sh network
 
 # Verify the packed main-menu entry, every setup control, persistence, and launch action
 ./test_procgen.sh menu
@@ -950,6 +1057,29 @@ bool P_IsProceduralMapName(const char* mapname);
 # Show first 100 lines of last UDMF
 ./test_procgen.sh udmf
 ```
+
+### Third-party flashlight prediction regression
+
+`tools/test-brutal-doom-flashlight.sh` is a deliberately external-content
+smoke test for an unusually demanding compatibility path: Brutal Doom's
+high-quality flashlight creates predicted light actors while a map is live.
+The repository does not ship or redistribute that mod; provide a locally
+installed compatible PK3 explicitly. The `--procedural` variant uses the
+reported Gothic recipe, keeps the player alive for the full run, confirms that
+`PROCMAP` loaded, and rejects a fatal engine report, a failed script test, or
+unbounded prediction diagnostics:
+
+```bash
+tools/test-brutal-doom-flashlight.sh \
+  --iwad /path/to/doom2.wad \
+  --mod /path/to/brutal-doom.pk3 \
+  --procedural --tics 1000
+```
+
+This is a headless simulation and prediction-rollback regression. It proves
+the engine can sustain the gameplay path without accumulating an unbounded
+warning stream; hardware-renderer light presentation remains an interactive
+visual QA concern.
 
 ### Historical 4.15.6 release verification
 
@@ -1011,7 +1141,8 @@ head -50 /tmp/procmap_test.udmf
 ### What to verify
 
 - A ten-minute modded gameplay soak at developer level 3 produces no successful `GetCrosshair` start/completion notices. Developer level 4 still exposes matching lifecycle traces, and unknown actors/functions, malformed bytecode, invalid arguments, and other ACS failures retain their existing error or warning channels.
-- Exactly one player start and exit trigger.
+- Exactly one canonical P1 player start, seven protected native co-op starts,
+  and one exit trigger.
 - One to three keys (`type = 5`, `13`, or `6`, depending on size).
 - Exactly two lock linedefs per key (the two faces of one planned gate boundary).
 - Sector and thing counts remain within size-scaled budgets.

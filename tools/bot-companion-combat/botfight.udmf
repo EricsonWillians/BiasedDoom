@@ -1,0 +1,20 @@
+namespace = "zdoom";
+
+// A clear firing lane: Player 1 stays behind the companion's Player 2 spawn,
+// and the passive target is directly ahead.  Nothing in this fixture writes
+// player input or actor state after map setup.
+thing { x = 64.0;  y = 128.0; angle = 0; type = 1;     skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; single = true; coop = true; dm = true; }
+thing { x = 160.0; y = 128.0; angle = 0; type = 2;     skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; single = true; coop = true; dm = true; }
+thing { x = 480.0; y = 128.0; angle = 180; type = 32000; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; single = true; coop = true; dm = true; id = 32000; }
+
+vertex { x = 0.0;   y = 0.0; }
+vertex { x = 640.0; y = 0.0; }
+vertex { x = 640.0; y = 256.0; }
+vertex { x = 0.0;   y = 256.0; }
+
+sector { heightfloor = 0; heightceiling = 128; lightlevel = 192; texturefloor = "FLOOR4_8"; textureceiling = "CEIL3_5"; }
+sidedef { sector = 0; texturemiddle = "STARTAN3"; }
+linedef { v1 = 0; v2 = 3; sidefront = 0; }
+linedef { v1 = 3; v2 = 2; sidefront = 0; }
+linedef { v1 = 2; v2 = 1; sidefront = 0; }
+linedef { v1 = 1; v2 = 0; sidefront = 0; }

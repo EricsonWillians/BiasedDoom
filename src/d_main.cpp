@@ -915,11 +915,85 @@ static void DrawRateStuff()
 	}
 }
 
+static FString FormatVideoRecordingElapsed(uint64_t milliseconds)
+{
+	const uint64_t seconds = milliseconds / 1000;
+	return FStringf("%02llu:%02llu:%02llu",
+		(unsigned long long)(seconds / 3600),
+		(unsigned long long)((seconds / 60) % 60),
+		(unsigned long long)(seconds % 60));
+}
+
+static FString CompactVideoRecordingDetail(FString detail)
+{
+	// The capture error is useful feedback, but it must not become a huge HUD
+	// line when a filesystem supplies a long path or diagnostic string.
+	constexpr unsigned int MaxDetailLength = 68;
+	if (detail.Len() > MaxDetailLength)
+	{
+		detail.Truncate(MaxDetailLength - 3);
+		detail += "...";
+	}
+	return detail;
+}
+
+static void DrawVideoRecordingStatus()
+{
+	FVideoRecordingStatus status;
+	if (!M_GetVideoRecordingStatus(status) || status.State == VRS_None)
+	{
+		return;
+	}
+
+	const FString elapsed = FormatVideoRecordingElapsed(status.ElapsedMilliseconds);
+	const FString detail = CompactVideoRecordingDetail(status.Detail);
+	FString text;
+	EColorRange color = CR_WHITE;
+	switch (status.State)
+	{
+	case VRS_Recording:
+		color = CR_RED;
+		text.Format("REC %s%s%s", elapsed.GetChars(), detail.IsEmpty() ? "" : " - ", detail.GetChars());
+		break;
+
+	case VRS_Stopping:
+		color = CR_ORANGE;
+		text.Format("FINALIZING VIDEO %s%s%s", elapsed.GetChars(), detail.IsEmpty() ? "" : " - ", detail.GetChars());
+		break;
+
+	case VRS_Finalized:
+		color = CR_GREEN;
+		text.Format("VIDEO SAVED %s%s%s", elapsed.GetChars(), detail.IsEmpty() ? "" : " - ", detail.GetChars());
+		break;
+
+	case VRS_Failed:
+		color = CR_RED;
+		text.Format("VIDEO FAILED%s%s", detail.IsEmpty() ? "" : " - ", detail.GetChars());
+		break;
+
+	default:
+		return;
+	}
+
+	int textScale = active_con_scale(twod);
+	if (textScale < 1)
+	{
+		textScale = 1;
+	}
+	DrawText(twod, NewConsoleFont, color, 8, 8, text.GetChars(),
+		DTA_VirtualWidth, twod->GetWidth() / textScale,
+		DTA_VirtualHeight, twod->GetHeight() / textScale,
+		DTA_KeepRatio, true,
+		DTA_Shadow, true,
+		TAG_DONE);
+}
+
 static void DrawOverlays()
 {
 	C_DrawConsole ();
 	M_Drawer ();
 	DrawRateStuff();
+	DrawVideoRecordingStatus();
 	if (!hud_toggled)
 		FStat::PrintStat (twod);
 
@@ -1023,7 +1097,35 @@ void D_Display ()
 		else
 		{
 			R_ExecuteSetViewSize (vp, r_viewwindow);
+		}
 	}
+
+	// A hardware capture backend may have reached its deliberately small GPU
+	// work limit. Stop the take before rendering another frame, then leave the
+	// event/tick loop responsive while the backend polls its oldest fence. This
+	// is a frame-admission gate, not a presentation-time delay: drawing first
+	// would still let a slow or wedged driver accumulate unbounded command work.
+	if (screen->ConsumeVideoCaptureBackpressureFailure())
+	{
+		M_FailVideoRecording("GPU capture backlog did not recover; recording stopped to keep the game responsive");
+	}
+	if (!screen->CanRenderNextFrame())
+	{
+		// CanRenderNextFrame() may have exhausted its finite recovery window on
+		// this exact poll, so consume a newly raised one-shot failure immediately.
+		if (screen->ConsumeVideoCaptureBackpressureFailure())
+		{
+			M_FailVideoRecording("GPU capture backlog did not recover; recording stopped to keep the game responsive");
+		}
+		// Update() normally owns this poll, but the admission gate deliberately
+		// returns before Update()/Swap() so it cannot submit another untracked GL
+		// frame. A failed take may still need to zero-poll its already-submitted
+		// final readback or expire that bounded drain window. Do not use
+		// M_ProcessPendingScreenShot(), because an unrelated screenshot could
+		// synchronously read the very GPU backlog this gate is containing; this
+		// tail-only poll never asks the backend to issue a replacement transfer.
+		M_PollStoppingVideoRecording();
+		return;
 	}
 
 	// [RH] Allow temporarily disabling wipes
@@ -1265,6 +1367,7 @@ void D_ErrorCleanup ()
 	if (M_IsVideoRecording())
 	{
 		M_StopVideoRecording();
+		M_FinishVideoRecording();
 	}
 	primaryLevel->BotInfo.RemoveAllBots (primaryLevel, true);
 	D_QuitNetGame ();
@@ -3822,6 +3925,10 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 						CheckWarpTransMap(startmap, true);
 						if (demorecording)
 							G_BeginRecording(startmap.GetChars());
+						// Command-line autostarts skip G_NewInit(). Apply the same
+						// companion-aware co-op decision before G_InitNew() populates
+						// the normal map, so its cooperative thing filters are correct.
+						G_ConfigureNewGameMultiplayerMode();
 						G_InitNew(startmap.GetChars(), false);
 						if (StoredWarp.IsNotEmpty())
 						{
@@ -4206,6 +4313,7 @@ void D_Cleanup()
 	if (M_IsVideoRecording())
 	{
 		M_StopVideoRecording();
+		M_FinishVideoRecording();
 	}
 	if (debugServer)
 	{
