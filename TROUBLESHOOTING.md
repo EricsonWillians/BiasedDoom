@@ -167,7 +167,7 @@ rewrite arguments or inject files.
 
 ## DECOHack Or MBF21 Weapon Sprites Are Invisible
 
-First confirm the engine version at startup. Update to the current 4.15.18
+First confirm the engine version at startup. Update to the current 4.15.19
 build or newer before diagnosing a DECOHack/DSDHacked weapon mod: older builds
 could reject a valid sparse `[SPRITES]` number through the legacy dense-sprite
 growth guard. The usual DECOHack MBF21 range starts at sprite ID `8000`.

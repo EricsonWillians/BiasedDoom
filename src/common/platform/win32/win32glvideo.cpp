@@ -33,7 +33,7 @@
 */
 
 #include <windows.h>
-#include <GL/gl.h>
+#include "gl_load.h"
 #include <vector>
 #include "wglext.h"
 #include <vector>
@@ -451,7 +451,6 @@ void Win32GLVideo::Shutdown()
 	}
 	if (m_hDC) ReleaseDC(m_Window, m_hDC);
 }
-
 
 
 

@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [4.15.18] - 2026-10-07
+## [4.15.19] - 2026-10-08
 
 ### Added
 
@@ -73,6 +73,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Windows MinGW release packaging:** capture's OpenGL fence types now use
+  the engine's generated OpenGL loader before the Windows source can include
+  the legacy system GL header. This restores cross-compiled Windows packaging
+  without changing capture behavior.
 - **Transparent classic mugshots in local companion co-op:** local companion
   squads use cooperative gameplay rules without being a second human player.
   The Doom status bar therefore no longer draws the bright `STFBANY`
