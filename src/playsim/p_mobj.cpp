@@ -886,6 +886,51 @@ bool P_ApplyPlayerSkin(AActor *actor)
 	bool externalSkin = skin >= (int)PlayerClasses.Size();
 	bool livePlayer = player->playerstate == PST_LIVE && actor->health > 0;
 
+	if (relaxedClass && externalSkin &&
+		(unsigned)actor->state->sprite < sprites.Size() &&
+		memcmp(sprites[actor->state->sprite].name, "PLAY", 4) == 0)
+	{
+		// Brutal Doom deliberately uses PLAY for the states which already have
+		// a canonical Doom-skin equivalent: its injury pose (G), executions
+		// (A), and the complete H-N normal-death sequence. Preserve the exact
+		// state frame here, including after the player is no longer alive. The
+		// broader live-player mapping below must not flatten those frames to an
+		// idle or attack pose.
+		actor->sprite = skinsprite;
+		if (actor->frame >= sprites[skinsprite].numframes)
+		{
+			actor->frame = 0;
+		}
+		return true;
+	}
+
+	if (relaxedClass && externalSkin && !livePlayer && actor->health <= 0 &&
+		actor->state->sprite != SPR_TNT1 &&
+		(InActorStateLabelTree(actor, NAME_Death) || InActorStateLabelTree(actor, NAME_XDeath) ||
+			InActorStateLabelTree(actor, NAME_Crush)) &&
+		sprites[skinsprite].numframes > 7)
+	{
+		// Many Brutal Doom special deaths (burning, plasma, dismemberment,
+		// executions, etc.) use their own sprite names instead of PLAY.  A
+		// vanilla skin has no matching alphabet for those names, but it does
+		// provide the complete H-W death strip.  Fold the current custom state
+		// frame into that strip so a selected skin remains selected throughout
+		// every visible special-death sequence. TNT1/null phases stay invisible.
+		int deathFrame = actor->state->GetFrame();
+		if (deathFrame < 0)
+		{
+			deathFrame = 0;
+		}
+		int availableFrames = sprites[skinsprite].numframes - 7;
+		if (deathFrame >= availableFrames)
+		{
+			deathFrame = availableFrames - 1;
+		}
+		actor->sprite = skinsprite;
+		actor->frame = 7 + deathFrame; // H through the final skin death frame.
+		return true;
+	}
+
 	if (relaxedClass && externalSkin && livePlayer)
 	{
 		// Preserve intentionally invisible mod states. SPR_FIXED and SPR_NOCHANGE
@@ -902,7 +947,11 @@ bool P_ApplyPlayerSkin(AActor *actor)
 		}
 		else if (player->skinAttackTics > 0)
 		{
-			skinframe = 4;	// E: attack
+			// Alternate the skin's E aim and F recoil frames for the full
+			// attack hold. Keeping this timer-based makes every weapon class
+			// (including Brutal Doom's custom arsenal) expose the muzzle flash
+			// instead of pinning the player in the non-firing E pose.
+			skinframe = 4 + ((player->skinAttackTics >> 1) & 1);
 		}
 		else if (player->cmd.forwardmove != 0 || player->cmd.sidemove != 0 ||
 			actor->Vel.XY().LengthSquared() > 0.25)

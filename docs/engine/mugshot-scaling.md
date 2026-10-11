@@ -62,6 +62,27 @@ Width and height are independent forced display dimensions. Omitting both uses t
 
 Mugshot-state declarations can also provide position and target-size overrides. When a matching state supplies them, its positive width/height and coordinates take precedence over the values on `drawmugshot`; the player transform is applied afterward.
 
+## High-resolution skin faces
+
+An `S_SKIN` definition can use `facescale` to decouple the source portrait
+resolution from its logical HUD dimensions:
+
+```
+face = GVF
+facescale = 0.125
+faceoverlay = true
+```
+
+This example makes a 280×248 face texture occupy the same 35×31 logical
+footprint as Doom's conventional face graphics. The renderer retains the
+280×248 pixels, so it is sharper instead of being pre-downscaled. With
+`faceoverlay = true`, the stock Doom fullscreen HUD also shows it in a
+reserved lower-left 112×99 portrait area above health and armor. The player
+can toggle that area with `hud_fullscreen_mugshot` and adjust it within its
+non-overlapping range with `hud_fullscreen_mugshot_scale`. Give each
+skin its own face prefix: the logical dimensions are stored on the resolved
+texture and are therefore shared by that texture name.
+
 ## Rendering Order
 
 The legacy path resolves the portrait in this order:

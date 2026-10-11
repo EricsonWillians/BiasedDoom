@@ -48,3 +48,4 @@ gdb-respfile-*
 
 # website generator output
 website/out/
+services/online/secrets/

@@ -89,7 +89,12 @@ public:
 	bool OpenWriter(bool pretty = true);
 	bool OpenReader(const char *buffer, size_t length);
 	bool OpenReader(FileSys::FCompressedBuffer *input);
-	void Close();
+	// Most engine-owned serializers treat a parse error as fatal when they
+	// close. Network-facing callers must be able to reject an untrusted archive
+	// without terminating the process, so they can inspect this before using
+	// Close(false). Existing callers retain the strict default.
+	bool HasErrors() const { return mErrors > 0; }
+	void Close(bool reportErrors = true);
 	void ReadObjects(bool hubtravel);
 	bool BeginObject(const char *name);
 	void EndObject();

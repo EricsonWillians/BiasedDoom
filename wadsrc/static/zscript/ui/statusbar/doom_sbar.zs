@@ -165,6 +165,8 @@ class DoomStatusBar : BaseStatusBar
 
 	protected void DrawFullScreenStuff ()
 	{
+		DrawFullscreenMugShot();
+
 		Vector2 iconbox = (40, 20);
 		// Draw health
 		let berserk = CPlayer.mo.FindInventory("PowerStrength");
@@ -210,6 +212,21 @@ class DoomStatusBar : BaseStatusBar
 		{
 			DrawInventoryBar(diparms, (0, 0), 7, DI_SCREEN_CENTER_BOTTOM, HX_SHADOW);
 		}
+	}
+
+	// High-resolution skins opt into this reserved lower-left column. Its
+	// bottom edge stops above the health/armor stack, while ammo stays on the
+	// right, inventory at the centre, and keys at the upper right.
+	protected void DrawFullscreenMugShot()
+	{
+		if (!ShouldDrawFullscreenMugShot()) return;
+
+		TextureID face = GetMugShot(5);
+		if (!face.IsValid()) return;
+
+		double scale = CVar.GetCVar('hud_fullscreen_mugshot_scale').GetFloat();
+		DrawTexture(face, (8, -50), DI_SCREEN_LEFT_BOTTOM|DI_ITEM_LEFT_BOTTOM,
+			0.96, (112 * scale, 99 * scale));
 	}
 	
 	protected virtual void DrawFullscreenKeys()

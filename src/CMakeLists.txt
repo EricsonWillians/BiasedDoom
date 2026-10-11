@@ -805,6 +805,7 @@ set (PCH_SOURCES
 	g_cvars.cpp
 	g_dumpinfo.cpp
 	g_game.cpp
+	experimental_camera.cpp
 	g_hub.cpp
 	g_level.cpp
 	gameconfigfile.cpp
@@ -1291,6 +1292,54 @@ target_sources(zdoom PRIVATE
 	python/python_runtime.h
 )
 
+if(BIASEDDOOM_ONLINE_AVAILABLE)
+	target_sources(zdoom PRIVATE
+		common/online/online_session.cpp
+		common/online/online_session.h
+		common/online/online_snapshot.cpp
+		common/online/online_snapshot.h
+		common/online/online_join.cpp
+		common/online/online_join.h
+		common/online/online_service.cpp
+		common/online/online_service.h
+		common/online/online_transport.cpp
+		common/online/online_transport.h
+	)
+	target_compile_definitions(zdoom PRIVATE BIASEDDOOM_ONLINE=1)
+	# zdoom predates CMake's keyword signature and links all of its libraries
+	# with the plain form below. Keep that convention here: CMake does not let
+	# one target mix the two forms.
+	target_link_libraries(zdoom CURL::libcurl unofficial-sodium::sodium)
+	set_source_files_properties(
+		common/online/online_session.cpp
+		common/online/online_snapshot.cpp
+		common/online/online_join.cpp
+		common/online/online_service.cpp
+		common/online/online_transport.cpp
+		PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE)
+	if(BIASEDDOOM_BUILD_ONLINE_TESTS)
+		add_executable(biaseddoom-online-core-test
+		../tools/online_core_test.cpp
+		common/online/online_session.cpp
+		common/online/online_snapshot.cpp
+		common/online/online_join.cpp
+		common/online/online_transport.cpp
+		common/online/online_service.cpp)
+		target_include_directories(biaseddoom-online-core-test PRIVATE .)
+		target_link_libraries(biaseddoom-online-core-test PRIVATE miniz CURL::libcurl unofficial-sodium::sodium)
+		set_target_properties(biaseddoom-online-core-test PROPERTIES
+			RUNTIME_OUTPUT_DIRECTORY "${ZDOOM_OUTPUT_DIR}")
+		add_executable(biaseddoom-online-snapshot-fuzz
+		../tools/online_snapshot_fuzz.cpp
+		common/online/online_snapshot.cpp
+		common/online/online_join.cpp)
+		target_include_directories(biaseddoom-online-snapshot-fuzz PRIVATE .)
+		target_link_libraries(biaseddoom-online-snapshot-fuzz PRIVATE miniz unofficial-sodium::sodium)
+		set_target_properties(biaseddoom-online-snapshot-fuzz PROPERTIES
+			RUNTIME_OUTPUT_DIRECTORY "${ZDOOM_OUTPUT_DIR}")
+	endif()
+endif()
+
 if(BIASEDDOOM_INTERNAL_ZMUSIC)
 	target_compile_definitions(zdoom PRIVATE BIASEDDOOM_ZMUSIC_DECODER_DIAGNOSTICS=1)
 endif()
@@ -1747,6 +1796,7 @@ source_group("Common\\Audio\\Music" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_
 source_group("Common\\Console" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/console/.+")
 source_group("Common\\Utility" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/utility/.+")
 source_group("Common\\Engine" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/engine/.+")
+source_group("Common\\Online" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/online/.+")
 source_group("Common\\2D" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/2d/.+")
 source_group("Common\\Cutscenes" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/cutscenes/.+")
 source_group("Common\\Objects" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/objects/.+")

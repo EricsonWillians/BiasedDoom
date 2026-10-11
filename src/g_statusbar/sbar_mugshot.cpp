@@ -75,8 +75,9 @@ FMugShotFrame::~FMugShotFrame()
 //
 //===========================================================================
 
-FGameTexture *FMugShotFrame::GetTexture(const char *default_face, const char *skin_face, int random, int level,
-	int direction, bool uses_levels, bool health2, bool healthspecial, bool directional)
+FGameTexture *FMugShotFrame::GetTexture(const char *default_face, const char *skin_face, int random,
+	float face_scale, int level, int direction, bool uses_levels, bool health2,
+	bool healthspecial, bool directional)
 {
 	int index = !directional ? random % Graphic.Size() : direction;
 	if ((unsigned int)index > Graphic.Size() - 1)
@@ -97,7 +98,18 @@ FGameTexture *FMugShotFrame::GetTexture(const char *default_face, const char *sk
 		}
 		sprite.UnlockBuffer();
 	}
-	return TexMan.GetGameTexture(TexMan.CheckForTexture(sprite.GetChars(), ETextureType::Any, FTextureManager::TEXMAN_TryAny|FTextureManager::TEXMAN_AllowSkins));
+	FGameTexture *texture = TexMan.GetGameTexture(TexMan.CheckForTexture(sprite.GetChars(), ETextureType::Any, FTextureManager::TEXMAN_TryAny|FTextureManager::TEXMAN_AllowSkins));
+	if (texture != nullptr && face_scale != 1.f)
+	{
+		// A face's native texel dimensions are its high-quality source data;
+		// its display dimensions are the established status-bar footprint.
+		// Changing the texture's logical size here also keeps ZScript status
+		// bars (which obtain it through TexMan.GetScaledSize) in sync with
+		// classic SBARINFO drawmugshot.
+		texture->SetDisplaySize(texture->GetTexelWidth() * face_scale,
+			texture->GetTexelHeight() * face_scale);
+	}
+	return texture;
 }
 
 //===========================================================================
@@ -479,8 +491,13 @@ FGameTexture *FMugShot::GetFace(player_t *player, const char *default_face, int 
 	if (CurrentState != NULL)
 	{
 		int skin = player->userinfo.GetSkin();
-		const char *skin_face = (stateflags & FMugShot::CUSTOM) ? nullptr : (player->mo->alternative != nullptr ? (GetDefaultByType(player->MorphedPlayerClass))->NameVar(NAME_Face).GetChars() : Skins[skin].Face.GetChars());
-		return CurrentState->GetCurrentFrameTexture(default_face, skin_face, level, angle);
+		const bool uses_skin_face = !(stateflags & FMugShot::CUSTOM) && player->mo->alternative == nullptr;
+		const char *skin_face = (stateflags & FMugShot::CUSTOM) ? nullptr
+			: (player->mo->alternative != nullptr
+				? GetDefaultByType(player->MorphedPlayerClass)->NameVar(NAME_Face).GetChars()
+				: Skins[skin].Face.GetChars());
+		const float face_scale = uses_skin_face ? Skins[skin].FaceScale : 1.f;
+		return CurrentState->GetCurrentFrameTexture(default_face, skin_face, face_scale, level, angle);
 	}
 	return NULL;
 }

@@ -32,7 +32,10 @@
 #include "doomdef.h"
 #include "d_protocol.h"
 #include "i_net.h"
+#include <cstdint>
 #include <queue>
+#include <string>
+#include <vector>
 
 uint64_t I_msTime();
 struct particle_t;
@@ -170,6 +173,11 @@ void Net_WriteBytes(const uint8_t *, int len);
 // through the last accepted atomic record instead of dropping it as well.
 bool Net_WriteEventAtomic(const uint8_t *, int len);
 
+// Queues the host-authoritative, deterministic roster transition used by an
+// online snapshot handoff. The guest is not made active until every existing
+// player and the restored guest execute this ordinary tic event.
+bool Net_QueueOnlinePlayerJoin(int player);
+
 void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player);
 void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream);
 
@@ -177,6 +185,45 @@ bool Net_CheckCutsceneReady();
 void Net_AdvanceCutscene();
 void Net_ResetCommands(bool midTic);
 void Net_SetWaiting();
+// Packet-server state that must accompany an in-memory world snapshot. A
+// world archive on its own has no meaningful command sequence/lobby epoch, so
+// a joining client could otherwise restore valid game objects and immediately
+// consume commands from the wrong point in the deterministic stream.
+//
+// CompletedTic names the last world tic represented by the snapshot. The next
+// replay record must therefore be CompletedTic + 1. ClientMask records only
+// active legacy slots; a joining slot is intentionally added later by the
+// synchronized admission event.
+struct FOnlineNetSnapshotState
+{
+	uint64_t CompletedTic = 0;
+	uint64_t ClientMask = 0;
+	int32_t CurrentConsistency = 0;
+	int32_t LastSentConsistency = 0;
+	int32_t Arbitrator = -1;
+	uint8_t TicDup = 0;
+	uint8_t LobbyId = 0;
+};
+
+// Capture only at a whole tic boundary. These routines do not serialize user
+// commands: replay records supply every post-snapshot command separately.
+bool Net_CaptureOnlineSnapshotState(FOnlineNetSnapshotState& state);
+bool Net_ValidateOnlineSnapshotState(const FOnlineNetSnapshotState& state);
+bool Net_RestoreOnlineSnapshotState(const FOnlineNetSnapshotState& state);
+// Encodes the already accepted commands for one deterministic tic in a
+// platform-independent form. The caller records this before G_Ticker() runs
+// the tic and applies it only after restoring the matching snapshot baseline.
+bool Net_BuildOnlineReplayRecord(uint64_t tic, std::vector<uint8_t>& record, std::string& error);
+bool Net_ApplyOnlineReplayRecord(uint64_t tic, const uint8_t* record, size_t size, std::string& error);
+// Advances one already restored packet-server command sequence through all of
+// its TicDup simulation tics. Call only in the disposable, offline join
+// restore phase: a failed replay may have run untrusted-but-structurally-valid
+// game events, so callers must discard the handoff instead of resuming a
+// normal live connection from that process state.
+bool Net_RunOnlineReplayTic(uint64_t tic, const uint8_t* record, size_t size, std::string& error);
+// Called only after the authenticated online directory has declared the
+// packet-server arbitrator unreachable and selected a surviving legacy slot.
+void Net_OnlineHostRecovered(int newHost);
 void Net_ClearBuffers();
 bool Net_IsWaiting();
 double Net_ModifyFrac(double ticFrac);

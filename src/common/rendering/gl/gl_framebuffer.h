@@ -7,6 +7,14 @@
 
 #include <memory>
 
+// GLsync is specified as a pointer to this opaque tag. Keep the storage in
+// this public renderer header expressed in terms of the tag itself: platform
+// GL headers/loaders do not all make the GLsync typedef visible at the same
+// point in their include sequence (notably the Windows SDK toolchains).
+// The generated loader's GLsync remains the identical pointer type at call
+// sites.
+struct __GLsync;
+
 namespace OpenGLRenderer
 {
 
@@ -94,7 +102,7 @@ private:
 	struct FVideoReadbackSlot
 	{
 		GLuint Buffer = 0;
-		GLsync Fence = nullptr;
+		::__GLsync *Fence = nullptr;
 		int SourceLeft = 0;
 		int SourceTop = 0;
 		int SourceWidth = 0;
@@ -123,7 +131,7 @@ private:
 	// rendering work until it eventually stalls much more severely.
 	struct FVideoFramePacingFence
 	{
-		GLsync Fence = nullptr;
+		::__GLsync *Fence = nullptr;
 		uint64_t Sequence = 0;
 	};
 

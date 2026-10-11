@@ -182,6 +182,12 @@ private:
 	void PlayerSpawnPickClass (int playernum);
 
 public:
+	// Serializes this level into a caller-owned buffer without changing the
+	// hub snapshot stored in level_info_t. The caller must value-initialize the
+	// FCompressedBuffer before its first use and call Clean() when it is done.
+	// This gives online join/recovery code a safe capture primitive without
+	// borrowing or replacing the normal savegame/hub snapshot.
+	bool BuildSnapshot(FCompressedBuffer &snapshot);
 	void SnapshotLevel();
 	void UnSnapshotLevel(bool hubLoad);
 

@@ -33,6 +33,7 @@
 #include "g_levellocals.h"
 #include "models.h"
 #include "hw_weapon.h"
+#include "experimental_camera.h"
 #include "hw_fakeflat.h"
 #include "texturemanager.h"
 #include "d_net.h"
@@ -67,7 +68,7 @@ static bool IsThirdPersonViewActive(player_t *player)
 	}
 
 	const bool chaseAllowed = !deathmatch || (dmflags2 & DF2_CHASECAM);
-	return chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled);
+	return ECamera_IsThirdPersonActive() || (chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled));
 }
 
 //==========================================================================

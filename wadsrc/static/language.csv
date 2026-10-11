@@ -3561,3 +3561,5 @@ Mugshot scale,HUDMNU_MUGSHOTSCALE,"Scales the portrait around its horizontal cen
 Horizontal position,HUDMNU_MUGSHOTXOFFSET,"Moves the portrait left or right in status-bar pixels.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 Vertical position,HUDMNU_MUGSHOTYOFFSET,"Moves the portrait up or down in status-bar pixels.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 Reset mugshot layout,HUDMNU_MUGSHOTRESET,"Restores the default portrait scale and position.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Fullscreen portrait,HUDMNU_FULLSCREENMUGSHOT,"Show an opted-in high-resolution skin portrait above health and armor when the status bar is hidden.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Fullscreen portrait scale,HUDMNU_FULLSCREENMUGSHOTSCALE,"Set the size of the reserved fullscreen portrait area.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,

@@ -27,6 +27,8 @@
 
 #include <stddef.h>
 
+#include <new>
+
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 
@@ -622,6 +624,423 @@ void Net_SetWaiting()
 		LevelStartStatus = LST_WAITING;
 }
 
+//==========================================================================
+//
+// Snapshot packet-server baseline
+//
+// A world snapshot is taken between simulation tics. The ordinary network
+// buffers deliberately stay out of the savegame format, but an online join
+// must restore enough sequencing information to replay the following command
+// records without treating them as a new lobby. Keep this narrow: packet
+// contents are supplied by the separately authenticated replay stream, not
+// copied from mutable ClientStates buffers.
+//
+//==========================================================================
+
+bool Net_CaptureOnlineSnapshotState(FOnlineNetSnapshotState& state)
+{
+	state = {};
+	if (!netgame || demoplayback || NetMode != NET_PacketServer || TicDup == 0 ||
+		gametic < 0 || (gametic % TicDup) != 0)
+	{
+		return false;
+	}
+
+	const int nextTic = gametic / TicDup;
+	// A snapshot before the first completed tic has no replay predecessor and
+	// cannot meet the FOnlineSnapshotReplayBuffer contract.
+	if (nextTic <= 0 || Net_Arbitrator < 0 || Net_Arbitrator >= static_cast<int>(MAXPLAYERS) ||
+		!NetworkClients.InGame(Net_Arbitrator))
+	{
+		return false;
+	}
+
+	uint64_t clientMask = 0;
+	for (const int client : NetworkClients)
+	{
+		if (client < 0 || client >= static_cast<int>(MAXPLAYERS) || client >= 64)
+			return false;
+		clientMask |= uint64_t(1) << client;
+	}
+	if (clientMask == 0)
+		return false;
+
+	state.CompletedTic = static_cast<uint64_t>(nextTic - 1);
+	state.ClientMask = clientMask;
+	state.CurrentConsistency = CurrentConsistency;
+	state.LastSentConsistency = LastSentConsistency;
+	state.Arbitrator = Net_Arbitrator;
+	state.TicDup = TicDup;
+	state.LobbyId = CurrentLobbyID;
+	return Net_ValidateOnlineSnapshotState(state);
+}
+
+bool Net_ValidateOnlineSnapshotState(const FOnlineNetSnapshotState& state)
+{
+	if (!netgame || demoplayback || NetMode != NET_PacketServer || TicDup == 0 ||
+		state.TicDup != TicDup || state.CompletedTic >= static_cast<uint64_t>(INT_MAX / TicDup) ||
+		state.Arbitrator < 0 || state.Arbitrator >= static_cast<int>(MAXPLAYERS) ||
+		state.Arbitrator >= 64 || (state.ClientMask & (uint64_t(1) << state.Arbitrator)) == 0)
+	{
+		return false;
+	}
+
+	// A peer must never restore a slot outside the host-declared capacity. The
+	// mask is fixed-width because MAXPLAYERS is currently 64, but retain this
+	// explicit check so a future wider roster fails closed instead of silently
+	// truncating identities from a join snapshot.
+	if (MAXPLAYERS > 64)
+		return false;
+	for (int client = 0; client < static_cast<int>(MAXPLAYERS); ++client)
+	{
+		if ((state.ClientMask & (uint64_t(1) << client)) != 0 && client >= MaxClients)
+			return false;
+	}
+	return state.CurrentConsistency >= 0 && state.LastSentConsistency >= 0 &&
+		state.LastSentConsistency <= state.CurrentConsistency;
+}
+
+bool Net_RestoreOnlineSnapshotState(const FOnlineNetSnapshotState& state)
+{
+	if (!Net_ValidateOnlineSnapshotState(state))
+		return false;
+
+	const int nextTic = static_cast<int>(state.CompletedTic + 1);
+	NetworkClients.Clear();
+	for (int client = 0; client < static_cast<int>(MAXPLAYERS); ++client)
+	{
+		if ((state.ClientMask & (uint64_t(1) << client)) == 0)
+			continue;
+		NetworkClients += client;
+		auto& clientState = ClientStates[client];
+		clientState.AverageLatency = clientState.CurrentLatency = 0u;
+		clientState.bNewLatency = true;
+		memset(clientState.SentTime, 0, sizeof(clientState.SentTime));
+		memset(clientState.RecvTime, 0, sizeof(clientState.RecvTime));
+		memset(clientState.NetConsistency, 0, sizeof(clientState.NetConsistency));
+		memset(clientState.LocalConsistency, 0, sizeof(clientState.LocalConsistency));
+		for (auto& tic : clientState.Tics)
+		{
+			tic.Data.SetData(nullptr, 0);
+			memset(&tic.Command, 0, sizeof(tic.Command));
+		}
+		clientState.Flags = 0;
+		clientState.StabilityBuffer = 0u;
+		clientState.ResendID = 0u;
+		clientState.ResendSequenceFrom = -1;
+		clientState.ResendConsistencyFrom = -1;
+		// The snapshot contains all simulation through CompletedTic. Commands
+		// replayed next start at CompletedTic + 1 and populate these slots.
+		clientState.CurrentSequence = static_cast<int>(state.CompletedTic);
+		clientState.SequenceAck = static_cast<int>(state.CompletedTic);
+		clientState.CurrentNetConsistency = state.CurrentConsistency - 1;
+		clientState.LastVerifiedConsistency = state.CurrentConsistency - 1;
+	}
+
+	Net_Arbitrator = state.Arbitrator;
+	CurrentLobbyID = state.LobbyId;
+	CurrentConsistency = state.CurrentConsistency;
+	LastSentConsistency = state.LastSentConsistency;
+	gametic = nextTic * TicDup;
+	ClientTic = gametic;
+	LocalNetBufferSize = 0;
+	NetEvents.ResetStream();
+	LevelStartAck = 0u;
+	LevelStartDelay = LevelStartDebug = 0;
+	LevelStartStatus = LST_READY;
+	SkipCommandTimer = SkipCommandAmount = CommandsAhead = 0;
+	StabilityBuffer = PrevAvailableDiff = 0;
+	CurStabilityTic = 0u;
+	memset(StabilityTics, 0, sizeof(StabilityTics));
+	return true;
+}
+
+namespace
+{
+
+constexpr uint8_t OnlineReplayRecordMagic[] = { 'B', 'D', 'T', 'R' };
+constexpr uint8_t OnlineReplayRecordVersion = 1;
+// Replay records are emitted as one encrypted relay datagram. This cap leaves
+// room for the snapshot/replay frame header, AEAD tag, and relay routing
+// labels inside the online transport's 16 KiB maximum.
+constexpr size_t OnlineReplayRecordMaxBytes = 12 * 1024;
+constexpr size_t OnlineReplayHeaderBytes = sizeof(OnlineReplayRecordMagic) + 1 + 8 + 1;
+constexpr size_t OnlineReplayPlayerHeaderBytes = 1 + 4 + 6 * 2 + 2;
+
+void OnlineReplayWriteU16(std::vector<uint8_t>& output, uint16_t value)
+{
+	output.push_back(static_cast<uint8_t>(value));
+	output.push_back(static_cast<uint8_t>(value >> 8));
+}
+
+void OnlineReplayWriteU32(std::vector<uint8_t>& output, uint32_t value)
+{
+	for (unsigned int byte = 0; byte < 4; ++byte)
+		output.push_back(static_cast<uint8_t>(value >> (byte * 8)));
+}
+
+void OnlineReplayWriteU64(std::vector<uint8_t>& output, uint64_t value)
+{
+	for (unsigned int byte = 0; byte < 8; ++byte)
+		output.push_back(static_cast<uint8_t>(value >> (byte * 8)));
+}
+
+bool OnlineReplayReadU16(const uint8_t*& input, size_t& remaining, uint16_t& value)
+{
+	if (remaining < 2)
+		return false;
+	value = static_cast<uint16_t>(input[0]) | static_cast<uint16_t>(input[1]) << 8;
+	input += 2;
+	remaining -= 2;
+	return true;
+}
+
+bool OnlineReplayReadU32(const uint8_t*& input, size_t& remaining, uint32_t& value)
+{
+	if (remaining < 4)
+		return false;
+	value = static_cast<uint32_t>(input[0]) | static_cast<uint32_t>(input[1]) << 8 |
+		static_cast<uint32_t>(input[2]) << 16 | static_cast<uint32_t>(input[3]) << 24;
+	input += 4;
+	remaining -= 4;
+	return true;
+}
+
+bool OnlineReplayReadU64(const uint8_t*& input, size_t& remaining, uint64_t& value)
+{
+	if (remaining < 8)
+		return false;
+	value = 0;
+	for (unsigned int byte = 0; byte < 8; ++byte)
+		value |= static_cast<uint64_t>(input[byte]) << (byte * 8);
+	input += 8;
+	remaining -= 8;
+	return true;
+}
+
+bool ValidateOnlineReplayEventStream(const uint8_t* bytes, size_t size)
+{
+	TArrayView<uint8_t> stream(const_cast<uint8_t*>(bytes), size);
+	while (stream.Size() > 0)
+	{
+		const int command = ReadInt8(stream);
+		// Replay records carry only special-event bytes. Movement commands have
+		// an explicit, fixed-width field in the enclosing record; accepting one
+		// here would make the simulated tic depend on a second command source.
+		if (command == DEM_BAD || command == DEM_USERCMD || command == DEM_EMPTYUSERCMD ||
+			!Net_SkipCommandEx(command, stream))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+struct FOnlineReplayPlayerRecord
+{
+	int Player = -1;
+	usercmd_t Command = {};
+	const uint8_t* Events = nullptr;
+	size_t EventSize = 0;
+};
+
+} // namespace
+
+bool Net_BuildOnlineReplayRecord(uint64_t tic, std::vector<uint8_t>& record, std::string& error)
+{
+	record.clear();
+	error.clear();
+	if (!netgame || demoplayback || NetMode != NET_PacketServer || TicDup == 0 ||
+		gametic < 0 || (gametic % TicDup) != 0 || tic != static_cast<uint64_t>(gametic / TicDup))
+	{
+		error = "online replay record is not at the current packet-server tic boundary";
+		return false;
+	}
+	if (NetworkClients.Size() == 0 || NetworkClients.Size() > MAXPLAYERS || NetworkClients.Size() > UINT8_MAX)
+	{
+		error = "online replay record has an invalid player roster";
+		return false;
+	}
+
+	try
+	{
+		record.reserve(OnlineReplayHeaderBytes + NetworkClients.Size() * OnlineReplayPlayerHeaderBytes);
+		record.insert(record.end(), std::begin(OnlineReplayRecordMagic), std::end(OnlineReplayRecordMagic));
+		record.push_back(OnlineReplayRecordVersion);
+		OnlineReplayWriteU64(record, tic);
+		record.push_back(static_cast<uint8_t>(NetworkClients.Size()));
+
+		uint64_t seenPlayers = 0;
+		for (const int client : NetworkClients)
+		{
+			if (client < 0 || client >= static_cast<int>(MAXPLAYERS) || client >= 64 ||
+				(seenPlayers & (uint64_t(1) << client)) != 0)
+			{
+				error = "online replay record has an invalid player identity";
+				record.clear();
+				return false;
+			}
+			seenPlayers |= uint64_t(1) << client;
+			auto& source = ClientStates[client].Tics[tic % BACKUPTICS];
+			int eventLength = 0;
+			const uint8_t* events = source.Data.GetData(&eventLength);
+			if (eventLength < 0 || eventLength > static_cast<int>(UINT16_MAX) ||
+				(eventLength > 0 && (events == nullptr || !ValidateOnlineReplayEventStream(events, eventLength))))
+			{
+				error = "online replay record contains an invalid event stream";
+				record.clear();
+				return false;
+			}
+			const size_t appended = OnlineReplayPlayerHeaderBytes + static_cast<size_t>(eventLength);
+			if (record.size() > OnlineReplayRecordMaxBytes - appended)
+			{
+				error = "online replay record exceeds the transfer limit";
+				record.clear();
+				return false;
+			}
+
+			record.push_back(static_cast<uint8_t>(client));
+			OnlineReplayWriteU32(record, source.Command.buttons);
+			OnlineReplayWriteU16(record, static_cast<uint16_t>(source.Command.pitch));
+			OnlineReplayWriteU16(record, static_cast<uint16_t>(source.Command.yaw));
+			OnlineReplayWriteU16(record, static_cast<uint16_t>(source.Command.roll));
+			OnlineReplayWriteU16(record, static_cast<uint16_t>(source.Command.forwardmove));
+			OnlineReplayWriteU16(record, static_cast<uint16_t>(source.Command.sidemove));
+			OnlineReplayWriteU16(record, static_cast<uint16_t>(source.Command.upmove));
+			OnlineReplayWriteU16(record, static_cast<uint16_t>(eventLength));
+			if (eventLength > 0)
+				record.insert(record.end(), events, events + eventLength);
+		}
+	}
+	catch (const std::bad_alloc&)
+	{
+		error = "not enough memory to record an online replay tic";
+		record.clear();
+		return false;
+	}
+	return true;
+}
+
+bool Net_ApplyOnlineReplayRecord(uint64_t tic, const uint8_t* record, size_t size, std::string& error)
+{
+	error.clear();
+	if (!netgame || demoplayback || NetMode != NET_PacketServer || TicDup == 0 || record == nullptr ||
+		size < OnlineReplayHeaderBytes || size > OnlineReplayRecordMaxBytes || gametic < 0 ||
+		(gametic % TicDup) != 0 || tic != static_cast<uint64_t>(gametic / TicDup))
+	{
+		error = "online replay tic is not valid for the restored packet-server state";
+		return false;
+	}
+	const uint8_t* input = record;
+	size_t remaining = size;
+	if (memcmp(input, OnlineReplayRecordMagic, sizeof(OnlineReplayRecordMagic)) != 0 ||
+		input[sizeof(OnlineReplayRecordMagic)] != OnlineReplayRecordVersion)
+	{
+		error = "online replay tic has an unsupported format";
+		return false;
+	}
+	input += sizeof(OnlineReplayRecordMagic) + 1;
+	remaining -= sizeof(OnlineReplayRecordMagic) + 1;
+	uint64_t encodedTic = 0;
+	if (!OnlineReplayReadU64(input, remaining, encodedTic) || encodedTic != tic || remaining < 1)
+	{
+		error = "online replay tic has an invalid sequence";
+		return false;
+	}
+	const uint8_t playerCount = *input++;
+	--remaining;
+	if (playerCount == 0 || playerCount != NetworkClients.Size())
+	{
+		error = "online replay tic roster does not match the restored session";
+		return false;
+	}
+
+	uint64_t expectedPlayers = 0;
+	for (const int client : NetworkClients)
+	{
+		if (client < 0 || client >= static_cast<int>(MAXPLAYERS) || client >= 64)
+		{
+			error = "online replay tic encountered an invalid restored player";
+			return false;
+		}
+		expectedPlayers |= uint64_t(1) << client;
+	}
+	uint64_t receivedPlayers = 0;
+	std::vector<FOnlineReplayPlayerRecord> decoded;
+	try
+	{
+		decoded.reserve(playerCount);
+		for (uint8_t index = 0; index < playerCount; ++index)
+		{
+			if (remaining < OnlineReplayPlayerHeaderBytes)
+			{
+				error = "online replay tic is truncated";
+				return false;
+			}
+			const int player = *input++;
+			--remaining;
+			uint32_t buttons = 0;
+			uint16_t fields[6] = {};
+			uint16_t eventLength = 0;
+			if (player < 0 || player >= static_cast<int>(MAXPLAYERS) || player >= 64 ||
+				(receivedPlayers & (uint64_t(1) << player)) != 0 ||
+				!OnlineReplayReadU32(input, remaining, buttons))
+			{
+				error = "online replay tic has an invalid player command";
+				return false;
+			}
+			for (uint16_t& field : fields)
+			{
+				if (!OnlineReplayReadU16(input, remaining, field))
+				{
+					error = "online replay tic has a truncated player command";
+					return false;
+				}
+			}
+			if (!OnlineReplayReadU16(input, remaining, eventLength) || eventLength > remaining ||
+				!ValidateOnlineReplayEventStream(input, eventLength))
+			{
+				error = "online replay tic has an invalid event stream";
+				return false;
+			}
+			FOnlineReplayPlayerRecord decodedPlayer;
+			decodedPlayer.Player = player;
+			decodedPlayer.Command.buttons = buttons;
+			decodedPlayer.Command.pitch = static_cast<int16_t>(fields[0]);
+			decodedPlayer.Command.yaw = static_cast<int16_t>(fields[1]);
+			decodedPlayer.Command.roll = static_cast<int16_t>(fields[2]);
+			decodedPlayer.Command.forwardmove = static_cast<int16_t>(fields[3]);
+			decodedPlayer.Command.sidemove = static_cast<int16_t>(fields[4]);
+			decodedPlayer.Command.upmove = static_cast<int16_t>(fields[5]);
+			decodedPlayer.Events = input;
+			decodedPlayer.EventSize = eventLength;
+			decoded.push_back(decodedPlayer);
+			receivedPlayers |= uint64_t(1) << player;
+			input += eventLength;
+			remaining -= eventLength;
+		}
+	}
+	catch (const std::bad_alloc&)
+	{
+		error = "not enough memory to decode an online replay tic";
+		return false;
+	}
+	if (remaining != 0 || receivedPlayers != expectedPlayers)
+	{
+		error = "online replay tic does not contain the complete restored roster";
+		return false;
+	}
+
+	for (const auto& decodedPlayer : decoded)
+	{
+		auto& destination = ClientStates[decodedPlayer.Player].Tics[tic % BACKUPTICS];
+		destination.Command = decodedPlayer.Command;
+		destination.Data.SetData(decodedPlayer.Events, static_cast<int>(decodedPlayer.EventSize));
+		ClientStates[decodedPlayer.Player].CurrentSequence = static_cast<int>(tic);
+	}
+	return true;
+}
+
 // [RH] Rewritten to properly calculate the packet size
 //		with our variable length Command.
 static size_t GetNetBufferSize()
@@ -856,10 +1275,27 @@ static void ClientQuit(int clientNum, int newHost)
 		if (newHost < 0 || newHost >= MAXPLAYERS || !NetworkClients.InGame(newHost))
 			newHost = NetworkClients[0];
 		SetArbitrator(newHost);
+		// Online relay sessions receive their authenticated epoch transition
+		// alongside this legacy exit packet. This is a no-op for direct/LAN
+		// sessions and for an abrupt exit that did not carry a migration record.
+		I_OnlineApplyHostMigration(clientNum, newHost);
 	}
 
 	if (demorecording)
 		G_CheckDemoStatus();
+}
+
+void Net_OnlineHostRecovered(int newHost)
+{
+	if (NetMode != NET_PacketServer || !NetworkClients.InGame(Net_Arbitrator) ||
+		newHost < 0 || newHost >= static_cast<int>(MAXPLAYERS) || !NetworkClients.InGame(newHost) || newHost == Net_Arbitrator)
+	{
+		return;
+	}
+	// Reuse the same roster removal, command-buffer reset, and waiting barrier
+	// as a verified graceful host exit. This is intentionally not exposed to
+	// ordinary UDP input: i_net calls it only after a signed directory recovery.
+	ClientQuit(Net_Arbitrator, newHost);
 }
 
 static bool IsMapLoaded()
@@ -1361,6 +1797,44 @@ static void MakeConsistencies()
 	++CurrentConsistency;
 }
 
+bool Net_RunOnlineReplayTic(uint64_t tic, const uint8_t* record, size_t size, std::string& error)
+{
+	error.clear();
+	// Net_ApplyOnlineReplayRecord validates the canonical record before it
+	// touches a command buffer. Recheck the boundary here because this entry
+	// point advances simulation and must never be usable from a live, mid-tic
+	// packet path.
+	if (!netgame || demoplayback || demorecording || NetMode != NET_PacketServer || TicDup == 0 ||
+		gametic < 0 || (gametic % TicDup) != 0 || tic != static_cast<uint64_t>(gametic / TicDup) ||
+		gametic > INT_MAX - TicDup)
+	{
+		error = "online replay tic is not at a safe restored packet-server boundary";
+		return false;
+	}
+	if (!Net_ApplyOnlineReplayRecord(tic, record, size, error))
+		return false;
+
+	// A replay record represents one command sequence, which normal netplay
+	// executes TicDup times. Run exactly the same game/consistency ordering as
+	// TryRunTics, without prediction, wall-clock pacing, network send, or live
+	// packet reception. The joining process remains offline until the entire
+	// verified replay range has completed.
+	for (uint8_t duplicate = 0; duplicate < TicDup; ++duplicate)
+	{
+		G_Ticker();
+		MakeConsistencies();
+		++gametic;
+		if (bCommandsReset)
+		{
+			bCommandsReset = false;
+			error = "online replay crossed a network command reset";
+			return false;
+		}
+	}
+	ClientTic = gametic;
+	return true;
+}
+
 static bool Net_UpdateStatus()
 {
 	if (!netgame || demoplayback || NetworkClients.Size() <= 1)
@@ -1525,6 +1999,9 @@ static bool Net_UpdateStatus()
 void NetUpdate(int tics)
 {
 	GetPackets();
+	std::string onlineJoinError;
+	if (!I_OnlineAdvancePendingJoinReplay(onlineJoinError))
+		I_Error("Online join-in-progress replay failed: %s", onlineJoinError.c_str());
 	if (tics <= 0)
 		return;
 
@@ -2148,15 +2625,21 @@ void D_QuitNetGame()
 			companionSnapshot.Clear();
 		}
 
-		int nextHost = 0;
-		for (auto client : NetworkClients)
+		int nextHost = -1;
+		const bool onlineHostMigration = I_OnlinePrepareHostMigration(nextHost);
+		if (!onlineHostMigration)
 		{
-			if (client != Net_Arbitrator)
+			for (auto client : NetworkClients)
 			{
-				nextHost = client;
-				break;
+				if (client != Net_Arbitrator)
+				{
+					nextHost = client;
+					break;
+				}
 			}
 		}
+		if (nextHost < 0)
+			nextHost = 0;
 
 		NetBuffer[1] = nextHost;
 		NetBuffer[2] = uint8_t(companionSnapshot.Size() >> 8);
@@ -2168,6 +2651,8 @@ void D_QuitNetGame()
 		const size_t handoffPacketSize = 4 + companionSnapshot.Size();
 		for (int i = 0; i < 4; ++i)
 		{
+			if (onlineHostMigration)
+				I_OnlineSendPreparedHostMigration();
 			for (auto client : NetworkClients)
 			{
 				if (client != Net_Arbitrator)
@@ -2599,6 +3084,36 @@ bool Net_WriteEventAtomic(const uint8_t *block, int len)
 	return len > 0 && NetEvents.WriteAtomic(block, (size_t)len);
 }
 
+bool Net_QueueOnlinePlayerJoin(int player)
+{
+	// This event is intentionally narrower than the pre-game setup protocol:
+	// online relay sessions always use the packet-server topology, the
+	// arbitrator is its sole writer, and the target slot must have completed a
+	// separately authenticated snapshot handoff before the caller queues it.
+	if (!netgame || demoplayback || NetMode != NET_PacketServer || consoleplayer != Net_Arbitrator ||
+		player < 0 || player >= static_cast<int>(MAXPLAYERS) || NetworkClients.InGame(player))
+	{
+		return false;
+	}
+	const FString info = D_GetUserInfoStrings(player, true);
+	if (info.Len() == 0 || info.Len() + 2 > NetAtomicEventMaxSize)
+		return false;
+
+	std::vector<uint8_t> event;
+	try
+	{
+		event.reserve(static_cast<size_t>(info.Len()) + 2);
+		event.push_back(DEM_ONLINEPLAYERJOIN);
+		event.push_back(static_cast<uint8_t>(player));
+		event.insert(event.end(), info.GetChars(), info.GetChars() + info.Len() + 1);
+	}
+	catch (const std::bad_alloc&)
+	{
+		return false;
+	}
+	return Net_WriteEventAtomic(event.data(), static_cast<int>(event.size()));
+}
+
 //==========================================================================
 //
 // Dynamic buffer interface
@@ -2756,6 +3271,40 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 
 	case DEM_UINFCHANGED:
 		D_ReadUserInfoStrings(player, stream, true);
+		break;
+
+	case DEM_ONLINEPLAYERJOIN:
+		// The record travels in the arbitrator's ordinary event stream. A
+		// non-host sender must never be able to allocate a player identity on
+		// other peers, and a malformed/out-of-range slot is consumed without
+		// changing the roster.
+		if (!netgame || NetMode != NET_PacketServer || player != Net_Arbitrator || stream.Size() < 1 ||
+			stream[0] >= MAXPLAYERS || NetworkClients.InGame(stream[0]))
+		{
+			Net_SkipCommand(DEM_ONLINEPLAYERJOIN, stream);
+			break;
+		}
+		{
+			const int joining = ReadInt8(stream);
+			D_ReadUserInfoStrings(joining, stream, false);
+			NetworkClients += joining;
+			playeringame[joining] = true;
+			players[joining].playerstate = PST_ENTER;
+			// The joining slot has no pre-snapshot network history. The handoff
+			// controller queues this event only after the guest is at the same tic
+			// boundary; starting its sequence there prevents old packet data from
+			// being interpreted as fresh input on the next update.
+			auto& state = ClientStates[joining];
+			state.CurrentSequence = gametic / TicDup;
+			state.SequenceAck = state.CurrentSequence;
+			state.CurrentNetConsistency = CurrentConsistency - 1;
+			state.LastVerifiedConsistency = CurrentConsistency - 1;
+			state.Flags = 0;
+			state.ResendSequenceFrom = -1;
+			state.ResendConsistencyFrom = -1;
+			Printf("Online player %d joined the current game.\n", joining + 1);
+			I_OnlineActivateJoiningPlayer(joining);
+		}
 		break;
 
 	case DEM_SINFCHANGED:
@@ -3529,6 +4078,14 @@ bool Net_SkipCommandEx(int cmd, TArrayView<uint8_t>& stream)
 		case DEM_REMOVECOMPANION:
 			skip = 4;
 			break;
+
+		case DEM_ONLINEPLAYERJOIN:
+		{
+			size_t slen;
+			ok = BoundedSkipString(stream, 1, slen);
+			skip = 1 + slen;
+			break;
+		}
 
 		case DEM_PROCMAP_ABORT:
 		{

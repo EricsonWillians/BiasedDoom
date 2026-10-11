@@ -1,0 +1,26 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+
+  online:
+    build: .
+    environment:
+      BIASEDDOOM_ONLINE_REDIS_ADDR: redis:6379
+      BIASEDDOOM_ONLINE_LISTEN: :8080
+      BIASEDDOOM_ONLINE_RELAY_LISTEN: :3478
+      BIASEDDOOM_ONLINE_RELAY_PUBLIC_ENDPOINT: udp://127.0.0.1:3478
+      BIASEDDOOM_ONLINE_SIGNING_SECRET_FILE: /run/secrets/online_signing_secret
+    ports:
+      - "8080:8080/tcp"
+      - "3478:3478/udp"
+    secrets:
+      - online_signing_secret
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+secrets:
+  online_signing_secret:
+    file: ./secrets/online_signing_secret

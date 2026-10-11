@@ -203,7 +203,7 @@ bool FSerializer::OpenReader(FCompressedBuffer *input)
 //
 //==========================================================================
 
-void FSerializer::Close()
+void FSerializer::Close(bool reportErrors)
 {	
 	if (w == nullptr && r == nullptr) return;	// double close? This should skip the I_Error at the bottom.
 
@@ -218,7 +218,7 @@ void FSerializer::Close()
 		delete r;
 		r = nullptr;
 	}
-	if (mErrors > 0)
+	if (reportErrors && mErrors > 0)
 	{
 		if (mLumpName.IsNotEmpty())
 			I_Error("%d errors parsing JSON lump %s", mErrors, mLumpName.GetChars());

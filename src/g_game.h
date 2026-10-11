@@ -31,6 +31,7 @@
 struct event_t;
 
 #include <functional>
+#include <string>
 
 #include "dobjgc.h"
 #include "name.h"
@@ -45,6 +46,7 @@ extern gamestate_t wipegamestate;
 
 class AActor;
 struct FLevelLocals;
+namespace BdOnline { struct FOnlineSnapshotBundle; }
 
 //
 // GAME
@@ -109,6 +111,15 @@ enum EFinishLevelType
 void G_PlayerFinishLevel (int player, EFinishLevelType mode, int flags);
 
 void G_DoPlayerPop(int playernum);
+
+// Captures the serializer state a future online join-in-progress bridge needs
+// before it begins an authenticated transfer. This deliberately has no file
+// output and does not mutate hub/savegame snapshot ownership.
+bool G_BuildOnlineSnapshotBundle(BdOnline::FOnlineSnapshotBundle& bundle, std::string& error);
+// Restores a fully authenticated online snapshot into this process using the
+// ordinary savegame lifecycle. Callers must keep the joining client offline
+// until replay catches it up to the live tic boundary.
+bool G_RestoreOnlineSnapshotBundle(const BdOnline::FOnlineSnapshotBundle& bundle, std::string& error);
 
 // Adds pitch to consoleplayer's viewpitch and clamps it
 void G_AddViewPitch (int look, bool mouse = false);

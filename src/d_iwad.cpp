@@ -946,7 +946,6 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 		iwadnum++;
 	}
 	D_AddFile (wadfiles, picks[pick].mFullPath.GetChars(), true, -1, GameConfig);
-	fileSystem.SetMaxIwadNum(iwadnum);
 
 	auto info = mIWadInfos[picks[pick].mInfoIndex];
 
@@ -954,7 +953,7 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 	{
 		// For net games all wads must be explicitly named to make it easier for the host to know
 		// exactly what's being loaded.
-		if (i_loadsupportwad && !Args->CheckParm("-join") && !Args->CheckParm("-host"))
+		if (i_loadsupportwad && !Args->CheckParm("-join") && !Args->CheckParm("-host") && !Args->CheckParm("-online-join") && !Args->CheckParm("-online-host"))
 		{
 			FString supportWAD = IWADPathFileSearch(info.SupportWAD);
 
@@ -966,6 +965,10 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 	}
 
 	// Load additional resources from the same directory as the IWAD itself.
+	// They are a required part of the selected commercial game edition (for
+	// example, the KEX release's extras.wad), not user-supplied PWADs. Mark
+	// every successfully added prerequisite as part of the IWAD range below so
+	// online multiplayer verifies it locally instead of offering it for transfer.
 	for (unsigned i=0; i < info.Load.Size(); i++)
 	{
 		FString path;
@@ -980,8 +983,8 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 			else
 			{
 				path = FString(picks[pick].mFullPath.GetChars(), lastslash + 1);
-			}
-			path += info.Load[i];
+		}
+		path += info.Load[i];
 			D_AddFile(wadfiles, path.GetChars(), true, -1, GameConfig);
 		}
 		else
@@ -991,6 +994,10 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 		}
 
 	}
+	// This is intentionally after all declared IWAD companion files have been
+	// resolved. `MaxIwadNum` is the engine-wide boundary between base-game
+	// resources and PWAD/mod content.
+	fileSystem.SetMaxIwadNum(static_cast<int>(wadfiles.size()) - 1);
 	return picks[pick].mInfoIndex;
 }
 

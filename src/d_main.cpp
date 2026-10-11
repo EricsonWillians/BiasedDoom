@@ -66,6 +66,7 @@
 #include "doomstat.h"
 #include "engineerrors.h"
 #include "events.h"
+#include "experimental_camera.h"
 #include "filesystem.h"
 #include "findfile.h"
 #include "formats/multipatchtexture.h"
@@ -80,6 +81,7 @@
 #include "hw_clock.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
 #include "i_interface.h"
+#include "i_net.h"
 #include "i_sound.h"
 #include "i_soundinternal.h"
 #include "i_system.h"
@@ -1067,7 +1069,7 @@ void D_Display ()
 		if (cam)
 			fov = DAngle::fromDeg(cam->GetFOV(I_GetTimeFrac()));
 
-		R_SetFOV(vp, fov);
+		R_SetFOV(vp, DAngle::fromDeg(ECamera_GetFieldOfView(fov.Degrees())));
 	}
 
 	// backend switch has been requested; wait until no wipe is in flight
@@ -1187,7 +1189,7 @@ void D_Display ()
 		}, true);
 
 		twod->Begin(screen->GetWidth(), screen->GetHeight());
-		if (!hud_toggled)
+		if (!hud_toggled && !ECamera_HidesHUD())
 		{
 			V_DrawBlend(viewsec);
 			if (automapactive)
@@ -2260,9 +2262,14 @@ static void D_DoomInit()
 static void AddAutoloadFiles(const char *autoname, std::vector<std::string>& allwads)
 {
 	LumpFilterIWAD.Format("%s.", autoname);	// The '.' is appened to simplify parsing the string 
+	const bool onlineSession = Args->CheckParm("-online-host") || Args->CheckParm("-online-join");
 
 	// [SP] Dialog reaction - load lights.pk3 and brightmaps.pk3 based on user choices
-	if (!(gameinfo.flags & GI_SHAREWARE) && !(Args->CheckParm("-noextras")))
+	// Engine-owned visual extras stay local prerequisites. An online session
+	// must never turn them into host-distributed mod content, and leaving them
+	// out also prevents a host's presentation-only preference from affecting a
+	// guest's deterministic content plan.
+	if (!onlineSession && !(gameinfo.flags & GI_SHAREWARE) && !(Args->CheckParm("-noextras")))
 	{
 		if ((GameStartupInfo.LoadLights == 1 || (GameStartupInfo.LoadLights != 0 && autoloadlights)) && !(Args->CheckParm("-nolights")))
 		{
@@ -2285,7 +2292,7 @@ static void AddAutoloadFiles(const char *autoname, std::vector<std::string>& all
 	}
 
 	// Disable autoloading in netgames as we don't want people who are hosting/joining loading up random files.
-	if (!(gameinfo.flags & GI_SHAREWARE) && !Args->CheckParm("-noautoload") && !disableautoload && !Args->CheckParm("-host") && !Args->CheckParm("-join"))
+	if (!onlineSession && !(gameinfo.flags & GI_SHAREWARE) && !Args->CheckParm("-noautoload") && !disableautoload && !Args->CheckParm("-host") && !Args->CheckParm("-join"))
 	{
 		FString file;
 
@@ -3518,6 +3525,15 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 		std::make_move_iterator(pwads.begin()),
 		std::make_move_iterator(pwads.end())
 	);
+	std::string onlineContentError;
+	if (!I_OnlinePrepareHostContent(allwads, onlineContentError))
+	{
+		I_FatalError("Could not prepare online host content: %s", onlineContentError.c_str());
+	}
+	if (!I_OnlinePreflightContent(allwads, onlineContentError))
+	{
+		I_FatalError("Could not prepare online session content: %s", onlineContentError.c_str());
+	}
 
 	bool allowduplicates = Args->CheckParm("-allowduplicates");
 	if (!fileSystem.InitMultipleFiles(allwads, &lfi, FileSystemPrintf, allowduplicates))
@@ -3563,7 +3579,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 			}
 		}
 	}
-	bool nostartscreen = batchrun || restart || Args->CheckParm("-join") || Args->CheckParm("-host") || norun || I_IsHeadless();
+	bool nostartscreen = batchrun || restart || Args->CheckParm("-join") || Args->CheckParm("-host") || Args->CheckParm("-online-join") || Args->CheckParm("-online-host") || norun || I_IsHeadless();
 
 	if (GameStartupInfo.Type == FStartupInfo::DefaultStartup)
 	{
@@ -3841,6 +3857,14 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 	// [RH] Run any saved commands from the command line or autoexec.cfg now.
 	gamestate = GS_FULLCONSOLE;
 	Net_Initialize();
+	bool restoredOnlineJoin = false;
+	if (I_OnlineHasPendingJoinRestore())
+	{
+		std::string onlineRestoreError;
+		if (!I_OnlineRestorePendingJoin(onlineRestoreError))
+			I_FatalError("Could not restore the online game in progress: %s", onlineRestoreError.c_str());
+		restoredOnlineJoin = true;
+	}
 	processingStartupCommands = true;
 	C_RunDelayedCommands();
 	processingStartupCommands = false;
@@ -3915,7 +3939,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 			{
 				if (gameaction != ga_loadgame && gameaction != ga_loadgamehidecon)
 				{
-					if (autostart || netgame)
+					if ((autostart || netgame) && !restoredOnlineJoin)
 					{
 						// Do not do any screenwipes when autostarting a game.
 						if (!Args->CheckParm("-warpwipe"))
@@ -3937,7 +3961,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 						}
 						gameaction = ga_mapwarp;
 					}
-					else
+					else if (!restoredOnlineJoin)
 					{
 						if (multiplayer || cl_nointros || Args->CheckParm("-nointro"))
 						{
@@ -4275,7 +4299,20 @@ int GameMain()
 	}
 	catch (const std::exception &error)
 	{
-		I_ShowFatalError(error.what());
+		// Batch and headless callers have no interactive desktop to dismiss an
+		// error dialog. In particular this keeps an invalid online join or a
+		// declined content review from leaving an unattended process alive.
+		// I_FatalError has already written the diagnostic to -errorlog when one
+		// was requested, so preserve the normal dialog for interactive launches
+		// and simply return a failing status for non-interactive ones.
+		if (!batchrun && !I_IsHeadless())
+		{
+			I_ShowFatalError(error.what());
+		}
+		else if (!batchrun)
+		{
+			fprintf(stderr, "Fatal error: %s\n", error.what());
+		}
 		ret = -1;
 	}
 	// Unless something really bad happened, the game should only exit through this single point in the code.

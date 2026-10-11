@@ -47,6 +47,17 @@ CVAR(Int, defaultnetticdup, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Int, defaultnetmode, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Int, defaultnetgamemode, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, defaultnetaltdm, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, defaultnetonline, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(String, defaultonlineservice, "", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(String, defaultonlinetitle, "", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(String, defaultonlineregion, "", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, defaultonlinepublic, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// Local launcher history. Entries contain only a service URL and join code,
+// never a password, device credential, or content manifest.
+CVAR(String, defaultonlinerecents, "", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// A local-only hide list for public browser entries. It stores join codes
+// only; no host address, device identity, or password is retained.
+CVAR(String, defaultonlineblocked, "", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(String, defaultnetaddress, "", CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Int, defaultnetjoinport, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Int, defaultnetpage, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -111,6 +122,11 @@ FStartupSelectionInfo::FStartupSelectionInfo(const TArray<WadStuff>& wads, FArgs
 	DefaultNetMode = defaultnetmode;
 	DefaultNetGameMode = defaultnetgamemode;
 	DefaultNetAltDM = defaultnetaltdm;
+	DefaultNetOnline = defaultnetonline;
+	DefaultOnlineService = defaultonlineservice;
+	DefaultOnlineTitle = defaultonlinetitle;
+	DefaultOnlineRegion = defaultonlineregion;
+	DefaultOnlinePublic = defaultonlinepublic;
 	DefaultNetHostTeam = defaultnethostteam;
 	DefaultNetExtraTic = defaultnetextratic;
 
@@ -146,6 +162,11 @@ int FStartupSelectionInfo::SaveInfo()
 		defaultnetpage = DefaultNetPage;
 		defaultnetsavefile = savenetfile ? DefaultNetSaveFile.GetChars() : "";
 		defaultnetargs = savenetargs ? DefaultNetArgs.GetChars() : "";
+		defaultnetonline = DefaultNetOnline;
+		defaultonlineservice = DefaultOnlineService.GetChars();
+		defaultonlinetitle = DefaultOnlineTitle.GetChars();
+		defaultonlineregion = DefaultOnlineRegion.GetChars();
+		defaultonlinepublic = DefaultOnlinePublic;
 
 		if (bHosting)
 		{
@@ -160,7 +181,9 @@ int FStartupSelectionInfo::SaveInfo()
 		}
 		else
 		{
-			defaultnetaddress = DefaultNetAddress.GetChars();
+			// A join code is an invitation capability. Keep direct-IP history for
+			// the advanced LAN path, but never persist a relay join code.
+			defaultnetaddress = DefaultNetOnline ? "" : DefaultNetAddress.GetChars();
 			defaultnetjoinport = DefaultNetJoinPort;
 			defaultnetjointeam = DefaultNetJoinTeam;
 		}

@@ -57,9 +57,21 @@
                     "default-features": false
                 }
             ]
+        },
+        "online":
+        {
+            "description": "Enable authenticated online sessions, encrypted relays, and content synchronization.",
+            "dependencies": [
+                "curl",
+                "libsodium"
+            ]
         }
     },
     "overrides": [
+        {
+            "name": "libsodium",
+            "version": "1.0.22"
+        },
         {
             "name": "libsndfile",
             "version-semver": "1.2.2",
@@ -96,6 +108,5 @@
             "port-version": 7
         }
     ],
-    "dependencies": [
-    ]
+    "dependencies": []
 }

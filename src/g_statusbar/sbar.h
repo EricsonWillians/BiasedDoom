@@ -230,7 +230,8 @@ struct FMugShotFrame {
   FMugShotFrame();
   ~FMugShotFrame();
   FGameTexture *GetTexture(const char *default_face, const char *skin_face,
-                           int random, int level = 0, int direction = 0,
+                           int random, float face_scale = 1.f,
+                           int level = 0, int direction = 0,
                            bool usesLevels = false, bool health2 = false,
                            bool healthspecial = false,
                            bool directional = false);
@@ -260,10 +261,12 @@ struct FMugShotState {
   void Reset();
   FMugShotFrame &GetCurrentFrame() { return Frames[Position]; }
   FGameTexture *GetCurrentFrameTexture(const char *default_face,
-                                       const char *skin_face, int level = 0,
+                                       const char *skin_face,
+                                       float face_scale = 1.f, int level = 0,
                                        int direction = 0) {
-    return GetCurrentFrame().GetTexture(default_face, skin_face, Random, level,
-                                        direction, bUsesLevels, bHealth2,
+    return GetCurrentFrame().GetTexture(default_face, skin_face, Random,
+                                        face_scale, level, direction,
+                                        bUsesLevels, bHealth2,
                                         bHealthSpecial, bDirectional);
   }
 
@@ -391,6 +394,7 @@ public:
   int GetMugShotHeight(FName face = NAME_None);
   int GetMugShotX(FName face = NAME_None);
   int GetMugShotY(FName face = NAME_None);
+  bool ShouldDrawFullscreenMugShot() const;
   // Local companion runs use multiplayer gameplay rules, but still have only
   // one human player. HUDs use this to avoid presenting multiplayer-only
   // identity decoration as a backdrop for the local player's portrait.

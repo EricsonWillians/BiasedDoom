@@ -60,6 +60,7 @@
 #include "python/python_displaylist.h"
 #include "python/python_runtime.h"
 #include "r_utility.h"
+#include "experimental_camera.h"
 #include "s_sound.h"
 #include "sbar.h"
 #include "sbarinfo.h"
@@ -129,6 +130,18 @@ CUSTOM_CVAR(Int, hud_mugshot_yoffset, 0,
     self = -100;
   else if (self > 100)
     self = 100;
+}
+
+// High-resolution skin portraits have an opt-in fullscreen placement. The
+// ZScript HUD uses the scale value with a deliberately capped reserved area so
+// it remains clear of the health/armor column below it.
+CVAR(Bool, hud_fullscreen_mugshot, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Float, hud_fullscreen_mugshot_scale, 1.f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.5f)
+    self = 0.5f;
+  else if (self > 1.25f)
+    self = 1.25f;
 }
 
 DBaseStatusBar *StatusBar;
@@ -1029,8 +1042,8 @@ static bool ST_IsThirdPersonCrosshairActive(player_t *player) {
     return false;
   }
 
-  const bool chaseAllowed = !deathmatch || (dmflags2 & DF2_CHASECAM);
-  return chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled);
+	const bool chaseAllowed = !deathmatch || (dmflags2 & DF2_CHASECAM);
+	return ECamera_IsThirdPersonActive() || (chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled));
 }
 
 static bool ST_ProjectWorldToViewWindow(const DVector3 &worldPos, double &xpos,
@@ -1320,6 +1333,16 @@ int DBaseStatusBar::GetMugShotY(FName face) {
   return y;
 }
 
+bool DBaseStatusBar::ShouldDrawFullscreenMugShot() const {
+  if (!hud_fullscreen_mugshot || CPlayer == nullptr || CPlayer->mo == nullptr ||
+      CPlayer->mo->alternative != nullptr)
+    return false;
+
+  const int skin = CPlayer->userinfo.GetSkin();
+  return skin >= 0 && static_cast<unsigned>(skin) < Skins.Size() &&
+         Skins[skin].FaceOverlay;
+}
+
 bool DBaseStatusBar::IsLocalCompanionCoop() const {
   // Companion squads promote a solo run to co-op so normal player spawning,
   // key sharing, and cheat rules remain correct. That is deliberately not the
@@ -1340,6 +1363,10 @@ static int IsLocalCompanionCoop(DBaseStatusBar *self) {
   // VM native bool values are represented by integers at this direct binding
   // boundary.
   return self->IsLocalCompanionCoop();
+}
+
+static int ShouldDrawFullscreenMugShot(DBaseStatusBar *self) {
+  return self->ShouldDrawFullscreenMugShot();
 }
 
 DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, GetMugShotWidth,
@@ -1372,6 +1399,12 @@ DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, IsLocalCompanionCoop,
                               IsLocalCompanionCoop) {
   PARAM_SELF_PROLOGUE(DBaseStatusBar);
   ACTION_RETURN_BOOL(self->IsLocalCompanionCoop());
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, ShouldDrawFullscreenMugShot,
+                              ShouldDrawFullscreenMugShot) {
+  PARAM_SELF_PROLOGUE(DBaseStatusBar);
+  ACTION_RETURN_BOOL(self->ShouldDrawFullscreenMugShot());
 }
 //---------------------------------------------------------------------------
 //

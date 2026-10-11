@@ -3,6 +3,8 @@ cmake_minimum_required( VERSION 3.16 )
 option(BIASEDDOOM_ENABLE_PYTHON "Build the embedded Python scripting runtime when CPython development files are available" ON)
 option(BIASEDDOOM_REQUIRE_PYTHON "Fail configuration when the requested embedded Python runtime is unavailable" OFF)
 option(BIASEDDOOM_BUILD_AUDIO_TESTS "Build the standalone OpenAL and compressed-audio regression probe" OFF)
+option(BIASEDDOOM_ENABLE_ONLINE "Build the authenticated online session, relay, and content-sync client" ON)
+option(BIASEDDOOM_BUILD_ONLINE_TESTS "Build the standalone online session/core regression test" OFF)
 
 if( COMMAND cmake_policy )
 	if( POLICY CMP0011 )
@@ -30,6 +32,10 @@ endif()
 
 if (OPENAL_SOFT_VCPKG)
 	list(APPEND VCPKG_MANIFEST_FEATURES "vcpkg-openal-soft")
+endif()
+
+if (BIASEDDOOM_ENABLE_ONLINE)
+	list(APPEND VCPKG_MANIFEST_FEATURES "online")
 endif()
 
 # The vcpkg CPython port gives native Windows and macOS builds a pinned static
@@ -85,6 +91,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF) 
 
 find_package(Threads REQUIRED)
+
+if(BIASEDDOOM_ENABLE_ONLINE)
+	# Supplied by the manifest in supported package builds. Downstream/offline
+	# distributions without both dependencies must explicitly disable this
+	# optional feature.
+	find_package(CURL CONFIG REQUIRED)
+	find_package(unofficial-sodium CONFIG REQUIRED)
+	set(BIASEDDOOM_ONLINE_AVAILABLE ON)
+endif()
 
 # glTF 2.0 support
 option(BIASEDDOOM_ENABLE_GLTF "Enable glTF 2.0 model support" ON)

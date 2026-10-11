@@ -28,8 +28,10 @@ or assets they describe.
 | Use the `GLTFModel` mixin | [ZScript usage](gltf/zscript-usage.md) | [ZScript API](gltf/zscript-api.md) |
 | Build a trusted Python mod | [Focused example suite](../examples/python/) | [Complete Python guide](scripting/python.md) |
 | Find installed Doom IWADs | [IWAD discovery](engine/iwad-discovery.md) | [Engine features](engine/README.md) |
+| Host or join online co-op | [Online multiplayer](engine/online-multiplayer.md) | [Engine features](engine/README.md) |
 | Diagnose a DECOHack or MBF21 weapon mod | [Classic-mod compatibility](engine/mod-compatibility.md) | [Root troubleshooting](../TROUBLESHOOTING.md) |
 | Tune rendering presets and bloom | [Rendering presets and light bleed](engine/rendering-presets.md) | Root [changelog](../CHANGELOG.md) |
+| Capture a local gameplay frame | [Experimental cameras](engine/experimental-camera.md) | [Recording and export](engine/recording-and-export.md) |
 | Record lossless footage or a replayable demo | [Recording and export](engine/recording-and-export.md) | [Engine features](engine/README.md) |
 | Add friendly bots to a co-op run | [Companion bots](engine/companion-bots.md) | [Procedural map generation](engine/procedural-map-generation.md) |
 | Set up a gamepad (or fix mod autoaim) | [Gamepad support](engine/gamepad.md) | Root [changelog](../CHANGELOG.md) |
@@ -81,7 +83,9 @@ is still limited, so external textures are the safest modding workflow.
 ### Engine And Maintenance
 
 - [Engine section index](engine/README.md)
+- [Online multiplayer](engine/online-multiplayer.md)
 - [Rendering presets, bloom, and sector light bleed](engine/rendering-presets.md)
+- [Experimental cameras](engine/experimental-camera.md)
 - [Recording and export](engine/recording-and-export.md)
 - [Companion bots](engine/companion-bots.md)
 - [Automatic IWAD discovery](engine/iwad-discovery.md)

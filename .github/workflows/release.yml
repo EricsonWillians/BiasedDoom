@@ -141,6 +141,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
+            autoconf \
+            autoconf-archive \
+            automake \
             build-essential \
             cmake \
             git \
@@ -149,6 +152,7 @@ jobs:
             libsdl2-dev \
             libvpx-dev \
             libwebp-dev \
+            libtool \
             libfuse2 \
             ninja-build \
             python3-dev \
@@ -191,7 +195,9 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          # Retries the pinned binary bootstrap and falls back to building the
+          # matching vcpkg tool source when its CDN is temporarily unavailable.
+          tools/bootstrap-vcpkg.sh
 
       - name: Bootstrap vcpkg
         if: runner.os == 'Windows'
@@ -486,6 +492,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
+            autoconf \
+            autoconf-archive \
+            automake \
             build-essential \
             cmake \
             g++-mingw-w64 \
@@ -496,6 +505,7 @@ jobs:
             libsdl2-dev \
             libvpx-dev \
             libwebp-dev \
+            libtool \
             mingw-w64 \
             nasm \
             ninja-build \

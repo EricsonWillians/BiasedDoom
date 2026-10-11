@@ -781,6 +781,13 @@ OptionValue "ChasePresets"
 	13, "Low dramatic"
 }
 
+OptionValue "ExperimentalCameraModes"
+{
+	0, "Off"
+	1, "Photo Mode / Free Camera"
+	2, "Top-Down (GTA2-style)"
+}
+
 DefaultOptionMenu
 {
 	Position -15
@@ -1472,6 +1479,8 @@ OptionMenu "OtherControlsMenu" protected
 
 	StaticText ""
 	Control    "$CNTRLMNU_CHASECAM"        , "chase"
+	Control    "Toggle Photo Mode / Free Camera", "togglephotomode"
+	Control    "Toggle Top-Down Camera", "toggletopdowncamera"
 	Control    "$CNTRLMNU_COOPSPY"         , "spynext"
 	Control    "$CNTRLMNU_COOPSPYPREV"     , "spyprev"
 	Control    "$CNTRLMNU_COOPSPYCANCEL"   , "spycancel"
@@ -1831,6 +1840,7 @@ OptionMenu "AppearOptions" protected
 	StaticText " "
 	Option "$DSPLYMNU_WIPETYPE",				"wipetype", "Wipes"
 	Submenu "Third-person camera",				"ChasecamOptions"
+	Submenu "Experimental cameras",				"ExperimentalCameraOptions"
 	Option "$DSPLYMNU_TELEZOOM",				"telezoom", "OnOff"
 	Slider "$DSPLYMNU_QUAKEINTENSITY",			"r_quakeintensity", 0.0, 1.0, 0.05, 2
 	Option "$MISCMNU_FVIEWBOB",		           "fviewbob", "OnOff"
@@ -1876,6 +1886,25 @@ OptionMenu "ChasecamOptions" protected
 	ColorPicker "Friendly target color",				"chase_crosshair_allycolor"
 }
 
+
+OptionMenu "ExperimentalCameraOptions" protected
+{
+	Title "Experimental cameras"
+	StaticText "Local single-player only"
+	StaticText ""
+	Option "Camera mode",                       "cam_experimental_mode", "ExperimentalCameraModes"
+	StaticText ""
+	StaticText "Photo Mode / Free Camera"
+	Slider "Free-camera speed",                  "cam_photo_speed", 2.0, 96.0, 1.0, 0
+	Slider "Photo field of view",                "cam_photo_fov", 20.0, 120.0, 1.0, 0
+	Option "Show HUD in Photo Mode",             "cam_photo_showhud", "OnOff"
+	StaticText ""
+	StaticText "Top-Down (GTA2-style)"
+	Slider "Camera height",                      "cam_topdown_height", 64.0, 1024.0, 16.0, 0
+	Slider "Follow distance",                    "cam_topdown_distance", 0.0, 768.0, 8.0, 0
+	Slider "Downward angle",                     "cam_topdown_pitch", 30.0, 89.0, 1.0, 0
+	Slider "Top-down field of view",             "cam_topdown_fov", 20.0, 120.0, 1.0, 0
+}
 
 OptionMenu "SWROptions" protected
 {
@@ -2095,8 +2124,10 @@ OptionMenu "MugShotOptions" protected
 	Slider "$HUDMNU_MUGSHOTSCALE",			"hud_mugshot_scale", 0.25, 4.0, 0.05, 2
 	Slider "$HUDMNU_MUGSHOTXOFFSET",		"hud_mugshot_xoffset", -160, 160, 1, 0
 	Slider "$HUDMNU_MUGSHOTYOFFSET",		"hud_mugshot_yoffset", -100, 100, 1, 0
+	Option "$HUDMNU_FULLSCREENMUGSHOT",		"hud_fullscreen_mugshot", "OnOff"
+	Slider "$HUDMNU_FULLSCREENMUGSHOTSCALE", "hud_fullscreen_mugshot_scale", 0.5, 1.25, 0.05, 2
 	StaticText " "
-	Command "$HUDMNU_MUGSHOTRESET",			"resetcvar hud_mugshot_scale; resetcvar hud_mugshot_xoffset; resetcvar hud_mugshot_yoffset"
+	Command "$HUDMNU_MUGSHOTRESET",			"resetcvar hud_mugshot_scale; resetcvar hud_mugshot_xoffset; resetcvar hud_mugshot_yoffset; resetcvar hud_fullscreen_mugshot; resetcvar hud_fullscreen_mugshot_scale"
 }
 
 OptionMenu "FlashOptions" protected

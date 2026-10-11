@@ -1111,21 +1111,35 @@ void FLevelLocals::Serialize(FSerializer &arc, bool hubload)
 //
 //==========================================================================
 
+bool FLevelLocals::BuildSnapshot(FCompressedBuffer &snapshot)
+{
+	// FCompressedBuffer intentionally has no constructor. Callers of this
+	// public helper value-initialize it, while the established hub buffer is
+	// already initialized by level_info_t. Reset every field after releasing a
+	// previous allocation so an invalid level cannot leave stale archive
+	// metadata behind.
+	snapshot.Clean();
+	snapshot = { 0, 0, 0, 0, nullptr, nullptr };
+
+	if (!info->isValid())
+		return false;
+
+	FDoomSerializer arc(this);
+
+	if (!arc.OpenWriter(save_formatted))
+		return false;
+
+	SaveVersion = SAVEVER;
+	Serialize(arc, false);
+	snapshot = arc.GetCompressedOutput();
+	return snapshot.mBuffer != nullptr && snapshot.mCompressedSize != 0;
+}
+
 void FLevelLocals::SnapshotLevel()
 {
-	info->Snapshot.Clean();
-
-	if (info->isValid())
-	{
-		FDoomSerializer arc(this);
-
-		if (arc.OpenWriter(save_formatted))
-		{
-			SaveVersion = SAVEVER;
-			Serialize(arc, false);
-			info->Snapshot = arc.GetCompressedOutput();
-		}
-	}
+	// Hub travel and ordinary savegames own info->Snapshot. Online
+	// join/recovery takes a detached snapshot through BuildSnapshot() instead.
+	BuildSnapshot(info->Snapshot);
 }
 
 //==========================================================================

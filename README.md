@@ -33,6 +33,7 @@ BiasedDoom keeps GZDoom's WAD/PK3, DECORATE, ZScript, ACS, MD2, MD3, voxel, and 
 | Camera | Menu-driven third-person camera with presets, shoulder offsets, collision padding, pitch modes, and projected crosshair |
 | Procedural levels | Recipe-derived run blueprints, five architectural themes, staged keys with collision-proven access, extreme-but-walkable terrain, and map sizes from 1 to 160 |
 | Cooperative companions | Zero-to-seven, host-authoritative bot rosters for normal maps and Doom procedural runs; each companion has a saved identity and individual customization within an eight-occupant co-op cap |
+| Online multiplayer | Player-hosted sessions with a privacy-safe browser and join codes, encrypted relay fallback, explicit host-mod approval and transfer, join-in-progress, reconnect, and deterministic host recovery |
 | Capture and demos | Lossless PNG-frame capture with synchronized WAV audio or raw RGB-AVI with PCM audio, a configurable export folder, native ZDEM takes, and menu-bindable recording shortcuts |
 | Player customization | Mod-resistant player skins plus independently configurable horizontal and vertical autoaim |
 | HUD customization | Runtime mugshot scale and position controls for stock ZScript and legacy SBARINFO status bars |
@@ -59,6 +60,21 @@ Start with:
 - [docs/gltf/quick-start.md](docs/gltf/quick-start.md)
 - [docs/gltf/player-replacement-workflow.md](docs/gltf/player-replacement-workflow.md)
 - [docs/gltf/blender-authoring.md](docs/gltf/blender-authoring.md)
+
+### Online Multiplayer
+
+Open **Network Game** in the launcher to host, browse public sessions, or join
+by code through a configured first-party online service. The browser never
+shows player addresses; networking uses the encrypted relay automatically and
+only opportunistically switches to a verified direct route. Direct-IP and LAN
+hosting remain available for trusted offline setups.
+
+When a host uses mods, guests first see the anonymous host identity and the
+exact package names, sizes, and BLAKE2b-256 hashes. Nothing downloads until
+the guest explicitly approves that content plan. Verified packages are reused
+from the local cache on later joins. See [Online multiplayer](docs/engine/online-multiplayer.md)
+for service deployment, command-line use, mod transfer, reconnect/host
+recovery, and the complete testing procedure.
 
 ### Lighting And Materials
 
@@ -345,7 +361,8 @@ The executable will be under the build output directory, with platform/configura
 On Debian/Ubuntu, install MinGW-w64 alongside the normal Linux build dependencies:
 
 ```bash
-sudo apt install mingw-w64 g++-mingw-w64 gcc-mingw-w64 nasm
+sudo apt install autoconf autoconf-archive automake libtool \
+  mingw-w64 g++-mingw-w64 gcc-mingw-w64 nasm
 ```
 
 Then build and package a Windows x64 `.exe` from Linux:

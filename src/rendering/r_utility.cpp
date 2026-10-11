@@ -36,6 +36,7 @@
 #include "a_sharedglobal.h"
 #include "actorinlines.h"
 #include "d_main.h"
+#include "experimental_camera.h"
 #include "d_net.h"
 #include "d_player.h"
 #include "doomstat.h"
@@ -1142,19 +1143,20 @@ void R_SetupFrame(FRenderViewpoint& viewPoint, const FViewWindow& viewWindow, AA
 	}
 
 	R_InterpolateView(viewPoint, player, viewPoint.TicFrac, iView);
+	const bool experimentalCamera = ECamera_ApplyView(viewPoint);
 
 	viewPoint.SetViewAngle(viewWindow);
 
 	// Keep the view within the sector's floor and ceiling
 	// But allow VPSF_ALLOWOUTOFBOUNDS camera viewpoints to go out of bounds when using hardware renderer
-	if (viewPoint.sector->PortalBlocksMovement(sector_t::ceiling) && (!viewPoint.bDoOob || !V_IsHardwareRenderer()))
+	if (!experimentalCamera && viewPoint.sector->PortalBlocksMovement(sector_t::ceiling) && (!viewPoint.bDoOob || !V_IsHardwareRenderer()))
 	{
 		const double z = viewPoint.sector->ceilingplane.ZatPoint(viewPoint.Pos) - 4.0;
 		if (viewPoint.Pos.Z > z)
 			viewPoint.Pos.Z = z;
 	}
 
-	if (viewPoint.sector->PortalBlocksMovement(sector_t::floor) && (!viewPoint.bDoOob || !V_IsHardwareRenderer()))
+	if (!experimentalCamera && viewPoint.sector->PortalBlocksMovement(sector_t::floor) && (!viewPoint.bDoOob || !V_IsHardwareRenderer()))
 	{
 		const double z = viewPoint.sector->floorplane.ZatPoint(viewPoint.Pos) + 4.0;
 		if (viewPoint.Pos.Z < z)

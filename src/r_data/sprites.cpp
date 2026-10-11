@@ -652,6 +652,18 @@ void R_InitSkins (void)
 				Skins[i].Scale.X = clamp((float)atof (sc.String), 1.f/65536, 256.f);
 				Skins[i].Scale.Y = Skins[i].Scale.X;
 			}
+			else if (0 == stricmp (key, "facescale"))
+			{
+				// Face graphics have a separate logical scale from the actor. In
+				// particular, facescale = 0.25 makes a 4x portrait occupy the same
+				// HUD footprint as its conventional 35x31 counterpart.
+				Skins[i].FaceScale = clamp((float)atof (sc.String), 1.f/65536, 256.f);
+			}
+			else if (0 == stricmp (key, "faceoverlay"))
+			{
+				Skins[i].FaceOverlay = stricmp(sc.String, "true") == 0 ||
+					stricmp(sc.String, "yes") == 0 || atoi(sc.String) != 0;
+			}
 			else if (0 == stricmp (key, "game"))
 			{
 				if (gameinfo.gametype == GAME_Heretic)
@@ -1066,6 +1078,8 @@ DEFINE_FIELD(FPlayerSkin, range0start);
 DEFINE_FIELD(FPlayerSkin, range0end);
 DEFINE_FIELD(FPlayerSkin, othergame);
 DEFINE_FIELD(FPlayerSkin, Scale);
+DEFINE_FIELD(FPlayerSkin, FaceScale);
+DEFINE_FIELD(FPlayerSkin, FaceOverlay);
 DEFINE_FIELD(FPlayerSkin, sprite);
 DEFINE_FIELD(FPlayerSkin, crouchsprite);
 DEFINE_FIELD(FPlayerSkin, namespc);

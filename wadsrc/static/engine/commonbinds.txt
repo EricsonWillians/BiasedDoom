@@ -33,6 +33,8 @@ f9 quickload
 f11 bumpgamma
 f10 menu_quit
 tab togglemap
+p togglephotomode
+o toggletopdowncamera
 pause pause
 sysrq screenshot
 t messagemode

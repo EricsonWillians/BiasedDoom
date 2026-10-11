@@ -42,6 +42,10 @@ void G_DoLoadLevel (const FString &MapName, int position, bool autosave, bool ne
 void G_ClearSnapshots (void);
 void P_RemoveDefereds ();
 void G_ReadSnapshots (FResourceFile *);
+// Moves caller-owned serialized hub snapshots into their level-info owners.
+// The input arrays are cleared entry-by-entry only after every destination has
+// been validated, so an invalid online restore cannot leave a partial hub map.
+bool G_InstallSerializedSnapshots(TArray<FString>& filenames, TArray<FCompressedBuffer>& buffers);
 void G_WriteSnapshots (TArray<FString> &, TArray<FCompressedBuffer> &);
 void G_WriteVisited(FSerializer &arc);
 void G_ReadVisited(FSerializer &arc);

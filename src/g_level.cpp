@@ -33,6 +33,7 @@
 */
 
 #include <assert.h>
+#include <string.h>
 
 #include "d_main.h"
 #include "g_level.h"
@@ -2521,6 +2522,74 @@ void G_ReadSnapshots(FResourceFile *resf)
 			}
 		}
 	}
+}
+
+//==========================================================================
+//
+// Moves in-memory snapshot archives into the same level_info_t slots used by
+// normal savegame loading. Online join/recovery hands us independently owned
+// buffers, so unlike G_ReadSnapshots this must not borrow a resource-file
+// backing store.
+//
+//==========================================================================
+
+bool G_InstallSerializedSnapshots(TArray<FString>& filenames, TArray<FCompressedBuffer>& buffers)
+{
+	if (filenames.Size() != buffers.Size())
+		return false;
+
+	TArray<FCompressedBuffer*> destinations;
+	destinations.Reserve(buffers.Size());
+	static constexpr char LevelSuffix[] = ".map.json";
+	static constexpr char DefaultLevelSuffix[] = ".mapd.json";
+	for (unsigned int index = 0; index < filenames.Size(); ++index)
+	{
+		const FCompressedBuffer& archive = buffers[index];
+		if (archive.mBuffer == nullptr || archive.mSize == 0 || archive.mCompressedSize == 0)
+			return false;
+
+		FString filename = filenames[index];
+		filename.ToLower();
+		const size_t length = filename.Len();
+		FCompressedBuffer* destination = nullptr;
+		if (length > sizeof(LevelSuffix) - 1 &&
+			strncmp(filename.GetChars() + length - (sizeof(LevelSuffix) - 1), LevelSuffix, sizeof(LevelSuffix) - 1) == 0)
+		{
+			FString mapname(filename.GetChars(), length - (sizeof(LevelSuffix) - 1));
+			level_info_t* info = FindLevelInfo(mapname.GetChars());
+			if (info == nullptr)
+				return false;
+			destination = &info->Snapshot;
+		}
+		else if (length > sizeof(DefaultLevelSuffix) - 1 &&
+			strncmp(filename.GetChars() + length - (sizeof(DefaultLevelSuffix) - 1), DefaultLevelSuffix,
+				sizeof(DefaultLevelSuffix) - 1) == 0)
+		{
+			FString mapname(filename.GetChars(), length - (sizeof(DefaultLevelSuffix) - 1));
+			if (mapname.CompareNoCase(TheDefaultLevelInfo.MapName) != 0)
+				return false;
+			destination = &TheDefaultLevelInfo.Snapshot;
+		}
+		else
+		{
+			return false;
+		}
+
+		for (auto previous : destinations)
+		{
+			if (previous == destination)
+				return false;
+		}
+		destinations.Push(destination);
+	}
+
+	G_ClearSnapshots();
+	for (unsigned int index = 0; index < buffers.Size(); ++index)
+	{
+		*destinations[index] = buffers[index];
+		buffers[index] = { 0, 0, 0, 0, nullptr, nullptr };
+	}
+	return true;
 }
 
 //==========================================================================

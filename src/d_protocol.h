@@ -179,6 +179,10 @@ enum EDemoCommand
 	DEM_PROCMAP_ACK,	// 81 transfer id and canonical archive checksum
 	DEM_PROCMAP_ABORT,	// 82 transfer id and reason
 	DEM_REMOVECOMPANION, // 83 Int: replicated stable companion ID
+	// Snapshot join-in-progress activates the already authenticated guest only
+	// after it restored and replayed to the host's completion fence. Keep this
+	// append-only: replay records and demos persist command numbers.
+	DEM_ONLINEPLAYERJOIN, // 84 Byte: player slot, compact userinfo string
 };
 
 // The following are implemented by cht_DoCheat in m_cheat.cpp

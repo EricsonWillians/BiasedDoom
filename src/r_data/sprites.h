@@ -56,6 +56,13 @@ public:
 	uint8_t		range0end = 0;
 	bool		othergame = 0;	// [GRB]
 	DVector2	Scale = { 1, 1 };
+	// Multiplies a skin face graphic's logical size. This lets a skin supply
+	// higher-resolution mugshot pixels without changing the established HUD
+	// layout used by drawmugshot and status-bar scripts.
+	float		FaceScale = 1.f;
+	// Opts this skin into the reserved fullscreen-HUD portrait area. Normal
+	// skins keep the traditional no-portrait fullscreen presentation.
+	bool		FaceOverlay = false;
 	int			sprite = 0;
 	int			crouchsprite = 0;
 	int			namespc = 0;	// namespace for this skin

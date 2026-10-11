@@ -67,6 +67,7 @@
 #include "swrenderer/r_renderthread.h"
 #include "g_levellocals.h"
 #include "v_draw.h"
+#include "experimental_camera.h"
 
 EXTERN_CVAR(Bool, r_drawplayersprites)
 EXTERN_CVAR(Bool, r_deathcamera)
@@ -83,7 +84,7 @@ static bool IsThirdPersonViewActive(player_t *player)
 	}
 
 	const bool chaseAllowed = !deathmatch || (dmflags2 & DF2_CHASECAM);
-	return chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled);
+	return ECamera_IsThirdPersonActive() || (chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled));
 }
 
 namespace swrenderer

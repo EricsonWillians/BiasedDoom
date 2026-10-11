@@ -29,7 +29,8 @@ Options:
   -h, --help              show this help
 
 Required Ubuntu packages:
-  sudo apt install mingw-w64 g++-mingw-w64 gcc-mingw-w64 nasm
+  sudo apt install autoconf autoconf-archive automake libtool \
+    mingw-w64 g++-mingw-w64 gcc-mingw-w64 nasm
 
 Python scripting is unavailable in MinGW builds. Use the native MSVC package
 when a mod needs Python; ACS and ZScript remain enabled here.
@@ -59,6 +60,19 @@ require_command() {
 
     if ! command -v "${name}" >/dev/null 2>&1; then
         die "Required command '${name}' was not found. ${hint}"
+    fi
+}
+
+require_autoconf_archive() {
+    local macro_dir
+
+    # libsodium is part of the online multiplayer client and vcpkg builds it
+    # from source for the MinGW triplet. The package supplies M4 macros rather
+    # than a command, so checking only autoreconf/autoconf gives a confusing
+    # failure much later inside the vcpkg port.
+    macro_dir="$(aclocal --print-ac-dir 2>/dev/null || true)"
+    if [[ -z "${macro_dir}" ]] || ! find "${macro_dir}" -maxdepth 1 -type f -name 'ax_*.m4' -print -quit | grep -q .; then
+        die "autoconf-archive is required to build the online client. Install it with: sudo apt install autoconf-archive"
     fi
 }
 
@@ -307,9 +321,10 @@ ensure_vcpkg() {
         fi
     fi
 
-    if [[ ! -x "${vcpkg_dir}/vcpkg" ]]; then
-        run "${vcpkg_dir}/bootstrap-vcpkg.sh" -disableMetrics
-    fi
+    # This is also a quick `vcpkg version` health check for an executable left
+    # by an interrupted earlier package build. It returns immediately when the
+    # pinned tool is usable, otherwise it performs the bounded recovery path.
+    run "${REPO_ROOT}/tools/bootstrap-vcpkg.sh" "${vcpkg_dir}"
 
     ok "vcpkg is ready"
     VCPKG_TOOLCHAIN_FILE="${toolchain}"
@@ -328,6 +343,7 @@ configure_native_tools() {
     log "Configuring host tools for cross compilation"
     run cmake -S "${REPO_ROOT}" -B "${NATIVE_TOOLS_PATH}" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
+        -DBIASEDDOOM_ENABLE_ONLINE=OFF \
         -DBIASEDDOOM_ENABLE_GLTF=OFF \
         -DBIASEDDOOM_BUILD_GLTF=OFF \
 		-DBIASEDDOOM_ENABLE_PYTHON=OFF \
@@ -717,6 +733,11 @@ require_command x86_64-w64-mingw32-windres "Install with: sudo apt install mingw
 require_command x86_64-w64-mingw32-objdump "Install with: sudo apt install mingw-w64"
 require_command x86_64-w64-mingw32-nm "Install with: sudo apt install mingw-w64"
 require_command nasm "Install with: sudo apt install nasm"
+require_command autoconf "Install with: sudo apt install autoconf autoconf-archive automake libtool"
+require_command autoreconf "Install with: sudo apt install autoconf autoconf-archive automake libtool"
+require_command automake "Install with: sudo apt install autoconf autoconf-archive automake libtool"
+require_command libtoolize "Install with: sudo apt install autoconf autoconf-archive automake libtool"
+require_autoconf_archive
 ok "MinGW-w64 tools found"
 prefer_mingw_posix_thread_model
 detect_stale_mingw_thread_model

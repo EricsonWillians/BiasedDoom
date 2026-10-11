@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <memory>
+#include <new>
 #include <utility>
 
 #include "i_time.h"
@@ -88,6 +89,7 @@
 #include "g_hub.h"
 #include "g_levellocals.h"
 #include "events.h"
+#include "experimental_camera.h"
 #include "c_buttons.h"
 #include "d_buttons.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
@@ -95,6 +97,10 @@
 #include "screenjob.h"
 #include "i_interface.h"
 #include "fs_findfile.h"
+
+#ifdef BIASEDDOOM_ONLINE
+#include "common/online/online_snapshot.h"
+#endif
 
 
 static FRandom pr_dmspawn ("DMSpawn");
@@ -882,6 +888,11 @@ void G_BuildTiccmd (usercmd_t *cmd)
 		SendItemDrop = NULL;
 	}
 
+	// Photo mode is a local renderer feature. Consume its input after all
+	// normal input has been assembled, before this user command can reach the
+	// player simulation or demo stream.
+	ECamera_ConsumeTiccmd(*cmd);
+
 	cmd->forwardmove <<= 8;
 	cmd->sidemove <<= 8;
 }
@@ -1341,6 +1352,10 @@ void G_Ticker ()
 
 	// get commands
 	const int curTic = gametic / TicDup;
+	// Preserve the accepted command/event stream before this tic consumes it.
+	// The online implementation only records this on the authenticated host;
+	// non-online and guest paths remain no-ops.
+	I_OnlineRecordSimulationTic(static_cast<uint64_t>(curTic));
 
 	// A host streams an already-generated procedural archive through ordinary
 	// tic events before it emits the normal map-change event. Keeping this in
@@ -2685,6 +2700,465 @@ static void PutSavePic (FileWriter *file, int width, int height)
 				WriteSavePic(&players[consoleplayer], file, width, height);
 			}, false);
 	}
+}
+
+bool G_BuildOnlineSnapshotBundle(BdOnline::FOnlineSnapshotBundle& bundle, std::string& error)
+{
+#ifndef BIASEDDOOM_ONLINE
+	(void)bundle;
+	error = "this build was made without online multiplayer support";
+	return false;
+#else
+	bundle = {};
+	error.clear();
+	if (primaryLevel == nullptr || primaryLevel->info == nullptr || gamestate != GS_LEVEL ||
+		primaryLevel->MapName.IsEmpty())
+	{
+		error = "online snapshots can only be captured while a level is active";
+		return false;
+	}
+	auto fail = [&]() -> bool
+	{
+		bundle = {};
+		return false;
+	};
+	uint64_t bundledBytes = 0;
+	uint64_t bundledUncompressedBytes = 0;
+
+	auto appendArchive = [&](BdOnline::EOnlineSnapshotComponentType type, const char* name,
+		const FileSys::FCompressedBuffer& archive) -> bool
+	{
+		if (name == nullptr || archive.mBuffer == nullptr || archive.mSize == 0 || archive.mCompressedSize == 0 ||
+			archive.mSize > BdOnline::OnlineMaxSnapshotBytes || archive.mCompressedSize > BdOnline::OnlineMaxSnapshotBytes ||
+			bundle.Components.size() >= BdOnline::OnlineMaxSnapshotComponents ||
+			archive.mCompressedSize > BdOnline::OnlineMaxSnapshotBytes - bundledBytes ||
+			archive.mSize > BdOnline::OnlineMaxSnapshotBytes - bundledUncompressedBytes)
+		{
+			error = "engine serializer produced an unsafe online snapshot component";
+			return false;
+		}
+		BdOnline::FOnlineSnapshotComponent component;
+		component.Type = type;
+		component.Name = name;
+		component.UncompressedBytes = archive.mSize;
+		component.CompressionMethod = static_cast<uint32_t>(archive.mMethod);
+		component.CRC32 = archive.mCRC32;
+		try
+		{
+			component.Bytes.assign(reinterpret_cast<const uint8_t*>(archive.mBuffer),
+				reinterpret_cast<const uint8_t*>(archive.mBuffer) + archive.mCompressedSize);
+			bundle.Components.push_back(std::move(component));
+			bundledBytes += archive.mCompressedSize;
+			bundledUncompressedBytes += archive.mSize;
+		}
+		catch (const std::bad_alloc&)
+		{
+			error = "not enough memory to capture online snapshot component";
+			return false;
+		}
+		return true;
+	};
+
+	FileSys::FCompressedBuffer world = { 0, 0, 0, 0, nullptr, nullptr };
+	if (!primaryLevel->BuildSnapshot(world))
+	{
+		world.Clean();
+		error = "could not serialize the active world for an online join";
+		return fail();
+	}
+	bundle.MapName = primaryLevel->MapName.GetChars();
+	const bool appendedWorld = appendArchive(BdOnline::EOnlineSnapshotComponentType::World, bundle.MapName.c_str(), world);
+	world.Clean();
+	if (!appendedWorld)
+		return fail();
+
+	FSerializer globals;
+	if (!globals.OpenWriter(save_formatted))
+	{
+		error = "could not open the online global-state serializer";
+		return fail();
+	}
+	G_SerializeHub(globals);
+	C_SerializeCVars(globals, "servercvars", CVAR_SERVERINFO);
+	FOnlineNetSnapshotState onlineNetState;
+	if (!Net_CaptureOnlineSnapshotState(onlineNetState))
+	{
+		error = "online snapshot must be captured by an active packet-server session at a tic boundary";
+		return fail();
+	}
+	int tic = TICRATE;
+	globals("ticrate", tic)
+		("leveltime", primaryLevel->time)
+		("globalfreeze", globalfreeze)
+		("startpos", startpos)
+		("laststartpos", laststartpos)
+		("online_net_tic", onlineNetState.CompletedTic)
+		("online_net_clients", onlineNetState.ClientMask)
+		("online_net_consistency", onlineNetState.CurrentConsistency)
+		("online_net_last_consistency", onlineNetState.LastSentConsistency)
+		("online_net_arbitrator", onlineNetState.Arbitrator)
+		("online_net_ticdup", onlineNetState.TicDup)
+		("online_net_lobby", onlineNetState.LobbyId);
+	STAT_Serialize(globals);
+	FRandom::StaticWriteRNGState(globals);
+	P_WriteACSDefereds(globals);
+	P_WriteACSVars(globals);
+	G_WriteVisited(globals);
+	if (NextSkill != -1)
+		globals("nextskill", NextSkill);
+	FileSys::FCompressedBuffer globalArchive = globals.GetCompressedOutput();
+	const bool appendedGlobals = appendArchive(BdOnline::EOnlineSnapshotComponentType::Globals, "globals", globalArchive);
+	globalArchive.Clean();
+	if (!appendedGlobals)
+		return fail();
+
+	TArray<FString> hubNames;
+	TArray<FileSys::FCompressedBuffer> hubArchives;
+	G_WriteSnapshots(hubNames, hubArchives);
+	if (hubNames.Size() != hubArchives.Size())
+	{
+		error = "engine produced mismatched online hub snapshot metadata";
+		return fail();
+	}
+	const bool hasProceduralArchive = P_IsProceduralMapName(primaryLevel->MapName.GetChars());
+	if (hubArchives.Size() > BdOnline::OnlineMaxSnapshotComponents - bundle.Components.size() ||
+		(hasProceduralArchive && hubArchives.Size() == BdOnline::OnlineMaxSnapshotComponents - bundle.Components.size()))
+	{
+		error = "online snapshot has too many hub components";
+		return fail();
+	}
+	for (unsigned int index = 0; index < hubArchives.Size(); ++index)
+	{
+		if (!appendArchive(BdOnline::EOnlineSnapshotComponentType::Hub, hubNames[index].GetChars(), hubArchives[index]))
+			return fail();
+	}
+
+	if (hasProceduralArchive)
+	{
+		const FProceduralMapArchiveData* procedural = P_GetCurrentProceduralMapArchive();
+		if (procedural == nullptr || procedural->UDMF.IsEmpty())
+		{
+			error = "online snapshot is missing its procedural-map archive";
+			return fail();
+		}
+		FSerializer proceduralSerializer;
+		if (!proceduralSerializer.OpenWriter(save_formatted))
+		{
+			error = "could not open the online procedural-map serializer";
+			return fail();
+		}
+		int seed = procedural->Seed;
+		int difficulty = procedural->Difficulty;
+		int size = procedural->Size;
+		int layout = procedural->Layout;
+		int verticality = procedural->Verticality;
+		int detail = procedural->Detail;
+		int outdoors = procedural->Outdoors;
+		proceduralSerializer("seed", seed)
+			.AddString("theme", procedural->Theme.GetChars())
+			("difficulty", difficulty)
+			("size", size)
+			("layout", layout)
+			("verticality", verticality)
+			("detail", detail)
+			("outdoors", outdoors)
+			.AddString("udmf", procedural->UDMF.GetChars());
+		FileSys::FCompressedBuffer proceduralArchive = proceduralSerializer.GetCompressedOutput();
+		const bool appendedProcedural = appendArchive(BdOnline::EOnlineSnapshotComponentType::ProceduralMap,
+			"current", proceduralArchive);
+		proceduralArchive.Clean();
+		if (!appendedProcedural)
+			return fail();
+	}
+
+	const bool valid = bundle.Validate(error);
+	if (!valid)
+		bundle = {};
+	return valid;
+#endif
+}
+
+#ifdef BIASEDDOOM_ONLINE
+namespace
+{
+
+void CleanOnlineSnapshotArchives(TArray<FileSys::FCompressedBuffer>& archives)
+{
+	for (auto& archive : archives)
+		archive.Clean();
+}
+
+bool CopyOnlineSnapshotArchive(const BdOnline::FOnlineSnapshotComponent& component,
+	FileSys::FCompressedBuffer& archive, std::string& error)
+{
+	archive.Clean();
+	archive = { 0, 0, 0, 0, nullptr, nullptr };
+	if (component.Bytes.empty() || component.UncompressedBytes == 0 ||
+		component.UncompressedBytes > BdOnline::OnlineMaxSnapshotBytes ||
+		component.Bytes.size() > BdOnline::OnlineMaxSnapshotBytes)
+	{
+		error = "online snapshot component has unsafe archive metadata";
+		return false;
+	}
+	char* bytes = nullptr;
+	try
+	{
+		bytes = new char[component.Bytes.size()];
+	}
+	catch (const std::bad_alloc&)
+	{
+		error = "not enough memory to restore an online snapshot component";
+		return false;
+	}
+	memcpy(bytes, component.Bytes.data(), component.Bytes.size());
+	archive.mSize = static_cast<size_t>(component.UncompressedBytes);
+	archive.mCompressedSize = component.Bytes.size();
+	archive.mMethod = static_cast<int>(component.CompressionMethod);
+	archive.mCRC32 = component.CRC32;
+	archive.mBuffer = bytes;
+	archive.filename = nullptr;
+	return true;
+}
+
+} // namespace
+#endif
+
+bool G_RestoreOnlineSnapshotBundle(const BdOnline::FOnlineSnapshotBundle& bundle, std::string& error)
+{
+#ifndef BIASEDDOOM_ONLINE
+	(void)bundle;
+	error = "this build was made without online multiplayer support";
+	return false;
+#else
+	error.clear();
+	if (demoplayback || demorecording)
+	{
+		error = "online snapshot restoration is unavailable while recording or playing a demo";
+		return false;
+	}
+	if (!BdOnline::OnlineValidateSnapshotBundleArchives(bundle, error))
+		return false;
+
+	const BdOnline::FOnlineSnapshotComponent* world = nullptr;
+	const BdOnline::FOnlineSnapshotComponent* globals = nullptr;
+	const BdOnline::FOnlineSnapshotComponent* procedural = nullptr;
+	for (const auto& component : bundle.Components)
+	{
+		switch (component.Type)
+		{
+		case BdOnline::EOnlineSnapshotComponentType::World: world = &component; break;
+		case BdOnline::EOnlineSnapshotComponentType::Globals: globals = &component; break;
+		case BdOnline::EOnlineSnapshotComponentType::ProceduralMap: procedural = &component; break;
+		default: break;
+		}
+	}
+	const bool isProceduralMap = P_IsProceduralMapName(bundle.MapName.c_str());
+	if (world == nullptr || globals == nullptr || isProceduralMap != (procedural != nullptr))
+	{
+		error = "online snapshot components do not match the target map";
+		return false;
+	}
+
+	FileSys::FCompressedBuffer globalsArchive = { 0, 0, 0, 0, nullptr, nullptr };
+	FileSys::FCompressedBuffer proceduralArchive = { 0, 0, 0, 0, nullptr, nullptr };
+	TArray<FString> snapshotNames;
+	TArray<FileSys::FCompressedBuffer> snapshotArchives;
+	auto cleanPendingArchives = [&]()
+	{
+		globalsArchive.Clean();
+		proceduralArchive.Clean();
+		CleanOnlineSnapshotArchives(snapshotArchives);
+	};
+	if (!CopyOnlineSnapshotArchive(*globals, globalsArchive, error))
+		return false;
+	if (procedural != nullptr && !CopyOnlineSnapshotArchive(*procedural, proceduralArchive, error))
+	{
+		cleanPendingArchives();
+		return false;
+	}
+
+	FString worldSnapshotName;
+	worldSnapshotName.Format("%s.map.json", bundle.MapName.c_str());
+	worldSnapshotName.ToLower();
+	FileSys::FCompressedBuffer archive = { 0, 0, 0, 0, nullptr, nullptr };
+	if (!CopyOnlineSnapshotArchive(*world, archive, error))
+	{
+		cleanPendingArchives();
+		return false;
+	}
+	snapshotNames.Push(worldSnapshotName);
+	snapshotArchives.Push(archive);
+	archive = { 0, 0, 0, 0, nullptr, nullptr };
+	for (const auto& component : bundle.Components)
+	{
+		if (component.Type != BdOnline::EOnlineSnapshotComponentType::Hub)
+			continue;
+		if (!CopyOnlineSnapshotArchive(component, archive, error))
+		{
+			cleanPendingArchives();
+			return false;
+		}
+		snapshotNames.Push(component.Name.c_str());
+		snapshotArchives.Push(archive);
+		archive = { 0, 0, 0, 0, nullptr, nullptr };
+	}
+	if (!G_InstallSerializedSnapshots(snapshotNames, snapshotArchives))
+	{
+		cleanPendingArchives();
+		error = "online snapshot contains an unknown or duplicate hub map";
+		return false;
+	}
+
+	FSerializer globalState;
+	if (!globalState.OpenReader(&globalsArchive))
+	{
+		globalsArchive.Clean();
+		proceduralArchive.Clean();
+		error = "online snapshot global state is malformed";
+		return false;
+	}
+
+	FString proceduralTheme;
+	FString proceduralUDMF;
+	int proceduralSeed = 0;
+	int proceduralDifficulty = 0;
+	int proceduralSize = 0;
+	int proceduralLayout = FProceduralMapGenerator::DefaultStyleSetting;
+	int proceduralVerticality = FProceduralMapGenerator::DefaultStyleSetting;
+	int proceduralDetail = FProceduralMapGenerator::DefaultStyleSetting;
+	int proceduralOutdoors = FProceduralMapGenerator::DefaultStyleSetting;
+	FOnlineNetSnapshotState onlineNetState;
+	if (procedural != nullptr)
+	{
+		FSerializer proceduralState;
+		if (!proceduralState.OpenReader(&proceduralArchive))
+		{
+			globalState.Close(false);
+			globalsArchive.Clean();
+			proceduralArchive.Clean();
+			error = "online procedural-map snapshot is malformed";
+			return false;
+		}
+		proceduralState("seed", proceduralSeed)
+			("theme", proceduralTheme)
+			("difficulty", proceduralDifficulty)
+			("size", proceduralSize)
+			("layout", proceduralLayout)
+			("verticality", proceduralVerticality)
+			("detail", proceduralDetail)
+			("outdoors", proceduralOutdoors)
+			("udmf", proceduralUDMF);
+		const bool proceduralStateValid = !proceduralState.HasErrors();
+		proceduralState.Close(proceduralStateValid);
+		proceduralArchive.Clean();
+		if (!proceduralStateValid || proceduralTheme.IsEmpty() || proceduralUDMF.IsEmpty())
+		{
+			globalState.Close(false);
+			globalsArchive.Clean();
+			error = "online procedural-map snapshot is incomplete";
+			return false;
+		}
+	}
+
+	Net_ResetCommands(true);
+	SetupLoadingCVars();
+	G_SerializeHub(globalState);
+	if (globalState.HasErrors())
+	{
+		globalState.Close(false);
+		globalsArchive.Clean();
+		FinishLoadingCVars();
+		error = "online snapshot global state has invalid hub data";
+		return false;
+	}
+	primaryLevel->BotInfo.RemoveAllBots(primaryLevel, true);
+	if (procedural != nullptr && !P_StageProceduralMapArchive(proceduralSeed, proceduralTheme.GetChars(),
+		proceduralDifficulty, proceduralSize, proceduralLayout, proceduralVerticality, proceduralDetail,
+		proceduralOutdoors, std::move(proceduralUDMF)))
+	{
+		globalState.Close(false);
+		globalsArchive.Clean();
+		FinishLoadingCVars();
+		error = "online procedural-map snapshot recipe is invalid";
+		return false;
+	}
+
+	savegamerestore = true;
+	C_SerializeCVars(globalState, "servercvars", CVAR_SERVERINFO);
+	uint32_t time[2] = { 1, 0 };
+	globalState("ticrate", time[0])
+		("leveltime", time[1])
+		("globalfreeze", globalfreeze)
+		("startpos", startpos)
+		("laststartpos", laststartpos)
+		("online_net_tic", onlineNetState.CompletedTic)
+		("online_net_clients", onlineNetState.ClientMask)
+		("online_net_consistency", onlineNetState.CurrentConsistency)
+		("online_net_last_consistency", onlineNetState.LastSentConsistency)
+		("online_net_arbitrator", onlineNetState.Arbitrator)
+		("online_net_ticdup", onlineNetState.TicDup)
+		("online_net_lobby", onlineNetState.LobbyId);
+	if (globalState.HasErrors())
+	{
+		globalState.Close(false);
+		globalsArchive.Clean();
+		FinishLoadingCVars();
+		savegamerestore = false;
+		error = "online snapshot has invalid global server state";
+		return false;
+	}
+	if (time[0] < 1)
+		time[0] = 1;
+	if (!Net_ValidateOnlineSnapshotState(onlineNetState))
+	{
+		globalState.Close(false);
+		globalsArchive.Clean();
+		FinishLoadingCVars();
+		savegamerestore = false;
+		error = "online snapshot has an invalid packet-server baseline";
+		return false;
+	}
+	primaryLevel->time = Scale(time[1], TICRATE, time[0]);
+	G_ReadVisited(globalState);
+	if (globalState.HasErrors())
+	{
+		globalState.Close(false);
+		globalsArchive.Clean();
+		FinishLoadingCVars();
+		savegamerestore = false;
+		error = "online snapshot has invalid visited-map state";
+		return false;
+	}
+	SaveVersion = SAVEVER;
+	G_InitNew(bundle.MapName.c_str(), false);
+	FinishLoadingCVars();
+	savegamerestore = false;
+	if (!Net_RestoreOnlineSnapshotState(onlineNetState))
+	{
+		globalState.Close(false);
+		globalsArchive.Clean();
+		error = "online snapshot packet-server baseline could not be restored";
+		return false;
+	}
+	STAT_Serialize(globalState);
+	FRandom::StaticReadRNGState(globalState);
+	P_ReadACSDefereds(globalState);
+	P_ReadACSVars(globalState);
+	NextSkill = -1;
+	globalState("nextskill", NextSkill);
+	NextSkill = std::clamp(NextSkill, -1, static_cast<int>(AllSkills.Size()) - 1);
+	const bool globalStateValid = !globalState.HasErrors();
+	globalState.Close(globalStateValid);
+	globalsArchive.Clean();
+	if (!globalStateValid)
+	{
+		error = "online snapshot has invalid post-level global state";
+		return false;
+	}
+	Net_SetWaiting();
+	GC::StartCollection();
+	return true;
+#endif
 }
 
 void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, const char *description)

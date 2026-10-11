@@ -98,6 +98,11 @@ struct FStartupSelectionInfo
 	int DefaultNetMode = 0;
 	int DefaultNetGameMode = 0;
 	bool DefaultNetAltDM = false;
+	bool DefaultNetOnline = false;
+	FString DefaultOnlineService = {};
+	FString DefaultOnlineTitle = {};
+	FString DefaultOnlineRegion = {};
+	bool DefaultOnlinePublic = false;
 
 	FString DefaultNetAddress = {};
 	int DefaultNetJoinPort = 0;
