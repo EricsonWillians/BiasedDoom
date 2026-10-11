@@ -1385,6 +1385,11 @@ if(BIASEDDOOM_PYTHON_AVAILABLE)
 			endif()
 		endif()
 		add_custom_command(TARGET zdoom POST_BUILD
+			# copy_directory does not replace an existing regular file with a
+			# symlink. Clear the generated stdlib first so system Python updates
+			# (for example sitecustomize.py becoming a symlink) cannot leave a
+			# zero-byte engine executable after a successful link.
+			COMMAND ${CMAKE_COMMAND} -E remove_directory $<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}
 			COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}
 			COMMAND ${CMAKE_COMMAND} -E copy_directory ${Python3_STDLIB} $<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}
 			COMMAND ${CMAKE_COMMAND} -E remove_directory $<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}/test
@@ -1404,11 +1409,18 @@ if(BIASEDDOOM_PYTHON_AVAILABLE)
 		# target (not a POST_BUILD step) so editing a package re-stages it even
 		# when zdoom itself does not relink.
 		if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/lib")
+			# A direct `--target zdoom` build must also leave the embedded
+			# framework packages present after the clean stdlib staging above.
+			add_custom_command(TARGET zdoom POST_BUILD
+				COMMAND ${CMAKE_COMMAND} -E copy_directory
+					"${CMAKE_CURRENT_SOURCE_DIR}/python/lib"
+					$<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR})
 			add_custom_target(stage_python_frameworks ALL
 				COMMAND ${CMAKE_COMMAND} -E copy_directory
 					"${CMAKE_CURRENT_SOURCE_DIR}/python/lib"
 					$<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}
 				COMMENT "Staging engine-shipped Python packages from python/lib")
+			add_dependencies(stage_python_frameworks zdoom)
 			install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/python/lib/"
 				DESTINATION ${BIASEDDOOM_PYTHON_INSTALL_ROOT}/${BIASEDDOOM_PYTHON_LIBDIR}
 				COMPONENT "Python runtime"

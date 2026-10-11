@@ -106,45 +106,57 @@ bool CanToggleCamera(const char* modeName)
 
 CUSTOM_CVAR(Int, cam_experimental_mode, ECM_Normal, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
-	self = clamp<int>(self, ECM_Normal, ECM_TopDown);
+	const int clampedMode = clamp<int>(self, ECM_Normal, ECM_TopDown);
+	if (self != clampedMode)
+	{
+		self = clampedMode;
+		return;
+	}
 	if (self != ECM_Normal && gamestate == GS_LEVEL && !IsExperimentalCameraAllowed())
 	{
 		Printf("Experimental cameras are unavailable in demos and netgames.\n");
 		self = ECM_Normal;
+		return;
 	}
 	ResetPhotoCamera();
 }
 
 CUSTOM_CVAR(Float, cam_photo_speed, 20.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
-	self = clamp<float>(self, 2.0f, 96.0f);
+	const float clampedSpeed = clamp<float>(self, 2.0f, 96.0f);
+	if (self != clampedSpeed) self = clampedSpeed;
 }
 
 CUSTOM_CVAR(Float, cam_photo_fov, 75.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
-	self = clamp<float>(self, 20.0f, 120.0f);
+	const float clampedFov = clamp<float>(self, 20.0f, 120.0f);
+	if (self != clampedFov) self = clampedFov;
 }
 
 CVAR(Bool, cam_photo_showhud, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CUSTOM_CVAR(Float, cam_topdown_height, 320.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
-	self = clamp<float>(self, 64.0f, 1024.0f);
+	const float clampedHeight = clamp<float>(self, 64.0f, 1024.0f);
+	if (self != clampedHeight) self = clampedHeight;
 }
 
 CUSTOM_CVAR(Float, cam_topdown_distance, 160.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
-	self = clamp<float>(self, 0.0f, 768.0f);
+	const float clampedDistance = clamp<float>(self, 0.0f, 768.0f);
+	if (self != clampedDistance) self = clampedDistance;
 }
 
 CUSTOM_CVAR(Float, cam_topdown_pitch, 62.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
-	self = clamp<float>(self, 30.0f, 89.0f);
+	const float clampedPitch = clamp<float>(self, 30.0f, 89.0f);
+	if (self != clampedPitch) self = clampedPitch;
 }
 
 CUSTOM_CVAR(Float, cam_topdown_fov, 70.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
-	self = clamp<float>(self, 20.0f, 120.0f);
+	const float clampedFov = clamp<float>(self, 20.0f, 120.0f);
+	if (self != clampedFov) self = clampedFov;
 }
 
 bool ECamera_IsPhotoModeActive()
