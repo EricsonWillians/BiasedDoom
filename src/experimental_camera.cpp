@@ -39,6 +39,8 @@ struct FPhotoCameraState
 
 FPhotoCameraState PhotoCamera;
 
+constexpr double CmdToDegrees = 360.0 / 65536.0;
+
 bool IsExperimentalCameraAllowed()
 {
 	return gamestate == GS_LEVEL && !netgame && !demoplayback && !demorecording
@@ -46,7 +48,7 @@ bool IsExperimentalCameraAllowed()
 		&& players[consoleplayer].mo != nullptr;
 }
 
-void ResetPhotoCamera()
+void ResetExperimentalCameras()
 {
 	PhotoCamera.Initialized = false;
 	PhotoCamera.Level = nullptr;
@@ -118,7 +120,7 @@ CUSTOM_CVAR(Int, cam_experimental_mode, ECM_Normal, CVAR_ARCHIVE | CVAR_GLOBALCO
 		self = ECM_Normal;
 		return;
 	}
-	ResetPhotoCamera();
+	ResetExperimentalCameras();
 }
 
 CUSTOM_CVAR(Float, cam_photo_speed, 20.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -141,13 +143,13 @@ CUSTOM_CVAR(Float, cam_topdown_height, 320.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 	if (self != clampedHeight) self = clampedHeight;
 }
 
-CUSTOM_CVAR(Float, cam_topdown_distance, 160.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Float, cam_topdown_distance, 0.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedDistance = clamp<float>(self, 0.0f, 768.0f);
 	if (self != clampedDistance) self = clampedDistance;
 }
 
-CUSTOM_CVAR(Float, cam_topdown_fov, 70.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Float, cam_topdown_fov, 85.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedFov = clamp<float>(self, 20.0f, 120.0f);
 	if (self != clampedFov) self = clampedFov;
@@ -188,6 +190,13 @@ double ECamera_GetFieldOfView(double normalFov)
 
 void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 {
+	if (ECamera_IsTopDownModeActive())
+	{
+		// Top-down preserves normal player controls. The camera consumes no
+		// movement or aiming commands, so weapon yaw and movement stay exact.
+		return;
+	}
+
 	if (!ECamera_IsPhotoModeActive())
 	{
 		return;
@@ -199,7 +208,6 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 		return;
 	}
 
-	constexpr double CmdToDegrees = 360.0 / 65536.0;
 	PhotoCamera.Angles.Yaw = (PhotoCamera.Angles.Yaw + DAngle::fromDeg(cmd.yaw * CmdToDegrees)).Normalized180();
 	PhotoCamera.Angles.Pitch = DAngle::fromDeg(clamp<double>(
 		PhotoCamera.Angles.Pitch.Degrees() - cmd.pitch * CmdToDegrees, -89.0, 89.0));
@@ -207,7 +215,9 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 	const DVector2 forward2D = PhotoCamera.Angles.Yaw.ToVector();
 	const double pitchCos = PhotoCamera.Angles.Pitch.Cos();
 	const DVector3 forward = { forward2D.X * pitchCos, forward2D.Y * pitchCos, -PhotoCamera.Angles.Pitch.Sin() };
-	const DVector3 right = { -forward2D.Y, forward2D.X, 0.0 };
+	// Doom's positive sidemove thrust is yaw - 90 degrees. Mirror that
+	// convention so A/D and controller strafing keep their normal direction.
+	const DVector3 right = { forward2D.Y, -forward2D.X, 0.0 };
 	DVector3 movement = forward * double(cmd.forwardmove)
 		+ right * double(cmd.sidemove)
 		+ DVector3(0.0, 0.0, double(cmd.upmove));
@@ -256,6 +266,11 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 
 	if (ECamera_IsTopDownModeActive())
 	{
+		// The camera always uses the player's actual gameplay yaw. Keeping both
+		// in lockstep makes the centered reticle agree with horizontal weapon
+		// traces instead of creating a separate, lagging camera aim direction.
+		const DAngle cameraYaw = players[consoleplayer].mo->Angles.Yaw;
+
 		// Start at the player rather than at a pre-existing chase/view-offset
 		// position. This makes the experimental mode deterministic when it is
 		// enabled from any normal camera state.
@@ -263,32 +278,31 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 		viewPoint.Pos = focus;
 		viewPoint.sector = viewPoint.ViewLevel->PointInRenderSubsector(focus)->sector;
 
-		const DAngle yaw = viewPoint.Angles.Yaw;
-		const DVector2 forward = yaw.ToVector();
+		const DVector2 forward = cameraYaw.ToVector();
 		const DVector3 offset = {
 			-forward.X * double(cam_topdown_distance),
 			-forward.Y * double(cam_topdown_distance),
 			double(cam_topdown_height),
 		};
 		const double offsetLength = offset.Length();
-		if (offsetLength > 0.0)
+		if (cam_topdown_distance == 0.0f)
+		{
+			// A pure vertical trace through R_OffsetView can resolve on either
+			// side of a low ceiling. Place the default top-down view explicitly
+			// just below that ceiling instead, guaranteeing that it stays above
+			// the player and inside normal map geometry.
+			const double ceilingZ = viewPoint.sector->ceilingplane.ZatPoint(focus) - 8.0;
+			viewPoint.Pos.Z = min<double>(focus.Z + double(cam_topdown_height), ceilingZ);
+		}
+		else if (offsetLength > 0.0)
 		{
 			R_OffsetView(viewPoint, offset / offsetLength, offsetLength, 8.0);
 		}
 
-		// R_OffsetView may shorten the boom to keep the camera out of walls and
-		// ceilings. Aim from its actual, collision-resolved position back to the
-		// player, so framing remains stable instead of retaining an angle that
-		// only matched the requested (and possibly blocked) camera position.
-		const DVector3 toFocus = focus - viewPoint.Pos;
-		if (!toFocus.isZero())
-		{
-			viewPoint.Angles = { toFocus.Angle(), toFocus.Pitch(), nullAngle };
-		}
-		else
-		{
-			viewPoint.Angles = { yaw, nullAngle, nullAngle };
-		}
+		// Keep a steep but non-singular pitch. With the default zero lateral
+		// boom, turning rotates the view without dragging the camera along nearby
+		// walls; this is the stable classic top-down behavior.
+		viewPoint.Angles = { cameraYaw, DAngle::fromDeg(75.0), nullAngle };
 		viewPoint.showviewer = true;
 		viewPoint.bForceNoViewer = false;
 		return true;

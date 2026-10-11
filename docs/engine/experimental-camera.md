@@ -15,10 +15,12 @@ free-flight speed, and the top-down framing controls.
   HUD is hidden by default for clean captures and can be restored with
   `cam_photo_showhud`.
 - **Top-Down** (`O` by default, or `toggletopdowncamera`) follows the player
-  from a high, downward-looking third-person view. It keeps the player framed
-  even when the collision-safe camera boom is shortened, leaves normal player
-  controls active, and supplies a center reticle. It can be tuned with
-  `cam_topdown_height` and `cam_topdown_distance`.
+  from a high, downward-looking third-person view. It tracks the player's
+  actual yaw, so the fixed center reticle has the same horizontal direction as
+  weapon fire. The engine's trace provides target color and depth feedback but
+  cannot move the reticle. The collision-safe camera boom, height, and field
+  of view can be tuned with `cam_topdown_height`,
+  `cam_topdown_distance`, and `cam_topdown_fov`.
 
 `cam_experimental_mode` selects **Off** (0), **Photo Mode / Free Camera** (1),
 or **Top-Down** (2). These commands and the menu options are unavailable in

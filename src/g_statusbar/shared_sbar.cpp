@@ -1088,9 +1088,11 @@ static bool ST_GetThirdPersonCrosshairPosition(player_t *player, double &xpos,
 
   FTranslatedLineTarget target;
   const DAngle pitch = P_BulletSlope(mo, &target, ALF_PORTALRESTRICT);
+  const DAngle yaw =
+      target.linetarget != nullptr ? target.attackAngleFromSource : mo->Angles.Yaw;
 
   const double shootOffsetZ = mo->Center() - mo->Z() + mo->AttackOffset();
-  P_LineTrace(mo, mo->Angles.Yaw, PLAYERMISSILERANGE, pitch, TRF_NOSKY,
+  P_LineTrace(mo, yaw, PLAYERMISSILERANGE, pitch, TRF_NOSKY,
               shootOffsetZ, 0.0, 0.0, &trace);
 
   return ST_ProjectWorldToViewWindow(trace.HitLocation, xpos, ypos);
@@ -1104,10 +1106,8 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
 
   ST_LoadCrosshair();
 
-  // A top-down camera looks down while the player's weapons deliberately
-  // keep their normal gameplay pitch. Projecting that weapon trace through
-  // the camera can therefore put the reticle off-screen (or suppress it).
-  // Always provide a centered, visible reticle for this gameplay mode.
+  // Top-down uses the same targeting trace as third-person, but supplies a
+  // fallback image even when the user normally keeps crosshairs disabled.
   if (topDownCamera && CrosshairImage == nullptr) {
     ST_LoadCrosshair(1, true);
   }
@@ -1127,7 +1127,30 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
   double ypos = viewheight / 2 + viewwindowy;
   int colorOverride = -1;
   double depthScale = 1.0;
-  if (!topDownCamera && ST_IsThirdPersonCrosshairActive(CPlayer) && chase_crosshair_mode > 0) {
+  if (topDownCamera) {
+    // The top-down camera follows the real player yaw, so the fixed center
+    // reticle is the same horizontal direction used by the weapon trace.
+    // Tracing only supplies useful hit feedback; it never moves the reticle.
+    FLineTraceData trace = {};
+    double traceX = 0.0;
+    double traceY = 0.0;
+    if (ST_GetThirdPersonCrosshairPosition(CPlayer, traceX, traceY, trace)) {
+      if (trace.HitActor != nullptr && trace.HitActor->health > 0 &&
+          (trace.HitActor->flags & MF_SHOOTABLE)) {
+        if (CPlayer->mo->IsFriend(trace.HitActor)) {
+          colorOverride = int(chase_crosshair_allycolor);
+        } else if (trace.HitActor->IsHostile(CPlayer->mo) ||
+                   (trace.HitActor->flags & MF_COUNTKILL)) {
+          colorOverride = int(chase_crosshair_enemycolor);
+        }
+      }
+
+      if (chase_crosshair_depthcue) {
+        const double distanceFactor = clamp(trace.Distance / 2048.0, 0.0, 1.0);
+        depthScale = 1.18 - distanceFactor * 0.38;
+      }
+    }
+  } else if (ST_IsThirdPersonCrosshairActive(CPlayer) && chase_crosshair_mode > 0) {
     FLineTraceData trace = {};
     if (!ST_GetThirdPersonCrosshairPosition(CPlayer, xpos, ypos, trace)) {
       return;
