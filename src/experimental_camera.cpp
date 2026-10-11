@@ -147,12 +147,6 @@ CUSTOM_CVAR(Float, cam_topdown_distance, 160.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFI
 	if (self != clampedDistance) self = clampedDistance;
 }
 
-CUSTOM_CVAR(Float, cam_topdown_pitch, 62.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-{
-	const float clampedPitch = clamp<float>(self, 30.0f, 89.0f);
-	if (self != clampedPitch) self = clampedPitch;
-}
-
 CUSTOM_CVAR(Float, cam_topdown_fov, 70.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedFov = clamp<float>(self, 20.0f, 120.0f);
@@ -206,7 +200,7 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 	}
 
 	constexpr double CmdToDegrees = 360.0 / 65536.0;
-	PhotoCamera.Angles.Yaw = (PhotoCamera.Angles.Yaw - DAngle::fromDeg(cmd.yaw * CmdToDegrees)).Normalized180();
+	PhotoCamera.Angles.Yaw = (PhotoCamera.Angles.Yaw + DAngle::fromDeg(cmd.yaw * CmdToDegrees)).Normalized180();
 	PhotoCamera.Angles.Pitch = DAngle::fromDeg(clamp<double>(
 		PhotoCamera.Angles.Pitch.Degrees() - cmd.pitch * CmdToDegrees, -89.0, 89.0));
 
@@ -262,6 +256,13 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 
 	if (ECamera_IsTopDownModeActive())
 	{
+		// Start at the player rather than at a pre-existing chase/view-offset
+		// position. This makes the experimental mode deterministic when it is
+		// enabled from any normal camera state.
+		const DVector3 focus = viewPoint.ActorPos;
+		viewPoint.Pos = focus;
+		viewPoint.sector = viewPoint.ViewLevel->PointInRenderSubsector(focus)->sector;
+
 		const DAngle yaw = viewPoint.Angles.Yaw;
 		const DVector2 forward = yaw.ToVector();
 		const DVector3 offset = {
@@ -274,7 +275,20 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 		{
 			R_OffsetView(viewPoint, offset / offsetLength, offsetLength, 8.0);
 		}
-		viewPoint.Angles = { yaw, DAngle::fromDeg(cam_topdown_pitch), nullAngle };
+
+		// R_OffsetView may shorten the boom to keep the camera out of walls and
+		// ceilings. Aim from its actual, collision-resolved position back to the
+		// player, so framing remains stable instead of retaining an angle that
+		// only matched the requested (and possibly blocked) camera position.
+		const DVector3 toFocus = focus - viewPoint.Pos;
+		if (!toFocus.isZero())
+		{
+			viewPoint.Angles = { toFocus.Angle(), toFocus.Pitch(), nullAngle };
+		}
+		else
+		{
+			viewPoint.Angles = { yaw, nullAngle, nullAngle };
+		}
 		viewPoint.showviewer = true;
 		viewPoint.bForceNoViewer = false;
 		return true;

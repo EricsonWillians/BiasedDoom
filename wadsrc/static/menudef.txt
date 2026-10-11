@@ -785,7 +785,7 @@ OptionValue "ExperimentalCameraModes"
 {
 	0, "Off"
 	1, "Photo Mode / Free Camera"
-	2, "Top-Down (GTA2-style)"
+	2, "Top-Down"
 }
 
 DefaultOptionMenu
@@ -1899,10 +1899,9 @@ OptionMenu "ExperimentalCameraOptions" protected
 	Slider "Photo field of view",                "cam_photo_fov", 20.0, 120.0, 1.0, 0
 	Option "Show HUD in Photo Mode",             "cam_photo_showhud", "OnOff"
 	StaticText ""
-	StaticText "Top-Down (GTA2-style)"
+	StaticText "Top-Down"
 	Slider "Camera height",                      "cam_topdown_height", 64.0, 1024.0, 16.0, 0
 	Slider "Follow distance",                    "cam_topdown_distance", 0.0, 768.0, 8.0, 0
-	Slider "Downward angle",                     "cam_topdown_pitch", 30.0, 89.0, 1.0, 0
 	Slider "Top-down field of view",             "cam_topdown_fov", 20.0, 120.0, 1.0, 0
 }
 

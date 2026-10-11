@@ -45,6 +45,7 @@
 #include "texturemanager.h"
 #include "basics.h"
 #include "d_net.h"
+#include "experimental_camera.h"
 
 #include "hw_models.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
@@ -428,14 +429,19 @@ bool HWSprite::CalculateVertices(HWDrawInfo* di, FVector3* v, DVector3* vp)
 	const bool AngledRoll = (actor != nullptr && actor->renderflags2 & RF2_ANGLEDROLL);
 
 	// [BB] Billboard stuff
-	const bool drawWithXYBillboard = ((particle && gl_billboard_particles && !(particle->flags & SPF_NO_XY_BILLBOARD)) || (!(actor && actor->renderflags & RF_FORCEYBILLBOARD)
-		//&& di->mViewActor != nullptr
-		&& (gl_billboard_mode == 1 || (actor && actor->renderflags & RF_FORCEXYBILLBOARD)))) && !AngledRoll;
+	const bool topDownCamera = ECamera_IsTopDownModeActive();
+	const bool drawWithXYBillboard =
+		(topDownCamera
+			|| (particle && gl_billboard_particles && !(particle->flags & SPF_NO_XY_BILLBOARD))
+			|| (!(actor && actor->renderflags & RF_FORCEYBILLBOARD)
+				//&& di->mViewActor != nullptr
+				&& (gl_billboard_mode == 1 || (actor && actor->renderflags & RF_FORCEXYBILLBOARD))))
+		&& !AngledRoll;
 
-	const bool drawBillboardFacingCamera = hw_force_cambbpref ? gl_billboard_faces_camera :
+	const bool drawBillboardFacingCamera = topDownCamera || (hw_force_cambbpref ? gl_billboard_faces_camera :
 		gl_billboard_faces_camera
 		|| ((actor && (!(actor->renderflags2 & RF2_BILLBOARDNOFACECAMERA) && (actor->renderflags2 & RF2_BILLBOARDFACECAMERA)))
-		|| (particle && particle->texture.isValid() && (!(particle->flags & SPF_NOFACECAMERA) && (particle->flags & SPF_FACECAMERA))));
+		|| (particle && particle->texture.isValid() && (!(particle->flags & SPF_NOFACECAMERA) && (particle->flags & SPF_FACECAMERA)))));
 
 	// [Nash] has +ROLLSPRITE
 	const bool drawRollSpriteActor = (actor != nullptr && actor->renderflags & RF_ROLLSPRITE);
@@ -1424,7 +1430,7 @@ void HWSprite::Process(HWDrawInfo *di, AActor* thing, sector_t * sector, area_t 
 
 	particle = nullptr;
 
-	const bool drawWithXYBillboard = (!(actor->renderflags & RF_FORCEYBILLBOARD)
+	const bool drawWithXYBillboard = ECamera_IsTopDownModeActive() || (!(actor->renderflags & RF_FORCEYBILLBOARD)
 		&& (actor->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE
 		&& (gl_billboard_mode == 1 || actor->renderflags & RF_FORCEXYBILLBOARD));
 

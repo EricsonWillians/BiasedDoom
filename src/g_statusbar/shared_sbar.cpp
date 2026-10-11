@@ -1097,11 +1097,20 @@ static bool ST_GetThirdPersonCrosshairPosition(player_t *player, double &xpos,
 }
 
 void DBaseStatusBar::DrawCrosshair(double ticFrac) {
-  if (!crosshairon) {
+  const bool topDownCamera = ECamera_IsTopDownModeActive();
+  if (!crosshairon && !topDownCamera) {
     return;
   }
 
   ST_LoadCrosshair();
+
+  // A top-down camera looks down while the player's weapons deliberately
+  // keep their normal gameplay pitch. Projecting that weapon trace through
+  // the camera can therefore put the reticle off-screen (or suppress it).
+  // Always provide a centered, visible reticle for this gameplay mode.
+  if (topDownCamera && CrosshairImage == nullptr) {
+    ST_LoadCrosshair(1, true);
+  }
 
   // Don't draw the crosshair if there is none
   if (gamestate == GS_TITLELEVEL || r_viewpoint.camera == nullptr ||
@@ -1118,7 +1127,7 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
   double ypos = viewheight / 2 + viewwindowy;
   int colorOverride = -1;
   double depthScale = 1.0;
-  if (ST_IsThirdPersonCrosshairActive(CPlayer) && chase_crosshair_mode > 0) {
+  if (!topDownCamera && ST_IsThirdPersonCrosshairActive(CPlayer) && chase_crosshair_mode > 0) {
     FLineTraceData trace = {};
     if (!ST_GetThirdPersonCrosshairPosition(CPlayer, xpos, ypos, trace)) {
       return;

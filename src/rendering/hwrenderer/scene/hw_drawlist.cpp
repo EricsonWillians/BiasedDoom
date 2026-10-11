@@ -28,6 +28,7 @@
 #include "r_sky.h"
 #include "r_utility.h"
 #include "doomstat.h"
+#include "experimental_camera.h"
 #include "actor.h"
 #include "g_levellocals.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
@@ -521,12 +522,13 @@ void HWDrawList::SortSpriteIntoWall(HWDrawInfo *di, SortNode * head,SortNode * s
 	}
 	else
 	{
-		const bool drawWithXYBillboard = ((ss->particle && gl_billboard_particles) || (!(ss->actor && ss->actor->renderflags & RF_FORCEYBILLBOARD)
+		const bool topDownCamera = ECamera_IsTopDownModeActive();
+		const bool drawWithXYBillboard = topDownCamera || ((ss->particle && gl_billboard_particles) || (!(ss->actor && ss->actor->renderflags & RF_FORCEYBILLBOARD)
 			&& (gl_billboard_mode == 1 || (ss->actor && ss->actor->renderflags & RF_FORCEXYBILLBOARD))));
 
-		const bool drawBillboardFacingCamera = hw_force_cambbpref ? gl_billboard_faces_camera :
+		const bool drawBillboardFacingCamera = topDownCamera || (hw_force_cambbpref ? gl_billboard_faces_camera :
 			(gl_billboard_faces_camera && (ss->actor && !(ss->actor->renderflags2 & RF2_BILLBOARDNOFACECAMERA)))
-			|| (ss->actor && ss->actor->renderflags2 & RF2_BILLBOARDFACECAMERA);
+			|| (ss->actor && ss->actor->renderflags2 & RF2_BILLBOARDFACECAMERA));
 
 		// [Nash] has +ROLLSPRITE
 		const bool rotated = (ss->actor != nullptr && ss->actor->renderflags & (RF_ROLLSPRITE | RF_WALLSPRITE | RF_FLATSPRITE));
@@ -958,4 +960,3 @@ void HWDrawList::DrawSorted(HWDrawInfo *di, FRenderState &state)
 	state.EnableClipDistance(2, false);
 	state.ClearClipSplit();
 }
-

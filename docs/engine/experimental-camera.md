@@ -14,10 +14,11 @@ free-flight speed, and the top-down framing controls.
   input is consumed while the mode is active; the game continues to run. The
   HUD is hidden by default for clean captures and can be restored with
   `cam_photo_showhud`.
-- **Top-Down (GTA2-style)** (`O` by default, or `toggletopdowncamera`) follows
-  the player from a high, downward-looking third-person view. It leaves normal
-  player controls active and can be tuned with `cam_topdown_height`,
-  `cam_topdown_distance`, and `cam_topdown_pitch`.
+- **Top-Down** (`O` by default, or `toggletopdowncamera`) follows the player
+  from a high, downward-looking third-person view. It keeps the player framed
+  even when the collision-safe camera boom is shortened, leaves normal player
+  controls active, and supplies a center reticle. It can be tuned with
+  `cam_topdown_height` and `cam_topdown_distance`.
 
 `cam_experimental_mode` selects **Off** (0), **Photo Mode / Free Camera** (1),
 or **Top-Down** (2). These commands and the menu options are unavailable in
