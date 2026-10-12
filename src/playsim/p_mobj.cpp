@@ -93,6 +93,7 @@
 #include "p_local.h"
 #include "p_maputl.h"
 #include "p_spec.h"
+#include "experimental_camera.h"
 #include "p_terrain.h"
 #include "r_sky.h"
 #include "r_utility.h"
@@ -8225,7 +8226,7 @@ AActor *P_SpawnPlayerMissile (AActor *source, double x, double y, double z,
 	bool weaponDisablesAutoaim = noautoaim ||
 		(!(aimflags & ALF_NOWEAPONCHECK) && source->player && source->player->ReadyWeapon &&
 		(source->player->ReadyWeapon->IntVar(NAME_WeaponFlags) & WIF_NOAUTOAIM));
-	if (playerDisablesAutoaim || weaponDisablesAutoaim)
+	if (ECamera_UsesTopDownDirectAim(source) || playerDisablesAutoaim || weaponDisablesAutoaim)
 	{
 		// Keep exactly the same angle and pitch as the player's own aim
 		an = angle;

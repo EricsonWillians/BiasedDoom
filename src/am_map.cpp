@@ -3069,8 +3069,20 @@ void DAutomap::drawThings ()
 		t = sec.thinglist;
 		while (t)
 		{
-			if (am_cheat > 0 || !(t->flags6 & MF6_NOTONAUTOMAP)
-				|| (am_thingrenderstyles && !(t->renderflags & RF_INVISIBLE) && !(t->flags6 & MF6_NOTONAUTOMAP)))
+			// Players have their own marker pass. Drawing them again here made a
+			// second actor sprite visible whenever the player scale differed from
+			// the general thing scale.
+			if (TopDownCamera && t->player != nullptr)
+			{
+				t = t->snext;
+				continue;
+			}
+
+			const bool shouldDrawThing = am_cheat > 0
+				|| !(t->flags6 & MF6_NOTONAUTOMAP)
+				|| (am_thingrenderstyles && !(t->renderflags & RF_INVISIBLE)
+					&& !(t->flags6 & MF6_NOTONAUTOMAP));
+			if (shouldDrawThing)
 			{
 				DVector3 fracPos = t->InterpolatedPosition(r_viewpoint.TicFrac);
 				FVector2 pos = FVector2(float(fracPos.X),float(fracPos.Y)) + FVector2(t->Level->Displacements.getOffset(sec.PortalGroup, MapPortalGroup)) + FVector2(t->AutomapOffsets);

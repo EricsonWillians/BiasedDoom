@@ -46,6 +46,7 @@
 #include "g_levellocals.h"
 #include "vm.h"
 #include "sbar.h"
+#include "experimental_camera.h"
 
 
 // MACROS ------------------------------------------------------------------
@@ -1245,6 +1246,18 @@ DEFINE_ACTION_FUNCTION(AActor, A_ClearOverlays)
 
 DAngle P_BulletSlope (AActor *mo, FTranslatedLineTarget *pLineTarget, int aimflags)
 {
+	// Top-Down direct aim is deliberately local-player-only. It lets mouse,
+	// right-stick, and gyro input define the exact hit ray while leaving all
+	// monster and remote-player targeting rules untouched.
+	if (ECamera_UsesTopDownDirectAim(mo))
+	{
+		if (pLineTarget != nullptr)
+		{
+			*pLineTarget = {};
+		}
+		return mo->Angles.Pitch;
+	}
+
 	int i;
 	DAngle an;
 	DAngle pitch;

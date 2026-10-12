@@ -1915,6 +1915,7 @@ OptionMenu "ExperimentalCameraOptions" protected
 	Slider "Player marker size",                 "cam_topdown_player_scale", 0.25, 4.0, 0.05, 2
 	Slider "Monster sprite size",                "cam_topdown_monster_scale", 0.25, 4.0, 0.05, 2
 	Slider "Thing / pickup sprite size",         "cam_topdown_thing_scale", 0.25, 4.0, 0.05, 2
+	Option "Direct mouse / stick aim",            "cam_topdown_direct_aim", "OnOff"
 	Option "Exact impact reticle",                "cam_topdown_crosshair", "OnOff"
 	Option "Exact aim ray",                       "cam_topdown_aim_guide", "OnOff"
 	Option "Free-pan camera",                     "cam_topdown_freepan", "OnOff"

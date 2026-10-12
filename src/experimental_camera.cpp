@@ -59,6 +59,7 @@ CUSTOM_CVAR(Float, cam_topdown_thing_scale, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONF
 }
 
 CVAR(Bool, cam_topdown_crosshair, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, cam_topdown_direct_aim, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, cam_topdown_freepan, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CUSTOM_CVAR(Float, cam_topdown_pan_speed, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -314,6 +315,12 @@ bool ECamera_IsTopDownModeActive()
 	return cam_experimental_mode == ECM_TopDown && IsExperimentalCameraAllowed();
 }
 
+bool ECamera_UsesTopDownDirectAim(const AActor* actor)
+{
+	return cam_topdown_direct_aim && ECamera_IsTopDownModeActive()
+		&& actor != nullptr && actor == players[consoleplayer].mo;
+}
+
 bool ECamera_IsThirdPersonActive()
 {
 	return ECamera_IsPhotoModeActive();
@@ -345,11 +352,10 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 		}
 
 		AActor* const player = players[consoleplayer].mo;
-		// The full-screen map is north-up, while yaw remains real gameplay aim.
-		// Keep vertical aiming level so its input cannot imply a 3D screen target.
-		player->Angles.Pitch = nullAngle;
-		cmd.pitch = 0;
-		cmd.roll = 0;
+		// The full-screen map is north-up, while mouse, right-stick, and gyro
+		// look remain unmodified gameplay aim. They all reach this command before
+		// the movement remap below, so Top-Down never needs a device-specific
+		// control path.
 
 		// Re-express movement in the player's basis after turning it into the
 		// stable screen/map basis. W always means screen-up, S screen-down, and

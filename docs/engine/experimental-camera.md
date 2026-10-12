@@ -18,9 +18,12 @@ select and tune a mode.
   automap's native coordinate transform for floors, lines, and the player
   marker, so the displayed player position is the same authoritative position
   used by the Automap. It works on every renderer, follows the player, and
-  keeps W/A/S/D screen-relative while mouse/stick yaw still turns and aims the
-  player. Pitch is locked level for classic horizontal weapon aiming. Choose
-  the exact-position **Arrow** or the actor's animated **Player sprite** with
+  keeps W/A/S/D screen-relative while mouse, right-stick, and gyro look still
+  turn and aim the player. **Direct mouse / stick aim** is enabled by default:
+  standard hitscan and player-missile helpers use the raw local aim ray rather
+  than pulling it onto an auto-aim target, so the reticle, shot, mouse, and
+  controller look input agree. Turn it off to restore ordinary autoaim.
+  Choose the exact-position **Arrow** or the actor's animated **Player sprite** with
   `cam_topdown_player_marker`. Zoom, colors, and line style stay under the
   standard Automap options, which the presentation honors; normal Automap
   rotation is intentionally ignored so this view stays north-up. Top-Down is

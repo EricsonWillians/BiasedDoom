@@ -2,11 +2,15 @@
 
 struct FRenderViewpoint;
 struct usercmd_t;
+class AActor;
 
 // Local-only presentation cameras. They deliberately never create or move an
 // actor, so enabling one cannot affect saves, demos, or network simulation.
 bool ECamera_IsPhotoModeActive();
 bool ECamera_IsTopDownModeActive();
+// True only for the local player while the opt-in direct Top-Down aim model
+// is active. Weapon helpers use this to keep their shot ray on raw input.
+bool ECamera_UsesTopDownDirectAim(const AActor* actor);
 bool ECamera_IsThirdPersonActive();
 bool ECamera_HidesHUD();
 
