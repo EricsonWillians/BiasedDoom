@@ -23,7 +23,12 @@ select and tune a mode.
   the exact-position **Arrow** or the actor's animated **Player sprite** with
   `cam_topdown_player_marker`. Zoom, colors, and line style stay under the
   standard Automap options, which the presentation honors; normal Automap
-  rotation is intentionally ignored so this view stays north-up.
+  rotation is intentionally ignored so this view stays north-up. Top-Down is
+  intentionally more than the normal Automap in full-screen mode: it always
+  draws non-hidden actor and pickup markers plus actionable special
+  boundaries (including doors), while retaining the user's Automap colors,
+  zoom, and marker-style preference. Explicit mapper `ML_DONTDRAW` and actor
+  `NOTONAUTOMAP` opt-outs retain their normal Automap treatment.
 
 `cam_experimental_mode` selects **Off** (0), **Photo Mode / Free Camera** (1),
 or **Top-Down** (2). These commands and the menu options are unavailable in

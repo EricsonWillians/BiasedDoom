@@ -13,6 +13,7 @@
 #include "c_console.h"
 #include "c_dispatch.h"
 #include "d_main.h"
+#include "d_event.h"
 #include "d_player.h"
 #include "d_protocol.h"
 #include "doomdef.h"
@@ -72,6 +73,10 @@ struct FTopDownCameraState
 FTopDownCameraState TopDownCamera;
 
 constexpr double CmdToDegrees = 360.0 / 65536.0;
+// Keep this in lockstep with PlayerPawn.TURN180_TICKS. This is used only to
+// express this tic's screen-relative movement in the basis that the player
+// pawn will use when it processes the command.
+constexpr int Turn180Tics = (TICRATE / 4) + 1;
 
 bool IsExperimentalCameraAllowed()
 {
@@ -163,6 +168,24 @@ void InitializeTopDownCamera()
 	// The automap is north-up. Yaw 90 maps W to screen-up in Doom's XY basis.
 	TopDownCamera.Yaw = DAngle::fromDeg(90.0);
 	TopDownCamera.Initialized = true;
+}
+
+DAngle GetPlayerYawForTopDownMovement(const AActor* player, const usercmd_t& cmd)
+{
+	const player_t& playerInfo = players[consoleplayer];
+	const bool startsTurn180 = (cmd.buttons & BT_TURN180) != 0
+		&& (playerInfo.oldbuttons & BT_TURN180) == 0;
+
+	// PlayerPawn::HandleMovement starts a 180-degree turn before it calls
+	// MovePlayer. MovePlayer then ignores cmd.yaw and advances the yaw by one
+	// fixed turn step. Projecting against cmd.yaw during that transition makes
+	// the movement basis briefly point to the wrong side of the north-up map.
+	if (playerInfo.turnticks != 0 || startsTurn180)
+	{
+		return player->Angles.Yaw + DAngle::fromDeg(180.0 / Turn180Tics);
+	}
+
+	return player->Angles.Yaw + DAngle::fromDeg(double(cmd.yaw) * CmdToDegrees);
 }
 
 void EnsureTopDownAutomap()
@@ -303,8 +326,7 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 		// Re-express movement in the player's basis after turning it into the
 		// stable screen/map basis. W always means screen-up, S screen-down, and
 		// A/D remain screen-left/right regardless of weapon facing.
-		const DAngle playerYaw = player->Angles.Yaw
-			+ DAngle::fromDeg(double(cmd.yaw) * CmdToDegrees);
+		const DAngle playerYaw = GetPlayerYawForTopDownMovement(player, cmd);
 		const DVector2 cameraForward = TopDownCamera.Yaw.ToVector();
 		const DVector2 cameraRight = { cameraForward.Y, -cameraForward.X };
 		const DVector2 requestedMove = cameraForward * double(cmd.forwardmove)

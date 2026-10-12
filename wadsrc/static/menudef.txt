@@ -1908,8 +1908,9 @@ OptionMenu "ExperimentalCameraOptions" protected
 	StaticText "Top-Down"
 	StaticText "Textured Automap presentation"
 	StaticText "North-up; follows the real player position"
+	StaticText "Shows actors, pickups, and special boundaries"
 	Option "Player marker",                      "cam_topdown_player_marker", "TopDownPlayerMarkers"
-	StaticText "Use Automap options for zoom and line style"
+	StaticText "Use Automap options for zoom, colors, and marker style"
 }
 
 OptionMenu "SWROptions" protected

@@ -2494,9 +2494,9 @@ bool AM_isExitBoundary (line_t& line)
 	});
 }
 
-bool AM_isTriggerBoundary (line_t &line)
+bool AM_isTriggerBoundary(line_t &line, bool includeDoors)
 {
-	return am_showtriggerlines == 1? AM_checkSpecialBoundary(line, [](int special, int *)
+	return !includeDoors ? AM_checkSpecialBoundary(line, [](int special, int *)
 	{
 		FLineSpecial *spec = P_GetLineSpecialInfo(special);
 		return spec != nullptr
@@ -2618,7 +2618,10 @@ void DAutomap::drawWalls (bool allmap)
 				rotatePoint(&l.b.x, &l.b.y);
 			}
 
-			if (am_cheat != 0 || (line.flags & ML_MAPPED))
+			// Top-Down is a gameplay presentation rather than a discovery aid.
+			// It deliberately exposes the useful map semantics without changing
+			// am_cheat or mutating the user's normal Automap state.
+			if (TopDownCamera || am_cheat != 0 || (line.flags & ML_MAPPED))
 			{
 				if ((line.flags & ML_DONTDRAW) && (am_cheat == 0 || am_cheat >= 4))
 				{
@@ -2681,11 +2684,11 @@ void DAutomap::drawWalls (bool allmap)
 						drawMline(&l, AMColors.LockedColor);  // locked special
 					}
 				}
-				else if (am_showtriggerlines
+				else if ((TopDownCamera || am_showtriggerlines)
 					&& AMColors.isValid(AMColors.SpecialWallColor)
-					&& AM_isTriggerBoundary(line))
+					&& AM_isTriggerBoundary(line, TopDownCamera || am_showtriggerlines != 1))
 				{
-					drawMline(&l, AMColors.SpecialWallColor);	// wall with special non-door action the player can do
+					drawMline(&l, AMColors.SpecialWallColor);	// player-activated special boundary
 				}
 				else if (line.backsector == nullptr)
 				{
@@ -3360,8 +3363,11 @@ void DAutomap::Drawer (int bottom)
 	// Change x,y location
 	changeWindowLoc();
 
-	bool allmap = (Level->flags2 & LEVEL2_ALLMAP) != 0;
-	bool allthings = allmap && players[consoleplayer].mo->FindInventory(NAME_PowerScanner, true) != nullptr;
+	// Unlike the ordinary Automap, Top-Down is an in-world navigation view. It
+	// always shows the map's traversable geometry and actor markers, while the
+	// normal Automap keeps its discovery and scanner rules unchanged.
+	bool allmap = TopDownCamera || (Level->flags2 & LEVEL2_ALLMAP) != 0;
+	bool allthings = TopDownCamera || (allmap && players[consoleplayer].mo->FindInventory(NAME_PowerScanner, true) != nullptr);
 
 	if (am_portaloverlay)
 	{
@@ -3402,7 +3408,7 @@ void DAutomap::Drawer (int bottom)
 	drawPlayers();
 	if (G_SkillProperty(SKILLP_EasyKey) || am_showkeys_always)
 		drawKeys();
-	if ((am_cheat >= 2 && am_cheat != 4) || allthings)
+	if (TopDownCamera || (am_cheat >= 2 && am_cheat != 4) || allthings)
 		drawThings();
 
 	drawAuthorMarkers();
