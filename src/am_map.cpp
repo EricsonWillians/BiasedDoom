@@ -33,9 +33,6 @@
 #include "g_level.h"
 #include "st_stuff.h"
 #include "p_local.h"
-#include "p_pspr.h"
-#include "p_trace.h"
-#include "p_linetracedata.h"
 #include "p_lnspec.h"
 #include "filesystem.h"
 #include "a_sharedglobal.h"
@@ -151,6 +148,9 @@ EXTERN_CVAR(Bool, sv_cheats)
 EXTERN_CVAR(Bool, cam_topdown_crosshair)
 EXTERN_CVAR(Bool, cam_topdown_aim_guide)
 EXTERN_CVAR(Bool, cam_topdown_freepan)
+EXTERN_CVAR(Bool, cam_topdown_direct_aim)
+EXTERN_CVAR(Color, cam_topdown_crosshair_color)
+EXTERN_CVAR(Float, cam_topdown_crosshair_thickness)
 EXTERN_CVAR(Float, cam_topdown_pan_speed)
 EXTERN_CVAR(Float, cam_topdown_player_scale)
 EXTERN_CVAR(Float, cam_topdown_monster_scale)
@@ -932,7 +932,7 @@ class DAutomap :public DAutomapBase
 	double scale_ftom;
 
 	int bigstate;
-	int MapPortalGroup;
+	int MapPortalGroup = 0;
 
 	// Disable the ML_DONTDRAW line flag if x% of all lines in a map are flagged with it
 	// (To counter annoying mappers who think they are smart by making the automap unusable)
@@ -979,7 +979,10 @@ class DAutomap :public DAutomapBase
 	// coordinates used for floors, walls, and actor markers.
 	bool TopDownCamera = false;
 	bool TopDownPlayerSprite = false;
+	bool TopDownFollowPlayer = true;
 	DVector2 TopDownPanInput = {};
+	DVector2 TopDownAimCursor = {};
+	bool TopDownAimCursorInitialized = false;
 
 	// old stuff for recovery later
 	double old_m_w, old_m_h;
@@ -1018,6 +1021,8 @@ class DAutomap :public DAutomapBase
 	{
 		return int(f_h - MTOF((y)-m_y)/* + f_y*/);
 	}
+
+	DVector2 toTopDownMapPortalGroup(DVector2 position) const;
 
 	void calcMinMaxMtoF();
 
@@ -1074,6 +1079,8 @@ public:
 	void startDisplay() override;
 	void SetTopDownCamera(bool enabled, bool playerSprite) override;
 	void SetTopDownCameraPan(const DVector2 &movement) override;
+	bool UpdateTopDownAim(AActor* player, usercmd_t& cmd, const DVector2& pointerDelta) override;
+	void ResetTopDownCameraFollow() override;
 
 	bool IsRotating() const
 	{
@@ -1107,23 +1114,105 @@ DVector2 DAutomap::GetPosition()
 
 void DAutomap::SetTopDownCamera(bool enabled, bool playerSprite)
 {
+	const bool entering = enabled && !TopDownCamera;
 	TopDownCamera = enabled;
 	TopDownPlayerSprite = enabled && playerSprite;
-	if (!enabled)
+	if (entering)
 	{
-		TopDownPanInput = {};
-	}
-	if (enabled)
-	{
-		// Recenter on the exact interpolated player position on the first frame.
+		TopDownFollowPlayer = !cam_topdown_freepan;
+		TopDownAimCursorInitialized = false;
+		// Recenter on the exact player position on the first Top-Down frame.
 		// Regular follow state remains untouched for when the mode is exited.
 		f_oldloc.x = FLT_MAX;
+	}
+	else if (!enabled)
+	{
+		TopDownPanInput = {};
+		TopDownFollowPlayer = true;
+		TopDownAimCursorInitialized = false;
 	}
 }
 
 void DAutomap::SetTopDownCameraPan(const DVector2 &movement)
 {
 	TopDownPanInput = TopDownCamera ? movement : DVector2{};
+}
+
+DVector2 DAutomap::toTopDownMapPortalGroup(DVector2 position) const
+{
+	if (sector_t* const sector = Level->PointInSector(position))
+	{
+		position += Level->Displacements.getOffset(sector->PortalGroup, MapPortalGroup);
+	}
+	return position;
+}
+
+bool DAutomap::UpdateTopDownAim(AActor* player, usercmd_t& cmd, const DVector2& pointerDelta)
+{
+	if (!TopDownCamera || !cam_topdown_direct_aim || player == nullptr || player->Level != Level
+		|| f_w <= 0 || f_h <= 0 || scale_ftom <= 0.0)
+	{
+		return false;
+	}
+
+	const DVector2 playerPosition = toTopDownMapPortalGroup(player->Pos().XY());
+	const DVector2 playerScreenPosition =
+	{
+		double(f_x + CXMTOF(playerPosition.X)),
+		double(f_y + CYMTOF(playerPosition.Y)),
+	};
+	if (!TopDownAimCursorInitialized)
+	{
+		TopDownAimCursor = playerScreenPosition;
+		TopDownAimCursorInitialized = true;
+	}
+
+	TopDownAimCursor += pointerDelta;
+	// Keyboard look commands have already been quantized into this ticcmd.
+	// Keep them useful as a secondary cursor input without giving them a
+	// device-specific branch.
+	constexpr double KeyboardLookPixels = 0.025;
+	TopDownAimCursor.X -= double(cmd.yaw) * KeyboardLookPixels;
+	TopDownAimCursor.Y -= double(cmd.pitch) * KeyboardLookPixels;
+	TopDownAimCursor.X = clamp<double>(TopDownAimCursor.X, f_x, f_x + f_w - 1.0);
+	TopDownAimCursor.Y = clamp<double>(TopDownAimCursor.Y, f_y, f_y + f_h - 1.0);
+
+	const DVector2 targetPosition =
+	{
+		m_x + FTOM(TopDownAimCursor.X - f_x),
+		m_y + FTOM(f_h - (TopDownAimCursor.Y - f_y)),
+	};
+	const DVector2 toTarget = targetPosition - playerPosition;
+	if (toTarget.LengthSquared() > 0.0001)
+	{
+		const DAngle desiredYaw = toTarget.Angle();
+		const double turnDegrees = (desiredYaw - player->Angles.Yaw).Normalized180().Degrees();
+		cmd.yaw = short(clamp<double>(round(turnDegrees * (65536.0 / 360.0)), -32767.0, 32767.0));
+	}
+	else
+	{
+		cmd.yaw = 0;
+	}
+
+	// Pointer aim is planar. Flatten any first-person pitch in the same tic so
+	// hitscan and player missiles use the map cursor's horizontal direction.
+	const double pitchDegrees = player->Angles.Pitch.Normalized180().Degrees();
+	cmd.pitch = short(clamp<double>(round(pitchDegrees * (65536.0 / 360.0)), -32767.0, 32767.0));
+	cmd.roll = 0;
+	cmd.buttons &= ~BT_TURN180;
+	return true;
+}
+
+void DAutomap::ResetTopDownCameraFollow()
+{
+	if (!TopDownCamera)
+	{
+		return;
+	}
+
+	TopDownFollowPlayer = true;
+	TopDownPanInput = {};
+	f_oldloc.x = FLT_MAX;
 }
 
 //=============================================================================
@@ -3369,7 +3458,7 @@ void DAutomap::drawCrosshair (const AMColor &color)
 
 void DAutomap::drawTopDownAimReticle()
 {
-	if (!cam_topdown_crosshair)
+	if (!cam_topdown_crosshair || !cam_topdown_direct_aim || !TopDownAimCursorInitialized)
 	{
 		return;
 	}
@@ -3380,57 +3469,33 @@ void DAutomap::drawTopDownAimReticle()
 		return;
 	}
 
-	// Use the same auto-aim resolution and trace setup as the engine's
-	// third-person crosshair. This puts the marker on the gameplay ray's true
-	// world impact rather than estimating from the screen centre or camera yaw.
-	FTranslatedLineTarget target = {};
-	const DAngle pitch = P_BulletSlope(player, &target, ALF_PORTALRESTRICT);
-	const DAngle yaw = target.linetarget != nullptr ? target.attackAngleFromSource : player->Angles.Yaw;
-	const double shootOffsetZ = player->Center() - player->Z() + player->AttackOffset();
-	FLineTraceData trace = {};
-	P_LineTrace(player, yaw, PLAYERMISSILERANGE, pitch, TRF_NOSKY, shootOffsetZ, 0.0, 0.0, &trace);
-
-	auto toMapPortalGroup = [this](DVector2 position)
-	{
-		if (sector_t *const sector = Level->PointInSector(position))
-		{
-			position += Level->Displacements.getOffset(sector->PortalGroup, MapPortalGroup);
-		}
-		return position;
-	};
-
-	const DVector2 origin = toMapPortalGroup(player->InterpolatedPosition(r_viewpoint.TicFrac).XY());
-	const DVector2 impact = toMapPortalGroup(trace.HitLocation.XY());
+	const DVector2 origin = toTopDownMapPortalGroup(player->InterpolatedPosition(r_viewpoint.TicFrac).XY());
 	const int originX = f_x + CXMTOF(origin.X);
 	const int originY = f_y + CYMTOF(origin.Y);
-	const int impactX = f_x + CXMTOF(impact.X);
-	const int impactY = f_y + CYMTOF(impact.Y);
-	if (impactX < f_x || impactX >= f_x + f_w || impactY < f_y || impactY >= f_y + f_h)
-	{
-		return;
-	}
+	const int cursorX = int(round(TopDownAimCursor.X));
+	const int cursorY = int(round(TopDownAimCursor.Y));
 
-	const uint32_t color = AMColors[AMColors.XHairColor].RGB;
+	const uint32_t color = uint32_t(cam_topdown_crosshair_color) | MAKEARGB(255, 0, 0, 0);
 	if (cam_topdown_aim_guide)
 	{
-		twod->AddLine(DVector2(originX, originY), DVector2(impactX, impactY), nullptr, color, 112);
+		twod->AddLine(DVector2(originX, originY), DVector2(cursorX, cursorY), nullptr, color, 112);
 	}
 
-	// Black underlay keeps the exact point legible over bright floors, sprites,
-	// and walls. The four open arms leave the impact pixel unobscured.
+	// Black underlay keeps the pointer legible over bright floors, sprites, and
+	// walls. The four open arms leave the target pixel unobscured.
 	constexpr int OuterRadius = 11;
 	constexpr int InnerRadius = 3;
 	constexpr uint32_t Outline = 0x000000;
-	auto drawReticleArms = [this, impactX, impactY, OuterRadius, InnerRadius](uint32_t armColor, double thickness, uint8_t alpha)
+	auto drawReticleArms = [this, cursorX, cursorY, OuterRadius, InnerRadius](uint32_t armColor, double thickness, uint8_t alpha)
 	{
-		twod->AddThickLine(DVector2(impactX - OuterRadius, impactY), DVector2(impactX - InnerRadius, impactY), thickness, armColor, alpha);
-		twod->AddThickLine(DVector2(impactX + InnerRadius, impactY), DVector2(impactX + OuterRadius, impactY), thickness, armColor, alpha);
-		twod->AddThickLine(DVector2(impactX, impactY - OuterRadius), DVector2(impactX, impactY - InnerRadius), thickness, armColor, alpha);
-		twod->AddThickLine(DVector2(impactX, impactY + InnerRadius), DVector2(impactX, impactY + OuterRadius), thickness, armColor, alpha);
+		twod->AddThickLine(DVector2(cursorX - OuterRadius, cursorY), DVector2(cursorX - InnerRadius, cursorY), thickness, armColor, alpha);
+		twod->AddThickLine(DVector2(cursorX + InnerRadius, cursorY), DVector2(cursorX + OuterRadius, cursorY), thickness, armColor, alpha);
+		twod->AddThickLine(DVector2(cursorX, cursorY - OuterRadius), DVector2(cursorX, cursorY - InnerRadius), thickness, armColor, alpha);
+		twod->AddThickLine(DVector2(cursorX, cursorY + InnerRadius), DVector2(cursorX, cursorY + OuterRadius), thickness, armColor, alpha);
 	};
-	drawReticleArms(Outline, 3.0, 224);
-	drawReticleArms(color, 1.0, 255);
-	twod->AddPixel(impactX, impactY, color);
+	drawReticleArms(Outline, cam_topdown_crosshair_thickness + 2.0, 224);
+	drawReticleArms(color, cam_topdown_crosshair_thickness, 255);
+	twod->AddPixel(cursorX, cursorY, color);
 }
 
 //=============================================================================
@@ -3449,7 +3514,14 @@ void DAutomap::Drawer (int bottom)
 	if (!automapactive)
 		return;
 
-	if ((TopDownCamera && !cam_topdown_freepan) || (!TopDownCamera && am_followplayer))
+	if (TopDownCamera && cam_topdown_freepan)
+	{
+		// Once the user has panned manually, turning Free Pan back off should
+		// hold that framing. Recenter is an explicit separate action.
+		TopDownFollowPlayer = false;
+	}
+
+	if ((TopDownCamera && TopDownFollowPlayer) || (!TopDownCamera && am_followplayer))
 	{
 		doFollowPlayer();
 	}

@@ -786,11 +786,14 @@ void G_BuildTiccmd (usercmd_t *cmd)
 		axis_side = std::clamp(axis_side * scale, -1.f, 1.f);
 	}
 
-	if (axis_pitch != 0)
+	// In Top-Down pointer mode, stick look moves the same virtual map cursor
+	// as the mouse. Keep the usual path untouched for every other mode.
+	const bool topDownPointerStick = ECamera_AddTopDownControllerMotion(-axis_yaw, -axis_pitch);
+	if (axis_pitch != 0 && !topDownPointerStick)
 	{
 		G_AddViewPitch(joyint(axis_pitch * ANALOG_LOOK_BASE * cl_analog_sensitivity_pitch));
 	}
-	if (axis_yaw != 0)
+	if (axis_yaw != 0 && !topDownPointerStick)
 	{
 		G_AddViewAngle(joyint(-ANALOG_LOOK_BASE * cl_analog_sensitivity_yaw * axis_yaw));
 	}
@@ -824,11 +827,12 @@ void G_BuildTiccmd (usercmd_t *cmd)
 	// 65536 view-cmd units per full circle (see PlayerPawn::MovePlayer).
 	float gyroyaw, gyropitch;
 	Joy_GetGyroDelta(&gyroyaw, &gyropitch);
-	if (gyroyaw != 0.0f)
+	const bool topDownPointerGyro = ECamera_AddTopDownGyroMotion(gyroyaw, -gyropitch);
+	if (gyroyaw != 0.0f && !topDownPointerGyro)
 	{
 		G_AddViewAngle(joyint(gyroyaw * (65536.0f / 360.0f) * 65536.0f), true);
 	}
-	if (gyropitch != 0.0f && (buttonMap.ButtonDown(Button_Mlook) || freelook))
+	if (gyropitch != 0.0f && !topDownPointerGyro && (buttonMap.ButtonDown(Button_Mlook) || freelook))
 	{
 		G_AddViewPitch(joyint(gyropitch * (65536.0f / 360.0f) * 65536.0f), true);
 	}

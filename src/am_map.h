@@ -25,8 +25,10 @@
 #include "dobject.h"
 
 struct event_t;
+struct usercmd_t;
 class FSerializer;
 struct FLevelLocals;
+class AActor;
 
 class DAutomapBase : public DObject
 {
@@ -58,6 +60,10 @@ public:
 	virtual void SetTopDownCamera(bool enabled, bool playerSprite) = 0;
 	// North-up map-space movement from the local player's free-pan input.
 	virtual void SetTopDownCameraPan(const DVector2 &movement) = 0;
+	// Updates Top-Down's pointer-style reticle and replaces local look input
+	// with an exact turn toward that map-space cursor.
+	virtual bool UpdateTopDownAim(AActor* player, usercmd_t& cmd, const DVector2& pointerDelta) = 0;
+	virtual void ResetTopDownCameraFollow() = 0;
 
 };
 

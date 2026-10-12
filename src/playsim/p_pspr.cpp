@@ -1246,8 +1246,8 @@ DEFINE_ACTION_FUNCTION(AActor, A_ClearOverlays)
 
 DAngle P_BulletSlope (AActor *mo, FTranslatedLineTarget *pLineTarget, int aimflags)
 {
-	// Top-Down direct aim is deliberately local-player-only. It lets mouse,
-	// right-stick, and gyro input define the exact hit ray while leaving all
+	// Top-Down pointer aim is deliberately local-player-only. It follows the
+	// map cursor's already-resolved horizontal direction while leaving all
 	// monster and remote-player targeting rules untouched.
 	if (ECamera_UsesTopDownDirectAim(mo))
 	{

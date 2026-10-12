@@ -1488,6 +1488,7 @@ OptionMenu "OtherControlsMenu" protected
 	Control    "Toggle Photo Mode / Free Camera", "togglephotomode"
 	Control    "Toggle Top-Down Camera", "toggletopdowncamera"
 	Control    "Toggle Top-Down Free Pan", "toggletopdownpan"
+	Control    "Recenter / Follow Top-Down Camera", "resettopdowncamera"
 	Control    "$CNTRLMNU_COOPSPY"         , "spynext"
 	Control    "$CNTRLMNU_COOPSPYPREV"     , "spyprev"
 	Control    "$CNTRLMNU_COOPSPYCANCEL"   , "spycancel"
@@ -1908,21 +1909,26 @@ OptionMenu "ExperimentalCameraOptions" protected
 	StaticText ""
 	StaticText "Top-Down"
 	StaticText "Textured Automap presentation"
-	StaticText "North-up; follows the real player position"
+	StaticText "North-up; pointer aim follows mouse / stick"
 	StaticText "Shows actors, pickups, and special boundaries"
 	StaticText "Actors use their live animated sprites"
 	Option "Player marker",                      "cam_topdown_player_marker", "TopDownPlayerMarkers"
 	Slider "Player marker size",                 "cam_topdown_player_scale", 0.25, 4.0, 0.05, 2
 	Slider "Monster sprite size",                "cam_topdown_monster_scale", 0.25, 4.0, 0.05, 2
 	Slider "Thing / pickup sprite size",         "cam_topdown_thing_scale", 0.25, 4.0, 0.05, 2
-	Option "Direct mouse / stick aim",            "cam_topdown_direct_aim", "OnOff"
-	Option "Exact impact reticle",                "cam_topdown_crosshair", "OnOff"
-	Option "Exact aim ray",                       "cam_topdown_aim_guide", "OnOff"
+	Option "Pointer aim (mouse / stick)",         "cam_topdown_direct_aim", "OnOff"
+	Option "Top-Down reticle",                    "cam_topdown_crosshair", "OnOff"
+	ColorPicker "Top-Down reticle color",         "cam_topdown_crosshair_color"
+	Slider "Top-Down reticle thickness",          "cam_topdown_crosshair_thickness", 0.5, 8.0, 0.25, 2
+	Option "Cursor guide",                        "cam_topdown_aim_guide", "OnOff"
+	Slider "Stick cursor speed",                  "cam_topdown_stick_aim_speed", 2.0, 48.0, 1.0, 0
+	Slider "Gyro cursor speed",                   "cam_topdown_gyro_aim_speed", 1.0, 32.0, 1.0, 0
 	Option "Free-pan camera",                     "cam_topdown_freepan", "OnOff"
 	Slider "Free-pan speed",                      "cam_topdown_pan_speed", 0.25, 4.0, 0.05, 2
 	StaticText "Free-pan: W/A/S/D frames the map"
+	StaticText "Off holds framing; Recenter restores follow"
 	StaticText "Shortcut: I (rebind in Customize Controls)"
-	StaticText "Use Automap options for zoom and colors"
+	StaticText "Use Automap options for zoom and line style"
 }
 
 OptionMenu "SWROptions" protected

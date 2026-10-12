@@ -4,13 +4,20 @@ struct FRenderViewpoint;
 struct usercmd_t;
 class AActor;
 
-// Local-only presentation cameras. They deliberately never create or move an
-// actor, so enabling one cannot affect saves, demos, or network simulation.
+// Local-only experimental camera modes. Photo Mode is presentation-only;
+// Top-Down maps local gameplay input to its visible cursor. Both are disabled
+// for demos and netgames.
 bool ECamera_IsPhotoModeActive();
 bool ECamera_IsTopDownModeActive();
-// True only for the local player while the opt-in direct Top-Down aim model
-// is active. Weapon helpers use this to keep their shot ray on raw input.
+// True only for the local player while the opt-in Top-Down pointer aim model
+// is active. Weapon helpers use this to keep their shot ray on that cursor.
 bool ECamera_UsesTopDownDirectAim(const AActor* actor);
+// Raw mouse/controller inputs are routed here while Top-Down pointer aim is
+// active. A true return means the normal first-person look path should not
+// consume that input too.
+bool ECamera_AddTopDownMouseMotion(float right, float down);
+bool ECamera_AddTopDownControllerMotion(float right, float down);
+bool ECamera_AddTopDownGyroMotion(float rightDegrees, float downDegrees);
 bool ECamera_IsThirdPersonActive();
 bool ECamera_HidesHUD();
 

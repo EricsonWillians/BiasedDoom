@@ -61,6 +61,25 @@ CUSTOM_CVAR(Float, cam_topdown_thing_scale, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONF
 CVAR(Bool, cam_topdown_crosshair, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, cam_topdown_direct_aim, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, cam_topdown_freepan, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Color, cam_topdown_crosshair_color, 0xffe040, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+CUSTOM_CVAR(Float, cam_topdown_crosshair_thickness, 2.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const float clampedThickness = clamp<float>(self, 0.5f, 8.0f);
+	if (self != clampedThickness) self = clampedThickness;
+}
+
+CUSTOM_CVAR(Float, cam_topdown_stick_aim_speed, 12.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const float clampedSpeed = clamp<float>(self, 2.0f, 48.0f);
+	if (self != clampedSpeed) self = clampedSpeed;
+}
+
+CUSTOM_CVAR(Float, cam_topdown_gyro_aim_speed, 8.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const float clampedSpeed = clamp<float>(self, 1.0f, 32.0f);
+	if (self != clampedSpeed) self = clampedSpeed;
+}
 
 CUSTOM_CVAR(Float, cam_topdown_pan_speed, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
@@ -96,6 +115,7 @@ struct FTopDownCameraState
 	FLevelLocals* AutomapLevel = nullptr;
 	bool RestoreAutomapActive = false;
 	bool RestoreViewActive = true;
+	DVector2 PointerDelta = {};
 };
 
 FTopDownCameraState TopDownCamera;
@@ -115,6 +135,7 @@ bool IsExperimentalCameraAllowed()
 
 void ReleaseTopDownAutomap()
 {
+	TopDownCamera.PointerDelta = {};
 	if (!TopDownCamera.AutomapClaimed)
 	{
 		return;
@@ -139,6 +160,7 @@ void ResetExperimentalCameras()
 	PhotoCamera.Level = nullptr;
 	TopDownCamera.Initialized = false;
 	TopDownCamera.Level = nullptr;
+	TopDownCamera.PointerDelta = {};
 	R_ResetViewInterpolation();
 }
 
@@ -296,7 +318,7 @@ CUSTOM_CVAR(Float, cam_photo_fov, 75.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, cam_photo_showhud, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 // Retained for configuration compatibility with the superseded 3D top-down
-// renderer. The native aim reticle uses the actual line trace instead.
+// renderer. Pointer aim uses the automap's native transform instead.
 CUSTOM_CVAR(Float, cam_topdown_aim_radius, 128.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedRadius = clamp<float>(self, 48.0f, 320.0f);
@@ -319,6 +341,39 @@ bool ECamera_UsesTopDownDirectAim(const AActor* actor)
 {
 	return cam_topdown_direct_aim && ECamera_IsTopDownModeActive()
 		&& actor != nullptr && actor == players[consoleplayer].mo;
+}
+
+bool ECamera_AddTopDownMouseMotion(float right, float down)
+{
+	if (!cam_topdown_direct_aim || !ECamera_IsTopDownModeActive())
+	{
+		return false;
+	}
+
+	TopDownCamera.PointerDelta += DVector2(right, down);
+	return true;
+}
+
+bool ECamera_AddTopDownControllerMotion(float right, float down)
+{
+	if (!cam_topdown_direct_aim || !ECamera_IsTopDownModeActive())
+	{
+		return false;
+	}
+
+	TopDownCamera.PointerDelta += DVector2(right, down) * cam_topdown_stick_aim_speed;
+	return true;
+}
+
+bool ECamera_AddTopDownGyroMotion(float rightDegrees, float downDegrees)
+{
+	if (!cam_topdown_direct_aim || !ECamera_IsTopDownModeActive())
+	{
+		return false;
+	}
+
+	TopDownCamera.PointerDelta += DVector2(rightDegrees, downDegrees) * cam_topdown_gyro_aim_speed;
+	return true;
 }
 
 bool ECamera_IsThirdPersonActive()
@@ -352,10 +407,20 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 		}
 
 		AActor* const player = players[consoleplayer].mo;
-		// The full-screen map is north-up, while mouse, right-stick, and gyro
-		// look remain unmodified gameplay aim. They all reach this command before
-		// the movement remap below, so Top-Down never needs a device-specific
-		// control path.
+		if (primaryLevel != nullptr && primaryLevel->automap != nullptr)
+		{
+			// Pointer aim owns only the local view command. The Automap has the
+			// exact current screen-to-map transform, so it can make the pawn face
+			// the visible cursor without guessing at projection or ray impacts.
+			if (primaryLevel->automap->UpdateTopDownAim(player, cmd, TopDownCamera.PointerDelta))
+			{
+				TopDownCamera.PointerDelta = {};
+			}
+		}
+		else
+		{
+			TopDownCamera.PointerDelta = {};
+		}
 
 		// Re-express movement in the player's basis after turning it into the
 		// stable screen/map basis. W always means screen-up, S screen-down, and
@@ -492,5 +557,18 @@ CCMD(toggletopdownpan)
 	{
 		primaryLevel->automap->SetTopDownCameraPan({});
 	}
-	Printf("Top-Down Free Pan %s\n", cam_topdown_freepan ? "enabled (W/A/S/D move the camera)" : "disabled (following player)");
+	Printf("Top-Down Free Pan %s\n", cam_topdown_freepan ? "enabled (W/A/S/D move the camera)" : "disabled (holding current framing)");
+}
+
+CCMD(resettopdowncamera)
+{
+	if (!ECamera_IsTopDownModeActive() || primaryLevel == nullptr || primaryLevel->automap == nullptr)
+	{
+		Printf("Top-Down Camera is not active.\n");
+		return;
+	}
+
+	cam_topdown_freepan = false;
+	primaryLevel->automap->ResetTopDownCameraFollow();
+	Printf("Top-Down Camera is following the player.\n");
 }

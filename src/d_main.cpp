@@ -3035,6 +3035,13 @@ static bool System_DispatchEvent(event_t* ev)
 
 	if (ev->type == EV_Mouse && menuactive == MENU_Off && ConsoleState != c_down && ConsoleState != c_falling && !primaryLevel->localEventManager->Responder(ev) && !paused)
 	{
+		// Top-Down has a real map-space pointer. Consume raw relative motion
+		// before first-person look turns it into an off-screen view delta.
+		if (ECamera_AddTopDownMouseMotion(float(ev->x), float(-ev->y)))
+		{
+			return true;
+		}
+
 		if (buttonMap.ButtonDown(Button_Mlook) || freelook)
 		{
 			int look = int(ev->y * m_pitch * 16.0);
