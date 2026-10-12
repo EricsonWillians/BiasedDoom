@@ -47,6 +47,12 @@ select and tune a mode.
   `cam_topdown_crosshair_color`, and `cam_topdown_crosshair_thickness`; use
   `cam_topdown_aim_guide` for the guide. `cam_topdown_stick_aim_speed` and
   `cam_topdown_gyro_aim_speed` tune controller cursor response.
+  **Interactive linedef markers** make usable map geometry readable at a
+  glance: a diamond marks a use-activated line with a registered switch
+  texture, while a plus marks another use-activated special. Tune or disable
+  the overlay with `cam_topdown_interaction_markers`,
+  `cam_topdown_interaction_color`, and
+  `cam_topdown_interaction_marker_size`.
   Use the independent `cam_topdown_player_scale`,
   `cam_topdown_monster_scale`, and `cam_topdown_thing_scale` controls to size
   those three marker groups without altering gameplay actor scale.

@@ -62,11 +62,19 @@ CVAR(Bool, cam_topdown_crosshair, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, cam_topdown_direct_aim, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, cam_topdown_freepan, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Color, cam_topdown_crosshair_color, 0xffe040, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, cam_topdown_interaction_markers, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Color, cam_topdown_interaction_color, 0xffc34d, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CUSTOM_CVAR(Float, cam_topdown_crosshair_thickness, 2.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedThickness = clamp<float>(self, 0.5f, 8.0f);
 	if (self != clampedThickness) self = clampedThickness;
+}
+
+CUSTOM_CVAR(Float, cam_topdown_interaction_marker_size, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const float clampedSize = clamp<float>(self, 0.5f, 3.0f);
+	if (self != clampedSize) self = clampedSize;
 }
 
 CUSTOM_CVAR(Float, cam_topdown_stick_aim_speed, 12.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)

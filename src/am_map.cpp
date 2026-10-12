@@ -69,6 +69,7 @@
 #include "earcut.hpp"
 #include "c_buttons.h"
 #include "d_buttons.h"
+#include "animations.h"
 #include "texturemanager.h"
 #include "experimental_camera.h"
 
@@ -151,6 +152,9 @@ EXTERN_CVAR(Bool, cam_topdown_freepan)
 EXTERN_CVAR(Bool, cam_topdown_direct_aim)
 EXTERN_CVAR(Color, cam_topdown_crosshair_color)
 EXTERN_CVAR(Float, cam_topdown_crosshair_thickness)
+EXTERN_CVAR(Bool, cam_topdown_interaction_markers)
+EXTERN_CVAR(Color, cam_topdown_interaction_color)
+EXTERN_CVAR(Float, cam_topdown_interaction_marker_size)
 EXTERN_CVAR(Float, cam_topdown_pan_speed)
 EXTERN_CVAR(Float, cam_topdown_player_scale)
 EXTERN_CVAR(Float, cam_topdown_monster_scale)
@@ -1048,6 +1052,7 @@ class DAutomap :public DAutomapBase
 	bool clipMline(mline_t *ml, fline_t *fl);
 	void drawMline(mline_t *ml, const AMColor &color);
 	void drawMline(mline_t *ml, int colorindex);
+	void drawTopDownInteractionMarker(const line_t& line, const mline_t& mapLine);
 	void drawGrid(int color);
 	void drawSubsectors();
 	void drawSeg(seg_t *seg, const AMColor &color);
@@ -1982,6 +1987,92 @@ void DAutomap::drawMline (mline_t *ml, int colorindex)
 
 //=============================================================================
 //
+// Draw a fixed-size affordance for a locally usable special. A diamond means
+// the linedef carries a registered switch texture; a plus means another
+// usable special (for example, a remote controller without a switch panel).
+//
+//=============================================================================
+
+static bool AM_isUseSpecialLine(const line_t& line)
+{
+	return line.special != 0
+		&& (line.activation & (SPAC_Use | SPAC_UseThrough | SPAC_UseBack)) != 0;
+}
+
+static bool AM_sideHasSwitchTexture(const side_t* side)
+{
+	return side != nullptr
+		&& (TexAnim.FindSwitch(side->GetTexture(side_t::top)) != nullptr
+			|| TexAnim.FindSwitch(side->GetTexture(side_t::mid)) != nullptr
+			|| TexAnim.FindSwitch(side->GetTexture(side_t::bottom)) != nullptr);
+}
+
+static bool AM_isSwitchLine(const line_t& line)
+{
+	return AM_isUseSpecialLine(line)
+		&& (AM_sideHasSwitchTexture(line.sidedef[0]) || AM_sideHasSwitchTexture(line.sidedef[1]));
+}
+
+void DAutomap::drawTopDownInteractionMarker(const line_t& line, const mline_t& mapLine)
+{
+	if (!cam_topdown_interaction_markers || !AM_isUseSpecialLine(line))
+	{
+		return;
+	}
+
+	const DVector2 start(f_x + CXMTOF(mapLine.a.x), f_y + CYMTOF(mapLine.a.y));
+	const DVector2 end(f_x + CXMTOF(mapLine.b.x), f_y + CYMTOF(mapLine.b.y));
+	DVector2 along = end - start;
+	const double length = along.Length();
+	if (length < 1.0)
+	{
+		return;
+	}
+
+	along /= length;
+	const DVector2 normal(-along.Y, along.X);
+	const DVector2 center = (start + end) * 0.5;
+	const double radius = 7.0 * cam_topdown_interaction_marker_size;
+	const uint32_t color = uint32_t(cam_topdown_interaction_color) | MAKEARGB(255, 0, 0, 0);
+
+	auto drawSegment = [this](const DVector2& a, const DVector2& b, uint32_t rgb, double thickness)
+	{
+		twod->AddThickLine(a, b, thickness, rgb, 255);
+	};
+	auto drawOutlinedSegment = [&drawSegment, color](const DVector2& a, const DVector2& b)
+	{
+		drawSegment(a, b, 0x000000, 4.0);
+		drawSegment(a, b, color, 2.0);
+	};
+
+	if (AM_isSwitchLine(line))
+	{
+		// A diamond is legible at every map rotation and does not imply a
+		// particular switch texture family or game.
+		const DVector2 points[] =
+		{
+			center + normal * radius,
+			center + along * radius,
+			center - normal * radius,
+			center - along * radius,
+		};
+		for (unsigned int i = 0; i < countof(points); ++i)
+		{
+			drawOutlinedSegment(points[i], points[(i + 1) % countof(points)]);
+		}
+		drawOutlinedSegment(center - along * (radius * 0.35), center + along * (radius * 0.35));
+	}
+	else
+	{
+		// The plus keeps other usable specials distinct from both switch panels
+		// and the ordinary generic-special line color.
+		drawOutlinedSegment(center - along * radius, center + along * radius);
+		drawOutlinedSegment(center - normal * radius, center + normal * radius);
+	}
+}
+
+//=============================================================================
+//
 // Draws flat (floor/ceiling tile) aligned grid lines.
 //
 //=============================================================================
@@ -2756,6 +2847,19 @@ void DAutomap::drawWalls (bool allmap)
 				rotatePoint(&l.b.x, &l.b.y);
 			}
 
+			auto drawLine = [this, &line](const AMColor& drawColor)
+			{
+				drawMline(&l, drawColor);
+				if (TopDownCamera)
+				{
+					drawTopDownInteractionMarker(line, l);
+				}
+			};
+			auto drawLineColor = [&drawLine](int colorIndex)
+			{
+				drawLine(AMColors[colorIndex]);
+			};
+
 			// Top-Down is a gameplay presentation rather than a discovery aid.
 			// It deliberately exposes the useful map semantics without changing
 			// am_cheat or mutating the user's normal Automap state.
@@ -2772,37 +2876,37 @@ void DAutomap::drawWalls (bool allmap)
 				if (line.automapstyle > AMLS_Default && line.automapstyle < AMLS_COUNT
 					&& (am_cheat == 0 || am_cheat >= 4))
 				{
-					drawMline(&l, AUTOMAP_LINE_COLORS[line.automapstyle]);
+					drawLineColor(AUTOMAP_LINE_COLORS[line.automapstyle]);
 					continue;
 				}
 
 				if (portalmode)
 				{
-					drawMline(&l, AMColors.PortalColor);
+					drawLineColor(AMColors.PortalColor);
 				}
 				else if (AM_CheckSecret(&line) == 1)
 				{
 					// map secret sectors like Boom
-					drawMline(&l, AMColors.SecretSectorColor);
+					drawLineColor(AMColors.SecretSectorColor);
 				}
 				else if (AM_CheckSecret(&line) == 2)
 				{
-					drawMline(&l, AMColors.UnexploredSecretColor);
+					drawLineColor(AMColors.UnexploredSecretColor);
 				}
 				else if (line.flags & ML_SECRET)
 				{ // secret door
 					if (am_cheat != 0 && am_cheat < 4 && line.backsector != nullptr)
-						drawMline(&l, AMColors.SecretWallColor);
+						drawLineColor(AMColors.SecretWallColor);
 					else
-						drawMline(&l, AMColors.WallColor);
+						drawLineColor(AMColors.WallColor);
 				}
 				else if (AM_isTeleportBoundary(line) && AMColors.isValid(AMColors.IntraTeleportColor))
 				{ // intra-level teleporters
-					drawMline(&l, AMColors.IntraTeleportColor);
+					drawLineColor(AMColors.IntraTeleportColor);
 				}
 				else if (AM_isExitBoundary(line) && AMColors.isValid(AMColors.InterTeleportColor))
 				{ // inter-level/game-ending teleporters
-					drawMline(&l, AMColors.InterTeleportColor);
+					drawLineColor(AMColors.InterTeleportColor);
 				}
 				else if (AM_isLockBoundary(line, &lock))
 				{
@@ -2815,40 +2919,40 @@ void DAutomap::drawWalls (bool allmap)
 						if (color >= 0)	c.FromRGB(RPART(color), GPART(color), BPART(color));
 						else c = AMColors[AMColors.LockedColor];
 
-						drawMline(&l, c);
+						drawLine(c);
 					}
 					else
 					{
-						drawMline(&l, AMColors.LockedColor);  // locked special
+						drawLineColor(AMColors.LockedColor);  // locked special
 					}
 				}
 				else if ((TopDownCamera || am_showtriggerlines)
 					&& AMColors.isValid(AMColors.SpecialWallColor)
 					&& AM_isTriggerBoundary(line, TopDownCamera || am_showtriggerlines != 1))
 				{
-					drawMline(&l, AMColors.SpecialWallColor);	// player-activated special boundary
+					drawLineColor(AMColors.SpecialWallColor);	// player-activated special boundary
 				}
 				else if (line.backsector == nullptr)
 				{
-					drawMline(&l, AMColors.WallColor);	// one-sided wall
+					drawLineColor(AMColors.WallColor);	// one-sided wall
 				}
 				else if (line.backsector->floorplane
 					!= line.frontsector->floorplane)
 				{
-					drawMline(&l, AMColors.FDWallColor); // floor level change
+					drawLineColor(AMColors.FDWallColor); // floor level change
 				}
 				else if (line.backsector->ceilingplane
 					!= line.frontsector->ceilingplane)
 				{
-					drawMline(&l, AMColors.CDWallColor); // ceiling level change
+					drawLineColor(AMColors.CDWallColor); // ceiling level change
 				}
 				else if (AM_Check3DFloors(&line))
 				{
-					drawMline(&l, AMColors.EFWallColor); // Extra floor border
+					drawLineColor(AMColors.EFWallColor); // Extra floor border
 				}
 				else if (am_cheat > 0 && am_cheat < 4)
 				{
-					drawMline(&l, AMColors.TSWallColor);
+					drawLineColor(AMColors.TSWallColor);
 				}
 			}
 			else if (allmap || (line.flags & ML_REVEALED))
@@ -2860,7 +2964,7 @@ void DAutomap::drawWalls (bool allmap)
 						continue;
 					}
 				}
-				drawMline(&l, AMColors.NotSeenColor);
+				drawLineColor(AMColors.NotSeenColor);
 			}
 		}
 	}
