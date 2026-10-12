@@ -169,6 +169,12 @@ FRenderViewpoint::FRenderViewpoint()
 	FrameTime = 0;
 	extralight = 0;
 	showviewer = false;
+	bForceNoViewer = false;
+	bDoOob = false;
+	bDoOrtho = false;
+	bExperimentalOrtho = false;
+	OrthoFocus = { 0.0, 0.0, 0.0 };
+	OrthoDistance = 1.0;
 }
 
 FRenderViewpoint r_viewpoint;
@@ -737,7 +743,11 @@ void FRenderViewpoint::SetViewAngle(const FViewWindow& viewWindow)
 	ViewVector3D.Y = v.Y * PitchCos;
 	ViewVector3D.Z = -PitchSin;
 
-	if (bDoOrtho || bDoOob) // These auto-ensure that camera and camera->ViewPos exist
+	if (bExperimentalOrtho)
+	{
+		OffPos = OrthoFocus;
+	}
+	else if (bDoOrtho || bDoOob) // These auto-ensure that camera and camera->ViewPos exist
 	{
 		if (camera->tracer != NULL)
 		{
@@ -749,9 +759,9 @@ void FRenderViewpoint::SetViewAngle(const FViewWindow& viewWindow)
 		}
 	}
 
-	if (bDoOrtho && (camera->ViewPos->Offset.XY().Length() > 0.0))
+	if (bDoOrtho && HasOrthoProjectionOffset())
 	{
-		ScreenProj = 1.34396 / camera->ViewPos->Offset.Length() / tan (FieldOfView.Radians()*0.5); // [DVR] Estimated. +/-1 should be top/bottom of screen.
+		ScreenProj = 1.34396 / GetOrthoDistance() / tan (FieldOfView.Radians()*0.5); // [DVR] Estimated. +/-1 should be top/bottom of screen.
 		ScreenProjX = ScreenProj * 0.5 / viewWindow.WidescreenRatio;
 	}
 
@@ -767,7 +777,7 @@ void FRenderViewpoint::SetViewAngle(const FViewWindow& viewWindow)
 
 bool FRenderViewpoint::IsAllowedOoB()
 {
-	return (camera && camera->ViewPos && (camera->ViewPos->Flags & VPSF_ALLOWOUTOFBOUNDS));
+	return bExperimentalOrtho || (camera && camera->ViewPos && (camera->ViewPos->Flags & VPSF_ALLOWOUTOFBOUNDS));
 }
 
 //==========================================================================
@@ -780,7 +790,23 @@ bool FRenderViewpoint::IsAllowedOoB()
 
 bool FRenderViewpoint::IsOrtho()
 {
-	return (camera && camera->ViewPos && (camera->ViewPos->Flags & VPSF_ORTHOGRAPHIC));
+	return bExperimentalOrtho || (camera && camera->ViewPos && (camera->ViewPos->Flags & VPSF_ORTHOGRAPHIC));
+}
+
+double FRenderViewpoint::GetOrthoDistance() const
+{
+	if (bExperimentalOrtho)
+	{
+		return OrthoDistance;
+	}
+	return camera != nullptr && camera->ViewPos != nullptr
+		? camera->ViewPos->Offset.Length() : 0.0;
+}
+
+bool FRenderViewpoint::HasOrthoProjectionOffset() const
+{
+	return bExperimentalOrtho || (camera != nullptr && camera->ViewPos != nullptr
+		&& camera->ViewPos->Offset.XY().Length() > 0.0);
 }
 
 //==========================================================================
@@ -981,6 +1007,9 @@ void R_SetupFrame(FRenderViewpoint& viewPoint, const FViewWindow& viewWindow, AA
 	if (viewPoint.camera == nullptr)
 		I_Error("You lost your body. Bad dehacked work is likely to blame.");
 
+	// This state belongs to one rendered frame. ECamera_ApplyView may install
+	// a local orthographic view after normal interpolation has completed.
+	viewPoint.bExperimentalOrtho = false;
 	viewPoint.bDoOob = viewPoint.IsAllowedOoB();
 	viewPoint.bDoOrtho = viewPoint.IsOrtho();
 

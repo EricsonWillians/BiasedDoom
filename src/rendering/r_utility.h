@@ -55,9 +55,18 @@ struct FRenderViewpoint
 	bool			bForceNoViewer; // Never show the camera Actor.
 	bool			bDoOob;
 	bool			bDoOrtho;
+	// A renderer-only orthographic view may be installed by the experimental
+	// camera system. Keeping this state on the viewpoint means local camera
+	// modes never have to mutate an actor's ViewPos (which would leak into
+	// saves, mods, or other views).
+	bool			bExperimentalOrtho;
+	DVector3		OrthoFocus;
+	double			OrthoDistance;
 	void SetViewAngle(const FViewWindow& viewWindow);
 	bool IsAllowedOoB();				// Checks if camera actor exists, has viewpos, and viewpos has VPSF_ALLOWOUTOFBOUNDS flag set
 	bool IsOrtho();					// Checks if camera actor exists, has viewpos, and viewpos has VPSF_ORTHOGRAPHIC flag set
+	double GetOrthoDistance() const;
+	bool HasOrthoProjectionOffset() const;
 
 };
 

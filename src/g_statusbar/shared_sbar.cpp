@@ -1132,11 +1132,12 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
   double aimOriginX = xpos;
   double aimOriginY = ypos;
   if (topDownCamera) {
-    // Anchor the aim marker to the visible player instead of the screen
-    // center. It moves around the player in the real horizontal weapon
-    // direction, independent of the camera's pitch or autoaim result.
-    const DVector3 playerAimOrigin = {CPlayer->mo->Pos().XY(), CPlayer->viewz};
-    ST_ProjectWorldToViewWindow(playerAimOrigin, xpos, ypos);
+    // The orthographic view is centered on the player, so its real world
+    // weapon direction can be represented directly from the screen center.
+    // This intentionally avoids perspective projection: a fixed map point
+    // gives an exact marker even above low ceilings and tall sectors.
+    xpos = viewwidth / 2 + viewwindowx;
+    ypos = viewheight / 2 + viewwindowy;
     aimOriginX = xpos;
     aimOriginY = ypos;
 
@@ -1157,21 +1158,20 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
     FLineTraceData trace = {};
     double traceX = 0.0;
     double traceY = 0.0;
-    if (ST_GetThirdPersonCrosshairPosition(CPlayer, traceX, traceY, trace)) {
-      if (trace.HitActor != nullptr && trace.HitActor->health > 0 &&
-          (trace.HitActor->flags & MF_SHOOTABLE)) {
-        if (CPlayer->mo->IsFriend(trace.HitActor)) {
-          colorOverride = int(chase_crosshair_allycolor);
-        } else if (trace.HitActor->IsHostile(CPlayer->mo) ||
-                   (trace.HitActor->flags & MF_COUNTKILL)) {
-          colorOverride = int(chase_crosshair_enemycolor);
-        }
+    ST_GetThirdPersonCrosshairPosition(CPlayer, traceX, traceY, trace);
+    if (trace.HitActor != nullptr && trace.HitActor->health > 0 &&
+        (trace.HitActor->flags & MF_SHOOTABLE)) {
+      if (CPlayer->mo->IsFriend(trace.HitActor)) {
+        colorOverride = int(chase_crosshair_allycolor);
+      } else if (trace.HitActor->IsHostile(CPlayer->mo) ||
+                 (trace.HitActor->flags & MF_COUNTKILL)) {
+        colorOverride = int(chase_crosshair_enemycolor);
       }
+    }
 
-      if (chase_crosshair_depthcue) {
-        const double distanceFactor = clamp(trace.Distance / 2048.0, 0.0, 1.0);
-        depthScale = 1.18 - distanceFactor * 0.38;
-      }
+    if (chase_crosshair_depthcue) {
+      const double distanceFactor = clamp(trace.Distance / 2048.0, 0.0, 1.0);
+      depthScale = 1.18 - distanceFactor * 0.38;
     }
   } else if (ST_IsThirdPersonCrosshairActive(CPlayer) && chase_crosshair_mode > 0) {
     FLineTraceData trace = {};

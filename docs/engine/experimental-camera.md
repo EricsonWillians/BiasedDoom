@@ -14,15 +14,16 @@ free-flight speed, and the top-down framing controls.
   input is consumed while the mode is active; the game continues to run. The
   HUD is hidden by default for clean captures and can be restored with
   `cam_photo_showhud`.
-- **Top-Down** (`O` by default, or `toggletopdowncamera`) follows the player
-  from a high, downward-looking third-person view. Its camera heading stays
-  stable while the player turns, and a GTA-style aim marker orbits the visible
-  player in the exact horizontal direction used by weapons. The engine's trace
-  provides target color and depth feedback but cannot move that marker. The
-  collision-safe camera boom, height, marker radius, aim guide, and field of
-  view can be tuned with `cam_topdown_height`, `cam_topdown_distance`,
-  `cam_topdown_aim_radius`, `cam_topdown_aim_guide`, and
-  `cam_topdown_fov`.
+- **Top-Down** (`O` by default, or `toggletopdowncamera`) is a genuine
+  orthographic, overhead map view on the hardware renderer. It renders from
+  above map geometry and selects floor-facing surfaces, so low ceilings do not
+  push the camera down or cover the scene. The camera heading stays stable;
+  W/A/S/D are screen-relative while mouse/stick yaw still turns and aims the
+  player. Pitch is locked level for classic 1990s horizontal weapon aiming.
+  The GTA-style aim marker orbits the centered player in that exact horizontal
+  firing direction. Tune its map scale, marker radius, aim guide, and field of
+  view with `cam_topdown_height`, `cam_topdown_aim_radius`,
+  `cam_topdown_aim_guide`, and `cam_topdown_fov`.
 
 `cam_experimental_mode` selects **Off** (0), **Photo Mode / Free Camera** (1),
 or **Top-Down** (2). These commands and the menu options are unavailable in

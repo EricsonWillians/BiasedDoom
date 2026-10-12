@@ -166,8 +166,9 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 
 		// Stereo mode specific perspective projection
 		float inv_iso_dist = 1.0f;
-		bool iso_ortho = (camera->ViewPos != NULL) && (camera->ViewPos->Flags & VPSF_ORTHOGRAPHIC);
-		if (iso_ortho && (camera->ViewPos->Offset.Length() > 0)) inv_iso_dist = 1.0/camera->ViewPos->Offset.Length();
+		bool iso_ortho = vp.bDoOrtho;
+		const double orthoDistance = vp.GetOrthoDistance();
+		if (iso_ortho && orthoDistance > 0.0) inv_iso_dist = 1.0 / orthoDistance;
 		di->VPUniforms.mProjectionMatrix = eye.GetProjection(fov, ratio, fovratio * inv_iso_dist, iso_ortho);
 		di->ProjectionMatrix2 = eye.GetProjection(fov, ratio, fovratio, false); // Regular ol' perspective projection matrix
 
@@ -418,4 +419,3 @@ sector_t* RenderView(player_t* player)
 	All.Unclock();
 	return retsec;
 }
-

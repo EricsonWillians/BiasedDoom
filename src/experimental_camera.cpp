@@ -12,6 +12,7 @@
 
 #include "c_console.h"
 #include "c_dispatch.h"
+#include "d_main.h"
 #include "d_player.h"
 #include "d_protocol.h"
 #include "doomdef.h"
@@ -148,6 +149,12 @@ CUSTOM_CVAR(Int, cam_experimental_mode, ECM_Normal, CVAR_ARCHIVE | CVAR_GLOBALCO
 		self = ECM_Normal;
 		return;
 	}
+	if (self == ECM_TopDown && gamestate == GS_LEVEL && !V_IsHardwareRenderer())
+	{
+		Printf("Top-Down Camera requires a hardware renderer.\n");
+		self = ECM_Normal;
+		return;
+	}
 	ResetExperimentalCameras();
 }
 
@@ -171,12 +178,6 @@ CUSTOM_CVAR(Float, cam_topdown_height, 320.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 	if (self != clampedHeight) self = clampedHeight;
 }
 
-CUSTOM_CVAR(Float, cam_topdown_distance, 0.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-{
-	const float clampedDistance = clamp<float>(self, 0.0f, 768.0f);
-	if (self != clampedDistance) self = clampedDistance;
-}
-
 CUSTOM_CVAR(Float, cam_topdown_aim_radius, 128.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedRadius = clamp<float>(self, 48.0f, 320.0f);
@@ -198,7 +199,11 @@ bool ECamera_IsPhotoModeActive()
 
 bool ECamera_IsTopDownModeActive()
 {
-	return cam_experimental_mode == ECM_TopDown && IsExperimentalCameraAllowed();
+	// The engine's orthographic world renderer is hardware-only. Declining to
+	// enter this mode in the software renderer is preferable to presenting a
+	// misleading perspective fallback with broken ceiling and aiming behavior.
+	return cam_experimental_mode == ECM_TopDown && V_IsHardwareRenderer()
+		&& IsExperimentalCameraAllowed();
 }
 
 bool ECamera_IsThirdPersonActive()
@@ -249,8 +254,34 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 {
 	if (ECamera_IsTopDownModeActive())
 	{
-		// Top-down preserves normal player controls. The camera consumes no
-		// movement or aiming commands, so weapon yaw and movement stay exact.
+		InitializeTopDownCamera();
+		if (!TopDownCamera.Initialized)
+		{
+			return;
+		}
+
+		AActor* const player = players[consoleplayer].mo;
+		// Top-down is deliberately a classic horizontal-aim mode. Mouse/stick
+		// yaw still turns and aims the player, while pitch and roll are removed
+		// before the command reaches simulation so vertical aim cannot desync
+		// the reticle from weapon fire.
+		player->Angles.Pitch = nullAngle;
+		cmd.pitch = 0;
+		cmd.roll = 0;
+
+		// Re-express movement in the player's basis after turning it into the
+		// stable screen/map basis. W always means screen-up, S screen-down, and
+		// A/D remain screen-left/right regardless of weapon facing.
+		const DAngle playerYaw = player->Angles.Yaw
+			+ DAngle::fromDeg(double(cmd.yaw) * CmdToDegrees);
+		const DVector2 cameraForward = TopDownCamera.Yaw.ToVector();
+		const DVector2 cameraRight = { cameraForward.Y, -cameraForward.X };
+		const DVector2 requestedMove = cameraForward * double(cmd.forwardmove)
+			+ cameraRight * double(cmd.sidemove);
+		const DVector2 playerForward = playerYaw.ToVector();
+		const DVector2 playerRight = { playerForward.Y, -playerForward.X };
+		cmd.forwardmove = short(round(requestedMove | playerForward));
+		cmd.sidemove = short(round(requestedMove | playerRight));
 		return;
 	}
 
@@ -328,38 +359,21 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 			? TopDownCamera.Yaw
 			: players[consoleplayer].mo->Angles.Yaw;
 
-		// Start at the player rather than at a pre-existing chase/view-offset
-		// position. This makes the experimental mode deterministic when it is
-		// enabled from any normal camera state.
+		// This is a genuine orthographic overhead view, not a high chase camera.
+		// It follows the player's XY position from outside map geometry, so low
+		// ceilings can neither push it down nor obscure the floor. The renderer's
+		// orthographic path also selects visible planes by view direction, which
+		// naturally hides ceiling flats while looking straight down.
 		const DVector3 focus = viewPoint.ActorPos;
-		viewPoint.Pos = focus;
+		const double scale = double(cam_topdown_height);
+		viewPoint.Pos = focus + DVector3(0.0, 0.0, scale);
 		viewPoint.sector = viewPoint.ViewLevel->PointInRenderSubsector(focus)->sector;
-
-		const DVector2 forward = cameraYaw.ToVector();
-		const DVector3 offset = {
-			-forward.X * double(cam_topdown_distance),
-			-forward.Y * double(cam_topdown_distance),
-			double(cam_topdown_height),
-		};
-		const double offsetLength = offset.Length();
-		if (cam_topdown_distance == 0.0f)
-		{
-			// A pure vertical trace through R_OffsetView can resolve on either
-			// side of a low ceiling. Place the default top-down view explicitly
-			// just below that ceiling instead, guaranteeing that it stays above
-			// the player and inside normal map geometry.
-			const double ceilingZ = viewPoint.sector->ceilingplane.ZatPoint(focus) - 8.0;
-			viewPoint.Pos.Z = min<double>(focus.Z + double(cam_topdown_height), ceilingZ);
-		}
-		else if (offsetLength > 0.0)
-		{
-			R_OffsetView(viewPoint, offset / offsetLength, offsetLength, 8.0);
-		}
-
-		// Keep a steep but non-singular pitch. The camera yaw stays stable while
-		// the player turns, so the map remains readable and the aim marker can
-		// clearly show the actual horizontal shooting direction.
-		viewPoint.Angles = { cameraYaw, DAngle::fromDeg(75.0), nullAngle };
+		viewPoint.Angles = { cameraYaw, DAngle::fromDeg(90.0), nullAngle };
+		viewPoint.bDoOob = true;
+		viewPoint.bDoOrtho = true;
+		viewPoint.bExperimentalOrtho = true;
+		viewPoint.OrthoFocus = focus;
+		viewPoint.OrthoDistance = scale;
 		viewPoint.showviewer = true;
 		viewPoint.bForceNoViewer = false;
 		return true;
@@ -382,6 +396,11 @@ CCMD(toggletopdowncamera)
 {
 	if (!CanToggleCamera("Top-Down Camera"))
 	{
+		return;
+	}
+	if (!V_IsHardwareRenderer())
+	{
+		Printf("Top-Down Camera requires a hardware renderer.\n");
 		return;
 	}
 	cam_experimental_mode = cam_experimental_mode == ECM_TopDown ? ECM_Normal : ECM_TopDown;

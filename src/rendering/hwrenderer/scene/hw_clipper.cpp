@@ -460,7 +460,7 @@ angle_t Clipper::PointToPseudoPitch(double x, double y, double z)
 angle_t Clipper::PointToPseudoOrthoAngle(double x, double y)
 {
 	DVector3 disp = DVector3(x, y, 0) - viewpoint->OffPos;
-	if (viewpoint->camera->ViewPos->Offset.XY().Length() == 0)
+	if (!viewpoint->HasOrthoProjectionOffset())
 	{
 		return AngleToPseudo( viewpoint->Angles.Yaw.BAMs() );
 	}
@@ -484,7 +484,7 @@ angle_t Clipper::PointToPseudoOrthoAngle(double x, double y)
 angle_t Clipper::PointToPseudoOrthoPitch(double x, double y, double z)
 {
 	DVector3 disp = DVector3(x, y, z) - viewpoint->OffPos;
-	if (viewpoint->camera->ViewPos->Offset.XY().Length() > 0)
+	if (viewpoint->HasOrthoProjectionOffset())
 	{
 		double yproj = viewpoint->PitchSin * disp.XY().Length() * deltaangle(disp.Angle(), viewpoint->Angles.Yaw).Cos();
 		yproj += viewpoint->PitchCos * disp.Z;

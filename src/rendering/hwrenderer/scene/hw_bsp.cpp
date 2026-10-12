@@ -997,8 +997,9 @@ void HWDrawInfo::RenderOrthoNoFog()
 	{
 		double vxdbl = Viewpoint.OffPos.X;
 		double vydbl = Viewpoint.OffPos.Y;
-		double ext = Viewpoint.camera->ViewPos->Offset.Length() ?
-			3.0 * Viewpoint.camera->ViewPos->Offset.Length() * tan (Viewpoint.FieldOfView.Radians()*0.5) : 100.0;
+		const double orthoDistance = Viewpoint.GetOrthoDistance();
+		double ext = orthoDistance > 0.0
+			? 3.0 * orthoDistance * tan(Viewpoint.FieldOfView.Radians() * 0.5) : 100.0;
 		FBoundingBox viewbox(vxdbl, vydbl, ext);
 
 		for (unsigned int kk = 0; kk < Level->subsectors.Size(); kk++)

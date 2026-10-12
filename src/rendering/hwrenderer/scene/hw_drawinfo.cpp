@@ -921,7 +921,7 @@ void HWDrawInfo::SetDitherTransFlags(AActor* actor)
 		DVector3 vvec = actorpos - Viewpoint.Pos;
 		if (Viewpoint.bDoOrtho)
 		{
-			vvec = 5.0 * Viewpoint.camera->ViewPos->Offset.Length() * Viewpoint.ViewVector3D; // Should be 4.0? (since zNear is behind screen by 3*dist in VREyeInfo::GetProjection())
+			vvec = 5.0 * Viewpoint.GetOrthoDistance() * Viewpoint.ViewVector3D; // Should be 4.0? (since zNear is behind screen by 3*dist in VREyeInfo::GetProjection())
 		}
 		double distance = vvec.Length() - actor->radius;
 		DVector3 campos = actorpos - vvec;
