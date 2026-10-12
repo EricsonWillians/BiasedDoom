@@ -1902,6 +1902,8 @@ OptionMenu "ExperimentalCameraOptions" protected
 	StaticText "Top-Down"
 	StaticText "Hardware renderer required"
 	Slider "Map zoom / view scale",              "cam_topdown_height", 64.0, 1024.0, 16.0, 0
+	Slider "View tilt / wall visibility",         "cam_topdown_pitch", 65.0, 89.0, 1.0, 0
+	Option "Readable wall / switch outlines",     "cam_topdown_wall_overlay", "OnOff"
 	Slider "Aim marker radius",                  "cam_topdown_aim_radius", 48.0, 320.0, 8.0, 0
 	Option "Show aim guide",                     "cam_topdown_aim_guide", "OnOff"
 	Slider "Top-down field of view",             "cam_topdown_fov", 20.0, 120.0, 1.0, 0

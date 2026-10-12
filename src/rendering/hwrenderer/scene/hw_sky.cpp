@@ -204,6 +204,15 @@ void HWSkyInfo::init(HWDrawInfo *di, sector_t* sec, int skypos, int sky1, PalEnt
 
 void HWWall::SkyPlane(HWWallDispatcher *di, sector_t *sector, int plane, bool allowreflect)
 {
+	// A top-down gameplay view intentionally looks through ceilings. Rendering
+	// a ceiling sky portal from the camera's out-of-bounds position can fill an
+	// otherwise valid sector with sky, so the local overhead mode never submits
+	// sky planes. World floors and wall faces remain in the primary scene.
+	if (di->di && di->di->Viewpoint.bExperimentalOrtho)
+	{
+		return;
+	}
+
 	int ptype = -1;
 
 	FSectorPortal *sportal = sector->ValidatePortal(plane);

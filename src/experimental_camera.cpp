@@ -178,6 +178,14 @@ CUSTOM_CVAR(Float, cam_topdown_height, 320.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 	if (self != clampedHeight) self = clampedHeight;
 }
 
+CUSTOM_CVAR(Float, cam_topdown_pitch, 82.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	// A small visual tilt lets players read wall faces and door textures while
+	// the orthographic projection keeps the interaction plane top-down.
+	const float clampedPitch = clamp<float>(self, 65.0f, 89.0f);
+	if (self != clampedPitch) self = clampedPitch;
+}
+
 CUSTOM_CVAR(Float, cam_topdown_aim_radius, 128.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedRadius = clamp<float>(self, 48.0f, 320.0f);
@@ -185,6 +193,7 @@ CUSTOM_CVAR(Float, cam_topdown_aim_radius, 128.0f, CVAR_ARCHIVE | CVAR_GLOBALCON
 }
 
 CVAR(Bool, cam_topdown_aim_guide, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, cam_topdown_wall_overlay, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CUSTOM_CVAR(Float, cam_topdown_fov, 85.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
@@ -233,7 +242,7 @@ bool ECamera_GetTopDownAimOffset(double radius, double &x, double &y)
 	// yaw delta to screen-left. Keep the marker in that same frame so its
 	// movement is an exact visual representation of horizontal weapon aim.
 	x = -sin(relativeYaw) * radius;
-	y = -cos(relativeYaw) * radius;
+	y = -cos(relativeYaw) * radius * DAngle::fromDeg(cam_topdown_pitch).Sin();
 	return true;
 }
 
@@ -366,16 +375,27 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 		// naturally hides ceiling flats while looking straight down.
 		const DVector3 focus = viewPoint.ActorPos;
 		const double scale = double(cam_topdown_height);
-		viewPoint.Pos = focus + DVector3(0.0, 0.0, scale);
+		const DAngle pitch = DAngle::fromDeg(cam_topdown_pitch);
+		const DVector2 forward = cameraYaw.ToVector();
+		const DVector3 viewDirection = {
+			forward.X * pitch.Cos(), forward.Y * pitch.Cos(), -pitch.Sin()
+		};
+		// Position the camera on the same ray used by SetViewAngle, so OffPos
+		// stays locked to the player while the modest visual tilt exposes wall
+		// textures, doors, and switches.
+		viewPoint.Pos = focus - viewDirection * scale;
 		viewPoint.sector = viewPoint.ViewLevel->PointInRenderSubsector(focus)->sector;
-		viewPoint.Angles = { cameraYaw, DAngle::fromDeg(90.0), nullAngle };
+		viewPoint.Angles = { cameraYaw, pitch, nullAngle };
 		viewPoint.bDoOob = true;
 		viewPoint.bDoOrtho = true;
 		viewPoint.bExperimentalOrtho = true;
 		viewPoint.OrthoFocus = focus;
 		viewPoint.OrthoDistance = scale;
-		viewPoint.showviewer = true;
-		viewPoint.bForceNoViewer = false;
+		// The first-person pawn sprite is a vertical billboard and is misleading
+		// from an overhead view. The status bar supplies an exact map-facing
+		// player arrow at the same point as the aim guide instead.
+		viewPoint.showviewer = false;
+		viewPoint.bForceNoViewer = true;
 		return true;
 	}
 

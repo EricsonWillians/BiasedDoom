@@ -42,6 +42,7 @@
 #include "d_main.h"
 #include "d_net.h"
 #include "d_player.h"
+#include "doomdata.h"
 #include "doomstat.h"
 #include "events.h"
 #include "filesystem.h"
@@ -60,6 +61,7 @@
 #include "python/python_displaylist.h"
 #include "python/python_runtime.h"
 #include "r_utility.h"
+#include "intrect.h"
 #include "experimental_camera.h"
 #include "s_sound.h"
 #include "sbar.h"
@@ -99,8 +101,10 @@ EXTERN_CVAR(Bool, ui_screenborder_classic_scaling)
 EXTERN_CVAR(Bool, chase_enabled)
 EXTERN_CVAR(Int, chase_crosshair_mode)
 EXTERN_CVAR(Bool, chase_crosshair_depthcue)
+EXTERN_CVAR(Float, cam_topdown_height)
 EXTERN_CVAR(Float, cam_topdown_aim_radius)
 EXTERN_CVAR(Bool, cam_topdown_aim_guide)
+EXTERN_CVAR(Bool, cam_topdown_wall_overlay)
 
 CVAR(Bool, chase_crosshair_clamp, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Color, chase_crosshair_enemycolor, 0xff4038, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -1100,6 +1104,102 @@ static bool ST_GetThirdPersonCrosshairPosition(player_t *player, double &xpos,
   return ST_ProjectWorldToViewWindow(trace.HitLocation, xpos, ypos);
 }
 
+static DVector2 ST_ProjectTopDownMapPoint(const DVector3 &worldPos,
+                                          double unitsToPixelsX,
+                                          double unitsToPixelsY) {
+  const DVector3 delta = worldPos - r_viewpoint.Pos;
+  const double side = delta.X * r_viewpoint.Sin - delta.Y * r_viewpoint.Cos;
+  const double forward =
+      delta.X * r_viewpoint.Cos + delta.Y * r_viewpoint.Sin;
+  const double up = delta.Z * r_viewpoint.PitchCos +
+                    forward * r_viewpoint.PitchSin;
+  return {viewwindowx + viewwidth * 0.5 + side * unitsToPixelsX,
+          viewwindowy + viewheight * 0.5 - up * unitsToPixelsY};
+}
+
+static void ST_DrawTopDownTopologyLine(const DVector2 &first,
+                                       const DVector2 &second,
+                                       const IntRect &clip, uint32_t color,
+                                       uint8_t alpha, bool emphasize) {
+  twod->AddLine(first, second, &clip, color, alpha);
+  if (!emphasize) {
+    return;
+  }
+
+  // Thin hardware lines disappear against dark wall faces. A restrained
+  // two-pixel halo makes collision boundaries and use-lines readable without
+  // turning the camera view into a full automap.
+  DVector2 perpendicular = (second - first).Rotated90CCW();
+  if (perpendicular.MakeUnit() == 0.0) {
+    return;
+  }
+  perpendicular *= 0.75;
+  const uint8_t haloAlpha = uint8_t(alpha * 3 / 5);
+  twod->AddLine(first + perpendicular, second + perpendicular, &clip, color,
+                haloAlpha);
+  twod->AddLine(first - perpendicular, second - perpendicular, &clip, color,
+                haloAlpha);
+}
+
+static void ST_DrawTopDownWallOverlay(player_t *player) {
+  if (!cam_topdown_wall_overlay || player == nullptr || player->mo == nullptr ||
+      player->mo->Level == nullptr || viewwidth <= 0 || viewheight <= 0) {
+    return;
+  }
+
+  // Mirror the hardware orthographic projection's dimensions. Unlike a full
+  // automap this is clipped to the current play view, so it supplies just the
+  // actionable topology around the player without exposing the whole level.
+  const double ratio = r_viewwindow.WidescreenRatio;
+  const double fovRatio = ratio >= 1.3 ? 4.0 / 3.0 : ratio;
+  const double halfViewHeight = double(cam_topdown_height) *
+      tan(r_viewpoint.FieldOfView.Radians() * 0.5) / fovRatio;
+  if (halfViewHeight <= 0.0 || ratio <= 0.0) {
+    return;
+  }
+
+  const double unitsToPixelsY = viewheight * 0.5 / halfViewHeight;
+  const double unitsToPixelsX = viewwidth * 0.5 / (halfViewHeight * ratio);
+  const IntRect clip = {viewwindowx, viewwindowy, viewwidth, viewheight};
+
+  for (const line_t &line : player->mo->Level->lines) {
+    if (line.frontsector == nullptr) {
+      continue;
+    }
+    const bool oneSided = line.backsector == nullptr ||
+        !(line.flags & ML_TWOSIDED);
+    const bool blocking = line.flags &
+        (ML_BLOCKING | ML_BLOCKEVERYTHING | ML_BLOCK_PLAYERS);
+    const bool actionable = line.special != 0;
+
+    if (!oneSided && !blocking && !actionable) {
+      continue;
+    }
+
+    uint32_t color = 0xa8d7ee;
+    uint8_t alpha = 136;
+    if (oneSided || blocking) {
+      color = 0xe9f4ff;
+      alpha = 196;
+    }
+    if (actionable) {
+      color = 0xffb347;
+      alpha = 236;
+    }
+
+    const DVector2 first = ST_ProjectTopDownMapPoint(
+        {line.v1->fX(), line.v1->fY(),
+         line.frontsector->floorplane.ZatPoint(line.v1)},
+        unitsToPixelsX, unitsToPixelsY);
+    const DVector2 second = ST_ProjectTopDownMapPoint(
+        {line.v2->fX(), line.v2->fY(),
+         line.frontsector->floorplane.ZatPoint(line.v2)},
+        unitsToPixelsX, unitsToPixelsY);
+    ST_DrawTopDownTopologyLine(first, second, clip, color, alpha,
+                               oneSided || blocking || actionable);
+  }
+}
+
 void DBaseStatusBar::DrawCrosshair(double ticFrac) {
   const bool topDownCamera = ECamera_IsTopDownModeActive();
   if (!crosshairon && !topDownCamera) {
@@ -1132,6 +1232,7 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
   double aimOriginX = xpos;
   double aimOriginY = ypos;
   if (topDownCamera) {
+    ST_DrawTopDownWallOverlay(CPlayer);
     // The orthographic view is centered on the player, so its real world
     // weapon direction can be represented directly from the screen center.
     // This intentionally avoids perspective projection: a fixed map point
@@ -1210,6 +1311,23 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
     // and horizontal weapon fire legible even in a busy top-down scene.
     twod->AddThickLine(DVector2(aimOriginX, aimOriginY),
                        DVector2(xpos, ypos), 2.0, 0x00b0ffff, 104);
+  }
+
+  if (topDownCamera) {
+    // The local pawn is deliberately hidden in the overhead render: a classic
+    // vertical sprite cannot faithfully indicate map-facing direction. Draw a
+    // compact player arrow instead, locked to the same actual weapon bearing
+    // as the aim marker and guide.
+    DVector2 direction(xpos - aimOriginX, ypos - aimOriginY);
+    direction.MakeUnit();
+    const DVector2 perpendicular(-direction.Y, direction.X);
+    const DVector2 tail(aimOriginX - direction.X * 8.0,
+                        aimOriginY - direction.Y * 8.0);
+    const DVector2 nose(aimOriginX + direction.X * 18.0,
+                        aimOriginY + direction.Y * 18.0);
+    twod->AddThickLine(tail, nose, 3.0, 0xeaf9ff, 224);
+    twod->AddThickLine(nose, tail + perpendicular * 8.0, 3.0, 0xeaf9ff, 224);
+    twod->AddThickLine(nose, tail - perpendicular * 8.0, 3.0, 0xeaf9ff, 224);
   }
 
   ST_DrawCrosshair(health, xpos, ypos, size, nullAngle, colorOverride,

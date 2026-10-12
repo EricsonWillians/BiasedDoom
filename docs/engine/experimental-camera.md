@@ -17,12 +17,16 @@ free-flight speed, and the top-down framing controls.
 - **Top-Down** (`O` by default, or `toggletopdowncamera`) is a genuine
   orthographic, overhead map view on the hardware renderer. It renders from
   above map geometry and selects floor-facing surfaces, so low ceilings do not
-  push the camera down or cover the scene. The camera heading stays stable;
-  W/A/S/D are screen-relative while mouse/stick yaw still turns and aims the
-  player. Pitch is locked level for classic 1990s horizontal weapon aiming.
-  The GTA-style aim marker orbits the centered player in that exact horizontal
-  firing direction. Tune its map scale, marker radius, aim guide, and field of
-  view with `cam_topdown_height`, `cam_topdown_aim_radius`,
+  push the camera down or cover the scene; sky planes are excluded to prevent
+  ceiling portals from filling a sector. A small configurable visual tilt keeps
+  walls, doors, and switches readable without changing the classic horizontal
+  gameplay aim. The camera heading stays stable; W/A/S/D are screen-relative
+  while mouse/stick yaw still turns and aims the player. Pitch is locked level
+  for classic 1990s horizontal weapon aiming. The centered player arrow and
+  GTA-style aim marker share that exact horizontal firing direction. Tune map
+  scale, visual tilt, readable wall/switch outlines, marker radius, aim guide,
+  and field of view with `cam_topdown_height`, `cam_topdown_pitch`,
+  `cam_topdown_wall_overlay`, `cam_topdown_aim_radius`,
   `cam_topdown_aim_guide`, and `cam_topdown_fov`.
 
 `cam_experimental_mode` selects **Off** (0), **Photo Mode / Free Camera** (1),
