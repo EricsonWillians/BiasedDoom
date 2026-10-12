@@ -10,6 +10,10 @@ bool ECamera_IsTopDownModeActive();
 bool ECamera_IsThirdPersonActive();
 bool ECamera_HidesHUD();
 
+// Returns the pixel offset for the top-down aim marker. It is calculated from
+// the player's gameplay yaw relative to the stable top-down camera yaw.
+bool ECamera_GetTopDownAimOffset(double radius, double &x, double &y);
+
 // Applies the selected experimental camera after the normal view has been
 // interpolated. Returns true when it replaced the regular player view.
 bool ECamera_ApplyView(FRenderViewpoint& viewPoint);

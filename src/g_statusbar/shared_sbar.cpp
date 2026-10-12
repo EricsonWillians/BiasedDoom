@@ -99,6 +99,8 @@ EXTERN_CVAR(Bool, ui_screenborder_classic_scaling)
 EXTERN_CVAR(Bool, chase_enabled)
 EXTERN_CVAR(Int, chase_crosshair_mode)
 EXTERN_CVAR(Bool, chase_crosshair_depthcue)
+EXTERN_CVAR(Float, cam_topdown_aim_radius)
+EXTERN_CVAR(Bool, cam_topdown_aim_guide)
 
 CVAR(Bool, chase_crosshair_clamp, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Color, chase_crosshair_enemycolor, 0xff4038, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -1127,10 +1129,31 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
   double ypos = viewheight / 2 + viewwindowy;
   int colorOverride = -1;
   double depthScale = 1.0;
+  double aimOriginX = xpos;
+  double aimOriginY = ypos;
   if (topDownCamera) {
-    // The top-down camera follows the real player yaw, so the fixed center
-    // reticle is the same horizontal direction used by the weapon trace.
-    // Tracing only supplies useful hit feedback; it never moves the reticle.
+    // Anchor the aim marker to the visible player instead of the screen
+    // center. It moves around the player in the real horizontal weapon
+    // direction, independent of the camera's pitch or autoaim result.
+    const DVector3 playerAimOrigin = {CPlayer->mo->Pos().XY(), CPlayer->viewz};
+    ST_ProjectWorldToViewWindow(playerAimOrigin, xpos, ypos);
+    aimOriginX = xpos;
+    aimOriginY = ypos;
+
+    double aimX = 0.0;
+    double aimY = 0.0;
+    if (ECamera_GetTopDownAimOffset(cam_topdown_aim_radius, aimX, aimY)) {
+      xpos += aimX;
+      ypos += aimY;
+    }
+    const double margin = max(6.0, twod->GetHeight() * 0.0125);
+    xpos = clamp(xpos, viewwindowx + margin,
+                 viewwindowx + viewwidth - margin);
+    ypos = clamp(ypos, viewwindowy + margin,
+                 viewwindowy + viewheight - margin);
+
+    // The trace adds target color and depth feedback but deliberately never
+    // changes the marker position.
     FLineTraceData trace = {};
     double traceX = 0.0;
     double traceY = 0.0;
@@ -1180,6 +1203,13 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
         depthScale = 1.18 - distanceFactor * 0.38;
       }
     }
+  }
+
+  if (topDownCamera && cam_topdown_aim_guide) {
+    // A restrained guide makes the connection between the player, the marker,
+    // and horizontal weapon fire legible even in a busy top-down scene.
+    twod->AddThickLine(DVector2(aimOriginX, aimOriginY),
+                       DVector2(xpos, ypos), 2.0, 0x00b0ffff, 104);
   }
 
   ST_DrawCrosshair(health, xpos, ypos, size, nullAngle, colorOverride,

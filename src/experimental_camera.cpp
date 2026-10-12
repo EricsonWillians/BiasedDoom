@@ -39,6 +39,15 @@ struct FPhotoCameraState
 
 FPhotoCameraState PhotoCamera;
 
+struct FTopDownCameraState
+{
+	bool Initialized = false;
+	FLevelLocals* Level = nullptr;
+	DAngle Yaw = nullAngle;
+};
+
+FTopDownCameraState TopDownCamera;
+
 constexpr double CmdToDegrees = 360.0 / 65536.0;
 
 bool IsExperimentalCameraAllowed()
@@ -52,6 +61,8 @@ void ResetExperimentalCameras()
 {
 	PhotoCamera.Initialized = false;
 	PhotoCamera.Level = nullptr;
+	TopDownCamera.Initialized = false;
+	TopDownCamera.Level = nullptr;
 	R_ResetViewInterpolation();
 }
 
@@ -92,6 +103,23 @@ void InitializePhotoCameraFromView(const FRenderViewpoint& viewPoint)
 	PhotoCamera.Angles = viewPoint.Angles;
 	PhotoCamera.Level = viewPoint.ViewLevel;
 	PhotoCamera.Initialized = true;
+}
+
+void InitializeTopDownCamera()
+{
+	if (TopDownCamera.Level != players[consoleplayer].mo->Level)
+	{
+		TopDownCamera.Initialized = false;
+	}
+
+	if (TopDownCamera.Initialized || !IsExperimentalCameraAllowed())
+	{
+		return;
+	}
+
+	TopDownCamera.Level = players[consoleplayer].mo->Level;
+	TopDownCamera.Yaw = players[consoleplayer].mo->Angles.Yaw;
+	TopDownCamera.Initialized = true;
 }
 
 bool CanToggleCamera(const char* modeName)
@@ -149,6 +177,14 @@ CUSTOM_CVAR(Float, cam_topdown_distance, 0.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 	if (self != clampedDistance) self = clampedDistance;
 }
 
+CUSTOM_CVAR(Float, cam_topdown_aim_radius, 128.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const float clampedRadius = clamp<float>(self, 48.0f, 320.0f);
+	if (self != clampedRadius) self = clampedRadius;
+}
+
+CVAR(Bool, cam_topdown_aim_guide, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
 CUSTOM_CVAR(Float, cam_topdown_fov, 85.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedFov = clamp<float>(self, 20.0f, 120.0f);
@@ -173,6 +209,27 @@ bool ECamera_IsThirdPersonActive()
 bool ECamera_HidesHUD()
 {
 	return ECamera_IsPhotoModeActive() && !cam_photo_showhud;
+}
+
+bool ECamera_GetTopDownAimOffset(double radius, double &x, double &y)
+{
+	if (!ECamera_IsTopDownModeActive())
+	{
+		return false;
+	}
+
+	const DAngle playerYaw = players[consoleplayer].mo->Angles.Yaw;
+	const DAngle cameraYaw = TopDownCamera.Initialized
+		? TopDownCamera.Yaw
+		: playerYaw;
+	const double relativeYaw = deltaangle(cameraYaw, playerYaw).Radians();
+
+	// GZDoom projects a point at camera yaw to screen-up and a positive
+	// yaw delta to screen-left. Keep the marker in that same frame so its
+	// movement is an exact visual representation of horizontal weapon aim.
+	x = -sin(relativeYaw) * radius;
+	y = -cos(relativeYaw) * radius;
+	return true;
 }
 
 double ECamera_GetFieldOfView(double normalFov)
@@ -266,10 +323,10 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 
 	if (ECamera_IsTopDownModeActive())
 	{
-		// The camera always uses the player's actual gameplay yaw. Keeping both
-		// in lockstep makes the centered reticle agree with horizontal weapon
-		// traces instead of creating a separate, lagging camera aim direction.
-		const DAngle cameraYaw = players[consoleplayer].mo->Angles.Yaw;
+		InitializeTopDownCamera();
+		const DAngle cameraYaw = TopDownCamera.Initialized
+			? TopDownCamera.Yaw
+			: players[consoleplayer].mo->Angles.Yaw;
 
 		// Start at the player rather than at a pre-existing chase/view-offset
 		// position. This makes the experimental mode deterministic when it is
@@ -299,9 +356,9 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 			R_OffsetView(viewPoint, offset / offsetLength, offsetLength, 8.0);
 		}
 
-		// Keep a steep but non-singular pitch. With the default zero lateral
-		// boom, turning rotates the view without dragging the camera along nearby
-		// walls; this is the stable classic top-down behavior.
+		// Keep a steep but non-singular pitch. The camera yaw stays stable while
+		// the player turns, so the map remains readable and the aim marker can
+		// clearly show the actual horizontal shooting direction.
 		viewPoint.Angles = { cameraYaw, DAngle::fromDeg(75.0), nullAngle };
 		viewPoint.showviewer = true;
 		viewPoint.bForceNoViewer = false;
