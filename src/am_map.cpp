@@ -33,6 +33,9 @@
 #include "g_level.h"
 #include "st_stuff.h"
 #include "p_local.h"
+#include "p_pspr.h"
+#include "p_trace.h"
+#include "p_linetracedata.h"
 #include "p_lnspec.h"
 #include "filesystem.h"
 #include "a_sharedglobal.h"
@@ -145,6 +148,13 @@ CUSTOM_CVAR(Int, am_showalllines, -1, CVAR_NOINITCALL)	// This is a cheat so don
 }
 
 EXTERN_CVAR(Bool, sv_cheats)
+EXTERN_CVAR(Bool, cam_topdown_crosshair)
+EXTERN_CVAR(Bool, cam_topdown_aim_guide)
+EXTERN_CVAR(Bool, cam_topdown_freepan)
+EXTERN_CVAR(Float, cam_topdown_pan_speed)
+EXTERN_CVAR(Float, cam_topdown_player_scale)
+EXTERN_CVAR(Float, cam_topdown_monster_scale)
+EXTERN_CVAR(Float, cam_topdown_thing_scale)
 CUSTOM_CVAR(Int, am_cheat, 0, 0)
 {
 	// No automap cheat in net games when cheats are disabled!
@@ -969,6 +979,7 @@ class DAutomap :public DAutomapBase
 	// coordinates used for floors, walls, and actor markers.
 	bool TopDownCamera = false;
 	bool TopDownPlayerSprite = false;
+	DVector2 TopDownPanInput = {};
 
 	// old stuff for recovery later
 	double old_m_w, old_m_h;
@@ -1044,6 +1055,7 @@ class DAutomap :public DAutomapBase
 	void drawMarks();
 	void drawAuthorMarkers();
 	void drawCrosshair(const AMColor &color);
+	void drawTopDownAimReticle();
 
 
 public:
@@ -1061,6 +1073,7 @@ public:
 	DVector2 GetPosition() override;
 	void startDisplay() override;
 	void SetTopDownCamera(bool enabled, bool playerSprite) override;
+	void SetTopDownCameraPan(const DVector2 &movement) override;
 
 	bool IsRotating() const
 	{
@@ -1096,12 +1109,21 @@ void DAutomap::SetTopDownCamera(bool enabled, bool playerSprite)
 {
 	TopDownCamera = enabled;
 	TopDownPlayerSprite = enabled && playerSprite;
+	if (!enabled)
+	{
+		TopDownPanInput = {};
+	}
 	if (enabled)
 	{
 		// Recenter on the exact interpolated player position on the first frame.
 		// Regular follow state remains untouched for when the mode is exited.
 		f_oldloc.x = FLT_MAX;
 	}
+}
+
+void DAutomap::SetTopDownCameraPan(const DVector2 &movement)
+{
+	TopDownPanInput = TopDownCamera ? movement : DVector2{};
 }
 
 //=============================================================================
@@ -1305,7 +1327,12 @@ void DAutomap::changeWindowLoc ()
 {
 	if (m_paninc.x || m_paninc.y)
 	{
-		am_followplayer = false;
+		// Experimental free-pan is temporary camera framing. Do not change the
+		// user's persistent Automap follow preference when it moves the window.
+		if (!TopDownCamera)
+		{
+			am_followplayer = false;
+		}
 		f_oldloc.x = FLT_MAX;
 	}
 
@@ -2860,8 +2887,8 @@ bool DAutomap::drawTopDownPlayerSprite(AActor *player, const DVector2 &position)
 		return false;
 	}
 
-	const double spriteXScale = player->Scale.X * (10. / 16.) * scale_mtof;
-	const double spriteYScale = player->Scale.Y * (10. / 16.) * scale_mtof;
+	const double spriteXScale = player->Scale.X * (10. / 16.) * scale_mtof * cam_topdown_player_scale;
+	const double spriteYScale = player->Scale.Y * (10. / 16.) * scale_mtof * cam_topdown_player_scale;
 	DrawMarker(texture, position.X, position.Y, 0, !!(frame->Flip & (1 << rotation)),
 		spriteXScale, spriteYScale, player->Translation, player->Alpha,
 		player->fillcolor, player->RenderStyle);
@@ -2912,7 +2939,7 @@ void DAutomap::drawPlayers ()
 			arrow = &MapArrow[0];
 			numarrowlines = MapArrow.Size();
 		}
-		drawLineCharacter(arrow, numarrowlines, 0, angle, AMColors[AMColors.YourColor], pt.x, pt.y);
+		drawLineCharacter(arrow, numarrowlines, TopDownCamera ? cam_topdown_player_scale : 0, angle, AMColors[AMColors.YourColor], pt.x, pt.y);
 		return;
 	}
 
@@ -2966,7 +2993,7 @@ void DAutomap::drawPlayers ()
 				angle -= players[consoleplayer].camera->InterpolatedAngles(r_viewpoint.TicFrac).Yaw - DAngle::fromDeg(90.);
 			}
 
-			drawLineCharacter(&MapArrow[0], MapArrow.Size(), 0, angle, color, pt.x, pt.y);
+			drawLineCharacter(&MapArrow[0], MapArrow.Size(), TopDownCamera ? cam_topdown_player_scale : 0, angle, color, pt.x, pt.y);
 		}
     }
 }
@@ -3077,8 +3104,9 @@ void DAutomap::drawThings ()
 
 					if (texture == nullptr) goto drawTriangle;	// fall back to standard display if no sprite can be found.
 
-					const double spriteXScale = (t->Scale.X * (10. / 16.) * scale_mtof);
-					const double spriteYScale = (t->Scale.Y * (10. / 16.) * scale_mtof);
+					const double topDownScale = (t->flags3 & MF3_ISMONSTER) ? cam_topdown_monster_scale : cam_topdown_thing_scale;
+					const double spriteXScale = (t->Scale.X * (10. / 16.) * scale_mtof * (TopDownCamera ? topDownScale : 1.0));
+					const double spriteYScale = (t->Scale.Y * (10. / 16.) * scale_mtof * (TopDownCamera ? topDownScale : 1.0));
 
 					if (TopDownCamera || am_thingrenderstyles) DrawMarker(texture, p.x, p.y, 0, !!(frame->Flip & (1 << rotation)),
 						spriteXScale, spriteYScale, t->Translation, t->Alpha, t->fillcolor, t->RenderStyle);
@@ -3327,6 +3355,72 @@ void DAutomap::drawCrosshair (const AMColor &color)
 	twod->AddPixel(f_w/2, (f_h+1)/2, color.RGB);
 }
 
+void DAutomap::drawTopDownAimReticle()
+{
+	if (!cam_topdown_crosshair)
+	{
+		return;
+	}
+
+	AActor *const player = players[consoleplayer].mo;
+	if (player == nullptr || player->Level != Level)
+	{
+		return;
+	}
+
+	// Use the same auto-aim resolution and trace setup as the engine's
+	// third-person crosshair. This puts the marker on the gameplay ray's true
+	// world impact rather than estimating from the screen centre or camera yaw.
+	FTranslatedLineTarget target = {};
+	const DAngle pitch = P_BulletSlope(player, &target, ALF_PORTALRESTRICT);
+	const DAngle yaw = target.linetarget != nullptr ? target.attackAngleFromSource : player->Angles.Yaw;
+	const double shootOffsetZ = player->Center() - player->Z() + player->AttackOffset();
+	FLineTraceData trace = {};
+	P_LineTrace(player, yaw, PLAYERMISSILERANGE, pitch, TRF_NOSKY, shootOffsetZ, 0.0, 0.0, &trace);
+
+	auto toMapPortalGroup = [this](DVector2 position)
+	{
+		if (sector_t *const sector = Level->PointInSector(position))
+		{
+			position += Level->Displacements.getOffset(sector->PortalGroup, MapPortalGroup);
+		}
+		return position;
+	};
+
+	const DVector2 origin = toMapPortalGroup(player->InterpolatedPosition(r_viewpoint.TicFrac).XY());
+	const DVector2 impact = toMapPortalGroup(trace.HitLocation.XY());
+	const int originX = f_x + CXMTOF(origin.X);
+	const int originY = f_y + CYMTOF(origin.Y);
+	const int impactX = f_x + CXMTOF(impact.X);
+	const int impactY = f_y + CYMTOF(impact.Y);
+	if (impactX < f_x || impactX >= f_x + f_w || impactY < f_y || impactY >= f_y + f_h)
+	{
+		return;
+	}
+
+	const uint32_t color = AMColors[AMColors.XHairColor].RGB;
+	if (cam_topdown_aim_guide)
+	{
+		twod->AddLine(DVector2(originX, originY), DVector2(impactX, impactY), nullptr, color, 112);
+	}
+
+	// Black underlay keeps the exact point legible over bright floors, sprites,
+	// and walls. The four open arms leave the impact pixel unobscured.
+	constexpr int OuterRadius = 11;
+	constexpr int InnerRadius = 3;
+	constexpr uint32_t Outline = 0x000000;
+	auto drawReticleArms = [this, impactX, impactY, OuterRadius, InnerRadius](uint32_t armColor, double thickness, uint8_t alpha)
+	{
+		twod->AddThickLine(DVector2(impactX - OuterRadius, impactY), DVector2(impactX - InnerRadius, impactY), thickness, armColor, alpha);
+		twod->AddThickLine(DVector2(impactX + InnerRadius, impactY), DVector2(impactX + OuterRadius, impactY), thickness, armColor, alpha);
+		twod->AddThickLine(DVector2(impactX, impactY - OuterRadius), DVector2(impactX, impactY - InnerRadius), thickness, armColor, alpha);
+		twod->AddThickLine(DVector2(impactX, impactY + InnerRadius), DVector2(impactX, impactY + OuterRadius), thickness, armColor, alpha);
+	};
+	drawReticleArms(Outline, 3.0, 224);
+	drawReticleArms(color, 1.0, 255);
+	twod->AddPixel(impactX, impactY, color);
+}
+
 //=============================================================================
 //
 //
@@ -3343,21 +3437,38 @@ void DAutomap::Drawer (int bottom)
 	if (!automapactive)
 		return;
 
-	if (TopDownCamera || am_followplayer)
+	if ((TopDownCamera && !cam_topdown_freepan) || (!TopDownCamera && am_followplayer))
 	{
 		doFollowPlayer();
 	}
 	else
 	{
 		m_paninc.x = m_paninc.y = 0;
-		if (buttonMap.ButtonDown(Button_AM_PanLeft))
-			m_paninc.x -= FTOM(F_PANINC) * delta * TICRATE;
-		if (buttonMap.ButtonDown(Button_AM_PanRight))
-			m_paninc.x += FTOM(F_PANINC) * delta * TICRATE;
-		if (buttonMap.ButtonDown(Button_AM_PanUp))
-			m_paninc.y += FTOM(F_PANINC) * delta * TICRATE;
-		if (buttonMap.ButtonDown(Button_AM_PanDown))
-			m_paninc.y -= FTOM(F_PANINC) * delta * TICRATE;
+		if (TopDownCamera)
+		{
+			// The camera receives the local movement command in north-up map
+			// coordinates. Normalize diagonals so free framing has one speed.
+			DVector2 pan = TopDownPanInput;
+			const double panLength = pan.Length();
+			if (panLength > 50.0)
+			{
+				pan *= 50.0 / panLength;
+			}
+			const double panScale = FTOM(F_PANINC) * delta * TICRATE * cam_topdown_pan_speed / 50.0;
+			m_paninc.x = pan.X * panScale;
+			m_paninc.y = pan.Y * panScale;
+		}
+		else
+		{
+			if (buttonMap.ButtonDown(Button_AM_PanLeft))
+				m_paninc.x -= FTOM(F_PANINC) * delta * TICRATE;
+			if (buttonMap.ButtonDown(Button_AM_PanRight))
+				m_paninc.x += FTOM(F_PANINC) * delta * TICRATE;
+			if (buttonMap.ButtonDown(Button_AM_PanUp))
+				m_paninc.y += FTOM(F_PANINC) * delta * TICRATE;
+			if (buttonMap.ButtonDown(Button_AM_PanDown))
+				m_paninc.y -= FTOM(F_PANINC) * delta * TICRATE;
+		}
 	}
 
 	// Change the zoom if necessary
@@ -3417,7 +3528,9 @@ void DAutomap::Drawer (int bottom)
 
 	drawAuthorMarkers();
 
-	if (!viewactive && !TopDownCamera)
+	if (TopDownCamera)
+		drawTopDownAimReticle();
+	else if (!viewactive)
 		drawCrosshair(AMColors[AMColors.XHairColor]);
 
 	drawMarks();

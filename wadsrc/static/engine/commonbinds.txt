@@ -35,6 +35,7 @@ f10 menu_quit
 tab togglemap
 p togglephotomode
 o toggletopdowncamera
+i toggletopdownpan
 pause pause
 sysrq screenshot
 t messagemode

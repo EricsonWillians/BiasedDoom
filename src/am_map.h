@@ -56,6 +56,8 @@ public:
 	// Experimental top-down mode uses the automap's own coordinate transform
 	// instead of trying to reproduce it in a renderer or HUD overlay.
 	virtual void SetTopDownCamera(bool enabled, bool playerSprite) = 0;
+	// North-up map-space movement from the local player's free-pan input.
+	virtual void SetTopDownCameraPan(const DVector2 &movement) = 0;
 
 };
 

@@ -40,6 +40,33 @@ CUSTOM_CVAR(Int, cam_topdown_player_marker, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 	}
 }
 
+CUSTOM_CVAR(Float, cam_topdown_player_scale, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const float clampedScale = clamp<float>(self, 0.25f, 4.0f);
+	if (self != clampedScale) self = clampedScale;
+}
+
+CUSTOM_CVAR(Float, cam_topdown_monster_scale, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const float clampedScale = clamp<float>(self, 0.25f, 4.0f);
+	if (self != clampedScale) self = clampedScale;
+}
+
+CUSTOM_CVAR(Float, cam_topdown_thing_scale, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const float clampedScale = clamp<float>(self, 0.25f, 4.0f);
+	if (self != clampedScale) self = clampedScale;
+}
+
+CVAR(Bool, cam_topdown_crosshair, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, cam_topdown_freepan, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+CUSTOM_CVAR(Float, cam_topdown_pan_speed, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const float clampedSpeed = clamp<float>(self, 0.25f, 4.0f);
+	if (self != clampedSpeed) self = clampedSpeed;
+}
+
 namespace
 {
 enum EExperimentalCameraMode
@@ -94,6 +121,7 @@ void ReleaseTopDownAutomap()
 
 	if (TopDownCamera.AutomapLevel != nullptr && TopDownCamera.AutomapLevel->automap != nullptr)
 	{
+		TopDownCamera.AutomapLevel->automap->SetTopDownCameraPan({});
 		TopDownCamera.AutomapLevel->automap->SetTopDownCamera(false, false);
 	}
 
@@ -267,7 +295,7 @@ CUSTOM_CVAR(Float, cam_photo_fov, 75.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, cam_photo_showhud, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 // Retained for configuration compatibility with the superseded 3D top-down
-// renderer. The Automap presentation has no separate aim-overlay controls.
+// renderer. The native aim reticle uses the actual line trace instead.
 CUSTOM_CVAR(Float, cam_topdown_aim_radius, 128.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedRadius = clamp<float>(self, 48.0f, 320.0f);
@@ -331,6 +359,17 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 		const DVector2 cameraRight = { cameraForward.Y, -cameraForward.X };
 		const DVector2 requestedMove = cameraForward * double(cmd.forwardmove)
 			+ cameraRight * double(cmd.sidemove);
+		if (primaryLevel != nullptr && primaryLevel->automap != nullptr)
+		{
+			primaryLevel->automap->SetTopDownCameraPan(cam_topdown_freepan ? requestedMove : DVector2{});
+		}
+
+		if (cam_topdown_freepan)
+		{
+			// W/A/S/D becomes north-up camera movement while yaw remains live for aiming.
+			cmd.forwardmove = cmd.sidemove = cmd.upmove = 0;
+			return;
+		}
 		const DVector2 playerForward = playerYaw.ToVector();
 		const DVector2 playerRight = { playerForward.Y, -playerForward.X };
 		cmd.forwardmove = short(round(requestedMove | playerForward));
@@ -432,4 +471,20 @@ CCMD(toggletopdowncamera)
 	}
 	cam_experimental_mode = cam_experimental_mode == ECM_TopDown ? ECM_Normal : ECM_TopDown;
 	Printf("Top-Down Camera %s\n", cam_experimental_mode == ECM_TopDown ? "enabled" : "disabled");
+}
+
+CCMD(toggletopdownpan)
+{
+	if (!ECamera_IsTopDownModeActive())
+	{
+		Printf("Top-Down Free Pan is available only while Top-Down Camera is active.\n");
+		return;
+	}
+
+	cam_topdown_freepan = !cam_topdown_freepan;
+	if (!cam_topdown_freepan && primaryLevel != nullptr && primaryLevel->automap != nullptr)
+	{
+		primaryLevel->automap->SetTopDownCameraPan({});
+	}
+	Printf("Top-Down Free Pan %s\n", cam_topdown_freepan ? "enabled (W/A/S/D move the camera)" : "disabled (following player)");
 }

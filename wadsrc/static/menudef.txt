@@ -1487,6 +1487,7 @@ OptionMenu "OtherControlsMenu" protected
 	Control    "$CNTRLMNU_CHASECAM"        , "chase"
 	Control    "Toggle Photo Mode / Free Camera", "togglephotomode"
 	Control    "Toggle Top-Down Camera", "toggletopdowncamera"
+	Control    "Toggle Top-Down Free Pan", "toggletopdownpan"
 	Control    "$CNTRLMNU_COOPSPY"         , "spynext"
 	Control    "$CNTRLMNU_COOPSPYPREV"     , "spyprev"
 	Control    "$CNTRLMNU_COOPSPYCANCEL"   , "spycancel"
@@ -1911,6 +1912,15 @@ OptionMenu "ExperimentalCameraOptions" protected
 	StaticText "Shows actors, pickups, and special boundaries"
 	StaticText "Actors use their live animated sprites"
 	Option "Player marker",                      "cam_topdown_player_marker", "TopDownPlayerMarkers"
+	Slider "Player marker size",                 "cam_topdown_player_scale", 0.25, 4.0, 0.05, 2
+	Slider "Monster sprite size",                "cam_topdown_monster_scale", 0.25, 4.0, 0.05, 2
+	Slider "Thing / pickup sprite size",         "cam_topdown_thing_scale", 0.25, 4.0, 0.05, 2
+	Option "Exact impact reticle",                "cam_topdown_crosshair", "OnOff"
+	Option "Exact aim ray",                       "cam_topdown_aim_guide", "OnOff"
+	Option "Free-pan camera",                     "cam_topdown_freepan", "OnOff"
+	Slider "Free-pan speed",                      "cam_topdown_pan_speed", 0.25, 4.0, 0.05, 2
+	StaticText "Free-pan: W/A/S/D frames the map"
+	StaticText "Shortcut: I (rebind in Customize Controls)"
 	StaticText "Use Automap options for zoom and colors"
 }
 
