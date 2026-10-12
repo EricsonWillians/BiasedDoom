@@ -136,6 +136,10 @@ Avoid using bare `wine biaseddoom.exe` as the only test because GUI-subsystem Wi
 
 Before publishing a release as non-draft:
 
+- Start once with a fresh user configuration and confirm Rendering Presets
+  reports `Vanilla+` / `Classic Balanced` / `Disabled`, no BiasedDoom global
+  fog or optional image effect is active, and the camera opens in normal
+  first-person view. Map-authored fog must remain unaffected.
 - Confirm the Linux asset is an `.AppImage`, not a tarball containing one.
 - Run `tools/check-appimage-deps.sh <release>.AppImage`; it must report dependency closure OK.
 - Run `tools/smoke-appimage.sh <release>.AppImage ubuntu:22.04` and repeat with `ubuntu:20.04`; both must reach the normal no-IWAD startup message without loader errors.

@@ -25,8 +25,7 @@ cleanup() {
 trap cleanup EXIT
 
 wait_for_redis() {
-	local attempt
-	for attempt in $(seq 1 30); do
+	for _ in $(seq 1 30); do
 		if docker exec "$redis_id" redis-cli ping >/dev/null 2>&1; then
 			return 0
 		fi

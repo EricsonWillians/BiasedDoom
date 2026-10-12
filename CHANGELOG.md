@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.20] - 2026-10-12
+
+### Added
+
+- **Experimental local cameras:** Photo Mode / Free Camera and the playable,
+  north-up Top-Down view are now available from the Appearance menu. Top-Down
+  maps pointer, stick, gyro, and keyboard-look input to an on-map aim cursor;
+  preserves classic vertical autoaim; supports animated actor markers,
+  interaction markers, free panning, and per-marker scale controls. Both
+  modes remain unavailable in demos and netgames to preserve determinism.
+- **Online-play foundation:** the launcher can host and join player-run
+  sessions with public browsing, join codes, encrypted relay fallback,
+  host-reviewed mod transfer, reconnect, join-in-progress, and host recovery.
+  See the online-multiplayer guide for the supported workflow and limits.
+
+### Changed
+
+- **Fresh-install rendering baseline:** the initial preset layers are now
+  `Vanilla+` graphics, `Classic Balanced` lighting, and `Disabled` fog. Every
+  optional image effect and BiasedDoom global-fog control starts inactive, so
+  a new configuration has the unmodified Doom presentation. Map-authored fog
+  remains part of the map and is not overridden. Existing archived choices are
+  deliberately preserved.
+- **Fresh-install camera baseline:** new configurations start in normal
+  first-person view; third-person, Photo Mode, and Top-Down remain opt-in.
+
+### Fixed
+
+- **Linux OpenAL startup:** bounded device initialization avoids a backend
+  startup hang while preserving normal audio fallback behavior.
+- **Release bootstrap reliability:** CI and release jobs explicitly install
+  vcpkg's `curl` and `unzip` prerequisites, and regression coverage guards
+  the self-contained bootstrap path. This prevents a clean worker from
+  failing before configuration because it relied on a hosted-image package.
+- **Top-Down gameplay presentation:** aim, player and actor rendering,
+  orthographic framing, follow-pan retention, autoaim, and use-line visibility
+  are aligned with the displayed Automap state.
+
 ## [4.15.19] - 2026-10-08
 
 ### Added

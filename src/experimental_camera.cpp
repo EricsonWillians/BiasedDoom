@@ -294,6 +294,8 @@ bool CanToggleCamera(const char* modeName)
 }
 }
 
+// Fresh installs always start with the normal first-person view. The two
+// experimental modes remain an opt-in archived preference.
 CUSTOM_CVAR(Int, cam_experimental_mode, ECM_Normal, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const int clampedMode = clamp<int>(self, ECM_Normal, ECM_TopDown);

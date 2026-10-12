@@ -80,6 +80,10 @@ jobs:
         if [[ -n "${{ matrix.config.deps_cmdline }}" ]]; then
           eval ${{ matrix.config.deps_cmdline }}
         fi
+        if [[ "${RUNNER_OS}" == "Linux" ]]; then
+          # vcpkg's bootstrap script uses both tools on a clean runner.
+          sudo apt-get install --no-install-recommends -y curl unzip
+        fi
         if [[ "${RUNNER_OS}" == "macOS" ]]; then
           echo "$(brew --prefix libtool)/libexec/gnubin" >> "${GITHUB_PATH}"
         fi
@@ -320,6 +324,7 @@ jobs:
           autoconf-archive \
           automake \
           cmake \
+          curl \
           g++-mingw-w64 \
           gcc-mingw-w64 \
           git \
@@ -332,7 +337,8 @@ jobs:
           mingw-w64 \
           nasm \
           ninja-build \
-          pkg-config
+          pkg-config \
+          unzip
 
     - name: Build Windows package with MinGW
       shell: bash

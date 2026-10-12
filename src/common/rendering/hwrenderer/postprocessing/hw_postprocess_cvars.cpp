@@ -4362,11 +4362,11 @@ CVAR(Int, bd_autopaired_lighting, 0,
 CVAR(Int, bd_autopaired_fog, 0,
      CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 
-CUSTOM_CVAR(Int, bd_graphics_preset, 0,
+// Keep the selectors inert during startup: the individual feature defaults
+// below materialize Vanilla for a new installation, while an existing
+// configuration keeps every explicitly saved custom value intact.
+CUSTOM_CVAR(Int, bd_graphics_preset, 1,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
-  // The auto-pair state itself survives config load (it is archived), so no
-  // lazy re-inference is needed here; SetGraphicsPreset consults the loaded
-  // tracker values directly.
   SetGraphicsPreset(self);
 }
 
@@ -4432,10 +4432,10 @@ CUSTOM_CVAR(Float, bd_bloom_intensity, 1.0f,
 
 CVAR(Bool, bd_preset_locked, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
-CUSTOM_CVAR(Bool, bd_postfx_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+CUSTOM_CVAR(Bool, bd_postfx_enable, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   OnPresetFeatureChanged(self);
 }
-CUSTOM_CVAR(Int, bd_postfx_quality, 3, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+CUSTOM_CVAR(Int, bd_postfx_quality, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
     self = 0;
   if (self > 3)
@@ -5068,7 +5068,7 @@ CUSTOM_CVAR(Float, bd_dynlight_falloff_exponent, 2.0f,
   OnLightingFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Int, bd_lighting_preset, 0,
+CUSTOM_CVAR(Int, bd_lighting_preset, 1,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
   if (self < 0)
     self = 0;
@@ -5331,7 +5331,7 @@ CUSTOM_CVAR(Bool, bd_sprite_lighting_refine, false, CVAR_ARCHIVE | CVAR_GLOBALCO
   OnLightingFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Int, bd_fog_preset, 0,
+CUSTOM_CVAR(Int, bd_fog_preset, 1,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
   if (self < 0)
     self = 0;
@@ -5351,7 +5351,7 @@ CUSTOM_CVAR(Int, bd_fog_preset, 0,
   ApplyFogPreset(self);
 }
 
-CUSTOM_CVAR(Int, bd_fog_mode, 1,
+CUSTOM_CVAR(Int, bd_fog_mode, 0,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
     self = 0;
@@ -5406,7 +5406,7 @@ CUSTOM_CVAR(Float, bd_fog_color_strength, 0.65f,
   OnFogFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Float, bd_fog_sky_strength, 0.85f,
+CUSTOM_CVAR(Float, bd_fog_sky_strength, 0.0f,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0.0f)
     self = 0.0f;
@@ -5416,7 +5416,7 @@ CUSTOM_CVAR(Float, bd_fog_sky_strength, 0.85f,
   OnFogFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Float, bd_fog_thick_distance, 384.0f,
+CUSTOM_CVAR(Float, bd_fog_thick_distance, 0.0f,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0.0f)
     self = 0.0f;
@@ -5436,7 +5436,7 @@ CUSTOM_CVAR(Float, bd_fog_thick_multiplier, 8.0f,
   OnFogFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Int, bd_fog_gradient_mode, 1,
+CUSTOM_CVAR(Int, bd_fog_gradient_mode, 0,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
     self = 0;
@@ -5451,7 +5451,7 @@ CUSTOM_CVAR(Color, bd_fog_gradient_color, 0x6b746b,
   OnFogFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Float, bd_fog_gradient_strength, 0.35f,
+CUSTOM_CVAR(Float, bd_fog_gradient_strength, 0.0f,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0.0f)
     self = 0.0f;
@@ -5461,7 +5461,7 @@ CUSTOM_CVAR(Float, bd_fog_gradient_strength, 0.35f,
   OnFogFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Float, bd_fog_gradient_scale, 1.15f,
+CUSTOM_CVAR(Float, bd_fog_gradient_scale, 1.0f,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0.0f)
     self = 0.0f;
@@ -5491,7 +5491,7 @@ CUSTOM_CVAR(Float, bd_fog_direction_pitch, 0.0f,
   OnFogFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Int, bd_fog_quality, 2,
+CUSTOM_CVAR(Int, bd_fog_quality, 0,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
     self = 0;
@@ -5500,7 +5500,7 @@ CUSTOM_CVAR(Int, bd_fog_quality, 2,
   OnFogFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Float, bd_fog_height_falloff, 0.72f,
+CUSTOM_CVAR(Float, bd_fog_height_falloff, 0.0f,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0.0f)
     self = 0.0f;
@@ -5509,7 +5509,7 @@ CUSTOM_CVAR(Float, bd_fog_height_falloff, 0.72f,
   OnFogFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Float, bd_fog_turbulence, 0.22f,
+CUSTOM_CVAR(Float, bd_fog_turbulence, 0.0f,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0.0f)
     self = 0.0f;

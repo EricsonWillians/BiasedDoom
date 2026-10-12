@@ -11,8 +11,8 @@
 #     fog 1).
 #
 # Runs the engine under xvfb by default (or the engine's null-video driver
-# with --headless) with a fresh config and a Python driver that switches
-# presets and queries the selectors through the console.
+# with --headless) with a fresh config. It first asserts the shipped Vanilla
+# defaults, then uses a Python driver to switch presets and query selectors.
 set -euo pipefail
 
 usage() {
@@ -125,11 +125,60 @@ cat > "${driver_src}/pyscripts/main.py" <<'EOF'
 import biaseddoom as bd
 
 SELECTORS = ("bd_graphics_preset", "bd_lighting_preset", "bd_fog_preset")
+CAMERA_DEFAULTS = (
+    "chase_enabled",
+    "chasedemo",
+    "cam_experimental_mode",
+    "r_deathcamera",
+)
+VANILLA_DEFAULTS = (
+    "bd_postfx_enable",
+    "bd_postfx_quality",
+    "bd_bloom_enable",
+    "bd_vignette_enable",
+    "bd_vibrance_enable",
+    "bd_whitebalance_enable",
+    "bd_grade_enable",
+    "bd_hueshift_enable",
+    "bd_posterize_enable",
+    "bd_edgeglow_enable",
+    "bd_godrays_enable",
+    "bd_lensflare_enable",
+    "bd_clarity_enable",
+    "bd_chromatic_enable",
+    "bd_filmgrain_enable",
+    "bd_sharpen_enable",
+    "bd_retro_pixel_enable",
+    "bd_vhs_enable",
+    "bd_vhs_panic_enable",
+    "bd_colorgrade_mode",
+    "bd_colorgrade_lut",
+    "gl_crt_mode",
+    "gl_tonemap",
+    "gl_atmosphere",
+    "gl_fxaa",
+    "gl_ssao",
+    "bd_fog_mode",
+    "bd_fog_sky_strength",
+    "bd_fog_thick_distance",
+    "bd_fog_gradient_mode",
+    "bd_fog_gradient_strength",
+    "bd_fog_gradient_scale",
+    "bd_fog_quality",
+    "bd_fog_height_falloff",
+    "bd_fog_turbulence",
+)
 
 
 def query_all():
     for cvar in SELECTORS:
         bd.execute(cvar)
+
+
+def step_check_defaults():
+    for cvar in SELECTORS + CAMERA_DEFAULTS + VANILLA_DEFAULTS:
+        bd.execute(cvar)
+    bd.execute("echo MARK_DEFAULTS")
 
 
 def step_link_on():
@@ -184,16 +233,17 @@ def step_check_reset():
 
 @bd.on("map_load")
 def on_map_load(event):
-    bd.schedule(step_link_on, delay=5)
-    bd.schedule(step_check_paired, delay=15)
-    bd.schedule(step_new_pair, delay=25)
-    bd.schedule(step_check_new_pair, delay=35)
-    bd.schedule(step_diverge, delay=45)
-    bd.schedule(step_check_diverged, delay=55)
-    bd.schedule(step_unlink, delay=65)
-    bd.schedule(step_check_unlinked, delay=75)
-    bd.schedule(step_reset, delay=85)
-    bd.schedule(step_check_reset, delay=95)
+    bd.schedule(step_check_defaults, delay=5)
+    bd.schedule(step_link_on, delay=15)
+    bd.schedule(step_check_paired, delay=25)
+    bd.schedule(step_new_pair, delay=35)
+    bd.schedule(step_check_new_pair, delay=45)
+    bd.schedule(step_diverge, delay=55)
+    bd.schedule(step_check_diverged, delay=65)
+    bd.schedule(step_unlink, delay=75)
+    bd.schedule(step_check_unlinked, delay=85)
+    bd.schedule(step_reset, delay=95)
+    bd.schedule(step_check_reset, delay=105)
 EOF
 
 driver_pk3="${test_root}/presetlink_test.pk3"
@@ -241,6 +291,18 @@ fail() {
 grep -Fq 'PYTEST PRESETLINK_DONE' "${stdout_file}" || fail "driver did not complete"
 
 # ---------------------------------------------------------------------------
+# Fresh configuration: all rendering layers must start on their Vanilla
+# presets. The graphics pipeline remains available, but every visual effect
+# (including all engine-added fog) is disabled.
+# ---------------------------------------------------------------------------
+
+awk '/MARK_DEFAULTS/{exit} /"bd_graphics_preset" is "1"/{g=1} /"bd_lighting_preset" is "1"/{l=1} /"bd_fog_preset" is "1"/{f=1} /"bd_postfx_enable" is "true"/{p=1} /"bd_postfx_quality" is "1"/{q=1} /"bd_bloom_enable" is "false"/{b=1} /"bd_vignette_enable" is "false"/{v=1} /"bd_vibrance_enable" is "false"/{i=1} /"bd_whitebalance_enable" is "false"/{w=1} /"bd_grade_enable" is "false"/{g2=1} /"bd_hueshift_enable" is "false"/{u=1} /"bd_posterize_enable" is "false"/{o=1} /"bd_edgeglow_enable" is "false"/{e=1} /"bd_godrays_enable" is "false"/{y=1} /"bd_lensflare_enable" is "false"/{l2=1} /"bd_clarity_enable" is "false"/{c2=1} /"bd_chromatic_enable" is "false"/{c=1} /"bd_filmgrain_enable" is "false"/{n=1} /"bd_sharpen_enable" is "false"/{s=1} /"bd_retro_pixel_enable" is "false"/{r=1} /"bd_vhs_enable" is "false"/{h=1} /"bd_vhs_panic_enable" is "false"/{x=1} /"bd_colorgrade_mode" is "0"/{d=1} /"bd_colorgrade_lut" is "0"/{l3=1} /"gl_crt_mode" is "0"/{j=1} /"gl_tonemap" is "0"/{t=1} /"gl_atmosphere" is "0"/{a=1} /"gl_fxaa" is "0"/{f2=1} /"gl_ssao" is "0"/{s2=1} /"bd_fog_mode" is "0"/{m=1} /"bd_fog_sky_strength" is "0"/{k=1} /"bd_fog_thick_distance" is "0"/{i2=1} /"bd_fog_gradient_mode" is "0"/{g3=1} /"bd_fog_gradient_strength" is "0"/{g4=1} /"bd_fog_gradient_scale" is "1"/{g5=1} /"bd_fog_quality" is "0"/{z=1} /"bd_fog_height_falloff" is "0"/{h2=1} /"bd_fog_turbulence" is "0"/{u2=1} END{exit !(g&&l&&f&&p&&q&&b&&v&&i&&w&&g2&&u&&o&&e&&y&&l2&&c2&&c&&n&&s&&r&&h&&x&&d&&l3&&j&&t&&a&&f2&&s2&&m&&k&&i2&&g3&&g4&&g5&&z&&h2&&u2)}' "${stdout_file}" \
+    || fail "fresh config should start with the complete Vanilla rendering configuration"
+
+awk '/MARK_DEFAULTS/{exit} /"chase_enabled" is "false"/{chase=1} /"chasedemo" is "false"/{demo=1} /"cam_experimental_mode" is "0"/{experimental=1} /"r_deathcamera" is "false"/{death=1} END{exit !(chase&&demo&&experimental&&death)}' "${stdout_file}" \
+    || fail "fresh config should start with the normal first-person camera"
+
+# ---------------------------------------------------------------------------
 # Linked: graphics preset 65 (Absolution) must drive lighting 40 and fog 18.
 # (Each step's queries print before that step's echo marker.)
 # ---------------------------------------------------------------------------
@@ -281,4 +343,4 @@ awk '/MARK_UNLINKED/{m=1} /MARK_RESET/{m=0} m && /"bd_lighting_preset" is "1"/{f
 awk '/MARK_UNLINKED/{m=1} /MARK_RESET/{m=0} m && /"bd_fog_preset" is "1"/{found=1} END{exit !found}' "${stdout_file}" \
     || fail "reset: fog preset should be 1 (Disabled)"
 
-printf 'PASS: preset linking, diverge-to-custom, and vanilla reset verified\n'
+printf 'PASS: vanilla defaults, preset linking, diverge-to-custom, and vanilla reset verified\n'

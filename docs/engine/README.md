@@ -9,10 +9,11 @@ These guides cover non-glTF engine features and gameplay-facing systems.
   and transfer, reconnect, join-in-progress, and host recovery.
 - [Classic-mod compatibility](mod-compatibility.md) — DeHackEd/BEX loading,
   DSDHacked/DECOHack sparse weapon sprites, MBF21 scope, and diagnostics.
-- [Rendering presets, bloom, and sector light bleed](rendering-presets.md) — searchable preset browsers, bloom tuning, sector-light fades, and live backend switching.
+- [Rendering presets, bloom, and sector light bleed](rendering-presets.md) — searchable preset browsers, a vanilla/no-global-fog fresh-install baseline, bloom tuning, sector-light fades, and live backend switching.
 - [Gamepad support](gamepad.md) — classic-first default layout, layout presets with coherent aiming-model coupling, vanilla vertical autoaim and the `bd_classic_autoaim` override for `+WEAPON.NOAUTOAIM` mods (Brutal Doom), gyro look, and sound-driven haptics.
-- [Experimental cameras](experimental-camera.md) — local-only Photo Mode / Free
-  Camera and top-down framing, with menu controls and shortcuts.
+- [Experimental cameras](experimental-camera.md) — normal first-person by
+  default, plus opt-in local-only Photo Mode / Free Camera and top-down
+  framing, with menu controls and shortcuts.
 - [Recording and export](recording-and-export.md) — lossless PNG/RGB-AVI capture with synchronized game audio, configurable export folders, native demo takes, and recording shortcuts.
 - [Companion bots](companion-bots.md) — exact, host-authoritative co-op profile squads for normal maps and Doom procedural runs, including capacity, key-sharing, pass-through safety, legacy-command behavior, and procedural-transfer rules.
 - [Procedural map generation](procedural-map-generation.md) — the current recipe-to-UDMF pipeline, automatic run blueprints, accessibility contract, Doom I/Doom II support, endless-run flow, and regression commands.

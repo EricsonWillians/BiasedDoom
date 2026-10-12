@@ -5,6 +5,11 @@ presentation camera that never moves an actor. Top-Down is a local
 single-player gameplay view: it remaps local input to its visible map cursor
 and is unavailable in demos and netgames.
 
+Fresh configurations always start in the normal first-person view
+(`cam_experimental_mode` **Off**). Third-person, Photo Mode, and Top-Down are
+all opt-in; selecting or using a shortcut is required to enter an alternate
+camera mode.
+
 Open **Options → Display Options → Appearance → Experimental cameras** to
 select and tune a mode.
 

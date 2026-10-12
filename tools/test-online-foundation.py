@@ -291,6 +291,12 @@ def main() -> None:
     require("src/common/rendering/gl/gl_framebuffer.h", "::__GLsync *Fence")
     require(".github/workflows/continuous_integration.yml", "autoconf-archive")
     require(".github/workflows/continuous_integration.yml", "tools/bootstrap-vcpkg.sh")
+    # vcpkg needs both programs before it can fetch or extract its pinned
+    # tool on an empty Ubuntu runner. Keep the workflows self-contained
+    # instead of relying on packages baked into a hosted image.
+    require(".github/workflows/continuous_integration.yml", "curl unzip")
+    require(".github/workflows/release.yml", "curl")
+    require(".github/workflows/release.yml", "unzip")
     require(".github/workflows/continuous_integration.yml", "./build/biaseddoom-online-snapshot-fuzz")
     require("src/launcher/networkpage.cpp", "I approve downloading and mounting")
     require("src/launcher/networkpage.cpp", "Refresh public sessions")

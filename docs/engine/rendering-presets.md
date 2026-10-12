@@ -57,6 +57,13 @@ How they relate is controlled by one switch, **Link Preset Layers**
 graphics `Vanilla+`, lighting `Classic Balanced`, fog `Disabled` — the
 selectors themselves show exactly what vanilla means.
 
+Fresh configurations begin with this same baseline. All optional image effects
+and BiasedDoom global-fog controls start inactive, so they do not add haze or
+other post-processing to a new install. This only controls engine-added
+effects: fog authored by a map is preserved for Doom compatibility. An
+existing configuration keeps its explicitly saved choices rather than being
+reset during startup.
+
 The same lighting and fog controls remain available from the classic Lighting
 menu and the `Postprocess -> Atmosphere / Fog` submenu.
 
@@ -78,7 +85,7 @@ override a few settings, so their look tracks the base preset.
 
 | # | Preset | Tonemap | Lighting → Fog | Look |
 |---|--------|---------|----------------|------|
-| 2 | Modern Crisp | ACES (exp 1.20) | Modern Pretty → Disabled | The default "modern game" look: bloom, gentle vignette, sharpen. |
+| 2 | Modern Crisp | ACES (exp 1.20) | Modern Pretty → Disabled | A modern-game look: bloom, gentle vignette, sharpen. |
 | 19 | Clean Visibility *(extends 2)* | Uncharted2 (exp 1.25) | Bright Playable → Disabled | Readability-first: weak bloom, clarity filter, higher exposure floor. |
 | 38 | Competitive Clarity *(extends 2)* | Uncharted2 (exp 1.20) | Bright Playable → Disabled | Esports-style: no bloom, FXAA, sharpen + clarity. |
 | 43 | Clarity Max | Uncharted2 (exp 1.20) | Crisp Tactical → Disabled | Maximum sharpen + clarity, no bloom, no atmosphere. |

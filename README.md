@@ -109,6 +109,13 @@ Post-processing is organized as a set of practical submenus:
 
 The top-level menu opens **Rendering Presets**, the single home for the 100-preset Graphics selector, 75-preset Lighting selector, 53-preset Fog selector, their searchable browsers, and **Link Preset Layers**. With linking on (the default), selecting a graphics look also applies its named lighting/fog pairing; choosing a lighting or fog preset directly makes the graphics selector **Custom**. With linking off, the three selectors can be mixed independently. PostFX enable and quality remain on the main Postprocess menu. The detailed submenus are:
 
+Fresh configurations deliberately start with the vanilla baseline: **Vanilla+**
+graphics, **Classic Balanced** lighting, and **Disabled** fog. Optional bloom,
+grading, CRT/VHS, lens, color, and BiasedDoom global-fog effects are off until
+you select a look or enable them yourself. This does not remove fog authored by
+a map, which remains part of normal Doom compatibility. Existing saved visual
+settings are left unchanged.
+
 | Menu | What It Controls |
 |------|------------------|
 | Atmosphere / Fog | 53 searchable fog presets, atmospheric palettes, fog mode, fog color, density, scale, sky fog, wall fog, fog gradients, and fog direction |
@@ -131,6 +138,9 @@ Retro display options include VHS, CRT Standard Scanlines, Aperture Grille, Shad
 ### Third-Person Camera
 
 The third-person camera is now a first-class menu feature rather than a console-only chasecam toggle:
+
+Fresh configurations always begin in normal first-person view. Third-person,
+Photo Mode, and Top-Down are optional modes and stay disabled until selected.
 
 `Options -> Display Options -> Appearance -> Third-person camera`
 
