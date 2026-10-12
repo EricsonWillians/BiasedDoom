@@ -162,6 +162,9 @@ extern bool nosound;
 
 void I_InitSound ();
 void I_CloseSound();
+// This runs only in a short-lived Linux child process before normal audio
+// startup, so it must not initialize other engine subsystems.
+int I_OpenALContextProbe(const char *deviceName);
 
 extern ReverbContainer *DefaultEnvironments[26];
 

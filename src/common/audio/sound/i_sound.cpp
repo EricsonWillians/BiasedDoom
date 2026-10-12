@@ -36,6 +36,15 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <chrono>
+#include <thread>
+
+#ifdef __linux__
+#include <cerrno>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include "oalsound.h"
 
@@ -54,6 +63,7 @@
 
 EXTERN_CVAR (Float, snd_sfxvolume)
 EXTERN_CVAR(Float, snd_musicvolume)
+EXTERN_CVAR(String, snd_aldevice)
 CUSTOM_CVAR(Int, snd_samplerate, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	if (self != 0 && self != 8000 && self != 11025 && self != 22050 && self != 32000 && self != 44100 && self != 48000)
@@ -83,6 +93,86 @@ static std::chrono::steady_clock::time_point NextSoundInitRetry;
 static FString LastSoundInitError;
 static void I_UpdateSoundRecovery();
 extern FILE *Logfile;
+
+#ifdef __linux__
+static bool I_PreflightOpenALContext()
+{
+	// OpenAL Soft can block forever in alcCreateContext when a host PipeWire
+	// endpoint has stopped responding. Probe in a freshly exec'd child so a bad
+	// endpoint degrades to silent output instead of preventing the game window
+	// from opening. The child does no engine initialization beyond the probe.
+	const char *deviceName = strcmp(snd_aldevice, "Default") == 0
+		? "Default" : *snd_aldevice;
+	const int nullFd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+	const pid_t child = fork();
+	if (child == 0)
+	{
+		if (nullFd >= 0)
+		{
+			dup2(nullFd, STDOUT_FILENO);
+			dup2(nullFd, STDERR_FILENO);
+			if (nullFd > STDERR_FILENO)
+			{
+				close(nullFd);
+			}
+		}
+		char *const probeArgs[] = {
+			const_cast<char *>("/proc/self/exe"),
+			const_cast<char *>("-openal-context-probe"),
+			const_cast<char *>(deviceName),
+			nullptr
+		};
+		execv(probeArgs[0], probeArgs);
+		_exit(127);
+	}
+	if (nullFd >= 0)
+	{
+		close(nullFd);
+	}
+	if (child < 0)
+	{
+		LastSoundInitError = "Could not start the OpenAL safety probe; audio was disabled to keep startup responsive.";
+		return false;
+	}
+
+	constexpr auto timeout = std::chrono::seconds(2);
+	const auto deadline = std::chrono::steady_clock::now() + timeout;
+	int status = 0;
+	while (true)
+	{
+		const pid_t waited = waitpid(child, &status, WNOHANG);
+		if (waited == child)
+		{
+			if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+			{
+				return true;
+			}
+			LastSoundInitError = "OpenAL could not create a playback context; audio was disabled.";
+			return false;
+		}
+		if (waited < 0 && errno != EINTR)
+		{
+			LastSoundInitError = "Could not wait for the OpenAL safety probe; audio was disabled to keep startup responsive.";
+			return false;
+		}
+		if (std::chrono::steady_clock::now() >= deadline)
+		{
+			kill(child, SIGKILL);
+			while (waitpid(child, &status, 0) < 0 && errno == EINTR)
+			{
+			}
+			LastSoundInitError = "OpenAL context creation timed out after 2 seconds; audio was disabled so the game could start.";
+			return false;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+}
+#else
+static bool I_PreflightOpenALContext()
+{
+	return true;
+}
+#endif
 
 void I_SetSoundInitError(const char *message)
 {
@@ -306,6 +396,7 @@ void I_InitSound ()
 	nosound = !!Args->CheckParm ("-nosound");
 	nosfx = !!Args->CheckParm ("-nosfx");
 	LastSoundInitError = "";
+	bool openALContextProbePassed = true;
 
 	GSnd = NULL;
 	if (nosound)
@@ -328,7 +419,11 @@ void I_InitSound ()
 		#ifndef NO_OPENAL
 			if (IsOpenALPresent())
 			{
-				GSnd = new OpenALSoundRenderer;
+				openALContextProbePassed = I_PreflightOpenALContext();
+				if (openALContextProbePassed)
+				{
+					GSnd = new OpenALSoundRenderer;
+				}
 			}
 		#endif
 	}
@@ -341,7 +436,10 @@ void I_InitSound ()
 		{
 			I_StartAutomaticAudioLog();
 		}
-		SoundInitRetryPending = IsOpenALPresent();
+		// A timed-out context probe means a future retry would block the game
+		// loop again. Keep silent output until the user restarts after repairing
+		// the host audio service instead.
+		SoundInitRetryPending = IsOpenALPresent() && openALContextProbePassed;
 		if (SoundInitRetryPending)
 		{
 			if (SoundInitRetryAttempts == 0)
@@ -351,7 +449,7 @@ void I_InitSound ()
 		}
 		else
 		{
-			Printf(TEXTCOLOR_RED "Sound init failed. Using nosound.\n");
+			Printf(TEXTCOLOR_RED "Sound init failed. Using silent output.\n");
 		}
 		if (firstFailure)
 		{

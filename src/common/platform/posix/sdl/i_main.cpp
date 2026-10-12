@@ -49,6 +49,7 @@
 #include "cmdlib.h"
 #include "engineerrors.h"
 #include "i_interface.h"
+#include "i_sound.h"
 #include "i_system.h"
 #include "m_argv.h"
 #include "printf.h"
@@ -200,6 +201,15 @@ int main (int argc, char **argv)
 		progdir = "./";
 	}
 #endif
+
+	// The normal Linux audio startup watchdog launches this short-lived child
+	// before the rest of the engine. Keep it ahead of joystick setup and
+	// GameMain so a blocked host audio backend cannot make the game window wait.
+	if (Args->CheckParm("-openal-context-probe"))
+	{
+		const char *deviceName = Args->CheckValue("-openal-context-probe");
+		return I_OpenALContextProbe(deviceName != nullptr ? deviceName : "Default");
+	}
 
 	I_StartupJoysticks();
 

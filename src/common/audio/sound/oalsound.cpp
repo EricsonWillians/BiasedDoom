@@ -100,6 +100,54 @@ bool IsOpenALPresent()
 #endif
 }
 
+int I_OpenALContextProbe(const char *deviceName)
+{
+#ifdef NO_OPENAL
+	return 1;
+#else
+	if (!IsOpenALPresent())
+	{
+		return 1;
+	}
+
+	const ALCchar *requested = nullptr;
+	if (deviceName != nullptr && stricmp(deviceName, "Default") != 0)
+	{
+		requested = deviceName;
+	}
+
+	ALCdevice *device = alcOpenDevice(requested);
+	if (device == nullptr && requested != nullptr)
+	{
+		device = alcOpenDevice(nullptr);
+	}
+	if (device == nullptr)
+	{
+		return 1;
+	}
+
+	// Request no optional features here. The probe's purpose is only to verify
+	// that the host audio backend can create and activate a basic context.
+	ALCcontext *context = alcCreateContext(device, nullptr);
+	if (context == nullptr)
+	{
+		alcCloseDevice(device);
+		return 1;
+	}
+	if (alcMakeContextCurrent(context) == ALC_FALSE)
+	{
+		alcDestroyContext(context);
+		alcCloseDevice(device);
+		return 1;
+	}
+
+	alcMakeContextCurrent(nullptr);
+	alcDestroyContext(context);
+	alcCloseDevice(device);
+	return 0;
+#endif
+}
+
 
 
 
