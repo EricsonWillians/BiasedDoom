@@ -70,7 +70,7 @@
 #include "c_buttons.h"
 #include "d_buttons.h"
 #include "texturemanager.h"
-
+#include "experimental_camera.h"
 
 //=============================================================================
 //
@@ -964,6 +964,12 @@ class DAutomap :public DAutomapBase
 	double	min_scale_mtof; // used to tell when to stop zooming out
 	double	max_scale_mtof; // used to tell when to stop zooming in
 
+	// This mode is a full-screen use of the regular automap renderer. It owns
+	// only presentation policy; all map coordinates remain the normal automap
+	// coordinates used for floors, walls, and actor markers.
+	bool TopDownCamera = false;
+	bool TopDownPlayerSprite = false;
+
 	// old stuff for recovery later
 	double old_m_w, old_m_h;
 	double old_m_x, old_m_y;
@@ -1032,6 +1038,7 @@ class DAutomap :public DAutomapBase
 	void drawWalls(bool allmap);
 	void drawLineCharacter(const mline_t *lineguy, size_t lineguylines, double scale, DAngle angle, const AMColor &color, double x, double y);
 	void drawPlayers();
+	bool drawTopDownPlayerSprite(AActor *player, const DVector2 &position);
 	void drawKeys();
 	void drawThings();
 	void drawMarks();
@@ -1053,6 +1060,12 @@ public:
 	bool clearMarks() override;
 	DVector2 GetPosition() override;
 	void startDisplay() override;
+	void SetTopDownCamera(bool enabled, bool playerSprite) override;
+
+	bool IsRotating() const
+	{
+		return !TopDownCamera && (am_rotate == 1 || (am_rotate == 2 && viewactive));
+	}
 
 };
 
@@ -1077,6 +1090,18 @@ IMPLEMENT_CLASS(DAutomap, false, false)
 DVector2 DAutomap::GetPosition()
 {
 	return DVector2((m_x + m_w / 2), (m_y + m_h / 2));
+}
+
+void DAutomap::SetTopDownCamera(bool enabled, bool playerSprite)
+{
+	TopDownCamera = enabled;
+	TopDownPlayerSprite = enabled && playerSprite;
+	if (enabled)
+	{
+		// Recenter on the exact interpolated player position on the first frame.
+		// Regular follow state remains untouched for when the mode is exited.
+		f_oldloc.x = FLT_MAX;
+	}
 }
 
 //=============================================================================
@@ -1292,7 +1317,7 @@ void DAutomap::changeWindowLoc ()
 
 	oincx = incx = m_paninc.x * twod->GetWidth() / 320;
 	oincy = incy = m_paninc.y * twod->GetHeight() / 200;
-	if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+	if (IsRotating())
 	{
 		rotate(&incx, &incy, players[consoleplayer].camera->InterpolatedAngles(r_viewpoint.TicFrac).Yaw - DAngle::fromDeg(90.));
 	}
@@ -1533,7 +1558,7 @@ void DAutomap::doFollowPlayer ()
 			// do the parallax parchment scrolling.
 			sx = (ampos.X - f_oldloc.x);
 			sy = (f_oldloc.y - ampos.Y);
-			if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+			if (IsRotating())
 			{
 				rotate(&sx, &sy, cam->InterpolatedAngles(r_viewpoint.TicFrac).Yaw - DAngle::fromDeg(90));
 			}
@@ -1855,7 +1880,7 @@ void DAutomap::drawGrid (int color)
 		ml.b.x = x;
 		ml.a.y = miny - exty;
 		ml.b.y = ml.a.y + minlen;
-		if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+		if (IsRotating())
 		{
 			rotatePoint (&ml.a.x, &ml.a.y);
 			rotatePoint (&ml.b.x, &ml.b.y);
@@ -1875,7 +1900,7 @@ void DAutomap::drawGrid (int color)
 		ml.b.x = ml.a.x + minlen;
 		ml.a.y = y;
 		ml.b.y = y;
-		if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+		if (IsRotating())
 		{
 			rotatePoint (&ml.a.x, &ml.a.y);
 			rotatePoint (&ml.b.x, &ml.b.y);
@@ -2049,7 +2074,7 @@ void DAutomap::drawSubsectors()
 		{
 			mpoint_t pt = { sub->firstline[j].v1->fX(),
 							sub->firstline[j].v1->fY() };
-			if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+			if (IsRotating())
 			{
 				rotatePoint(&pt.x, &pt.y);
 			}
@@ -2145,7 +2170,7 @@ void DAutomap::drawSubsectors()
 			rotate(&originpt.x, &originpt.y, rotation);
 		}
 		// Apply the automap's rotation to the texture origin.
-		if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+		if (IsRotating())
 		{
 			rotation = rotation + DAngle::fromDeg(90.) - players[consoleplayer].camera->InterpolatedAngles(r_viewpoint.TicFrac).Yaw;
 			rotatePoint(&originpt.x, &originpt.y);
@@ -2268,7 +2293,7 @@ void DAutomap::drawSeg(seg_t *seg, const AMColor &color)
 	l.b.x = seg->v2->fX();
 	l.b.y = seg->v2->fY();
 
-	if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+	if (IsRotating())
 	{
 		rotatePoint (&l.a.x, &l.a.y);
 		rotatePoint (&l.b.x, &l.b.y);
@@ -2284,7 +2309,7 @@ void DAutomap::drawPolySeg(FPolySeg *seg, const AMColor &color)
 	l.b.x = seg->v2.pos.X;
 	l.b.y = seg->v2.pos.Y;
 
-	if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+	if (IsRotating())
 	{
 		rotatePoint (&l.a.x, &l.a.y);
 		rotatePoint (&l.b.x, &l.b.y);
@@ -2587,7 +2612,7 @@ void DAutomap::drawWalls (bool allmap)
 			l.b.x = (line.v2->fX() + offset.X);
 			l.b.y = (line.v2->fY() + offset.Y);
 
-			if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+			if (IsRotating())
 			{
 				rotatePoint(&l.a.x, &l.a.y);
 				rotatePoint(&l.b.x, &l.b.y);
@@ -2799,9 +2824,50 @@ void DAutomap::drawLineCharacter(const mline_t *lineguy, size_t lineguylines, do
 //
 //=============================================================================
 
+bool DAutomap::drawTopDownPlayerSprite(AActor *player, const DVector2 &position)
+{
+	if (player == nullptr || player->sprite <= 0)
+	{
+		return false;
+	}
+
+	const spritedef_t& sprite = sprites[player->sprite];
+	spriteframe_t* frame = nullptr;
+	FGameTexture* texture = nullptr;
+	int rotation = 0;
+
+	// Use the actor's current animated frame and, where available, its real
+	// directional sprite. This is the same marker path the automap uses for
+	// revealed things, only without requiring a cheat or a user preference.
+	for (int show = 3; show > 0 && texture == nullptr; --show)
+	{
+		const size_t spriteIndex = sprite.spriteframes + (show > 1 ? player->frame : 0);
+		frame = &SpriteFrames[spriteIndex];
+		DAngle angle = DAngle::fromDeg(270.) - player->InterpolatedAngles(r_viewpoint.TicFrac).Yaw - player->SpriteRotation;
+		if (frame->Texture[0] != frame->Texture[1])
+		{
+			angle += DAngle::fromDeg(180. / 16);
+		}
+		rotation = int((angle.Normalized360() * (16. / 360.)).Degrees());
+		texture = TexMan.GetGameTexture(frame->Texture[show > 2 ? rotation : 0], true);
+	}
+
+	if (texture == nullptr || frame == nullptr)
+	{
+		return false;
+	}
+
+	const double spriteXScale = player->Scale.X * (10. / 16.) * scale_mtof;
+	const double spriteYScale = player->Scale.Y * (10. / 16.) * scale_mtof;
+	DrawMarker(texture, position.X, position.Y, 0, !!(frame->Flip & (1 << rotation)),
+		spriteXScale, spriteYScale, player->Translation, player->Alpha,
+		player->fillcolor, player->RenderStyle);
+	return true;
+}
+
 void DAutomap::drawPlayers ()
 {
-	if (am_cheat >= 2 && am_cheat != 4 && am_showthingsprites > 0)
+	if (!TopDownCamera && am_cheat >= 2 && am_cheat != 4 && am_showthingsprites > 0)
 	{
 		// Player sprites are drawn with the others
 		return;
@@ -2816,11 +2882,14 @@ void DAutomap::drawPlayers ()
 		mline_t *arrow;
 		int numarrowlines;
 
-		double vh = players[consoleplayer].viewheight;
 		DVector2 pos = players[consoleplayer].mo->InterpolatedPosition(r_viewpoint.TicFrac).XY();
+		if (TopDownPlayerSprite && drawTopDownPlayerSprite(players[consoleplayer].mo, pos))
+		{
+			return;
+		}
 		pt.x = pos.X;
 		pt.y = pos.Y;
-		if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+		if (IsRotating())
 		{
 			angle = DAngle::fromDeg(90.);
 			rotatePoint (&pt.x, &pt.y);
@@ -2888,7 +2957,7 @@ void DAutomap::drawPlayers ()
 
 			angle = p->mo->InterpolatedAngles(r_viewpoint.TicFrac).Yaw;
 
-			if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+			if (IsRotating())
 			{
 				rotatePoint (&pt.x, &pt.y);
 				angle -= players[consoleplayer].camera->InterpolatedAngles(r_viewpoint.TicFrac).Yaw - DAngle::fromDeg(90.);
@@ -2929,7 +2998,7 @@ void DAutomap::drawKeys ()
 
 		angle = key->InterpolatedAngles(r_viewpoint.TicFrac).Yaw;
 
-		if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+		if (IsRotating())
 		{
 			rotatePoint (&p.x, &p.y);
 			angle += -players[consoleplayer].camera->InterpolatedAngles(r_viewpoint.TicFrac).Yaw + DAngle::fromDeg(90.);
@@ -2989,7 +3058,7 @@ void DAutomap::drawThings ()
 						frame = &SpriteFrames[spriteIndex];
 						DAngle angle = DAngle::fromDeg(270.) - t->InterpolatedAngles(r_viewpoint.TicFrac).Yaw - t->SpriteRotation; 
 						if (frame->Texture[0] != frame->Texture[1]) angle += DAngle::fromDeg(180. / 16);
-						if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+						if (IsRotating())
 						{
 							angle += players[consoleplayer].camera->InterpolatedAngles(r_viewpoint.TicFrac).Yaw - DAngle::fromDeg(90.);
 						}
@@ -3014,7 +3083,7 @@ void DAutomap::drawThings ()
 			drawTriangle:
 					angle = t->InterpolatedAngles(r_viewpoint.TicFrac).Yaw;
 
-					if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+					if (IsRotating())
 					{
 						rotatePoint (&p.x, &p.y);
 						angle += -players[consoleplayer].camera->InterpolatedAngles(r_viewpoint.TicFrac).Yaw + DAngle::fromDeg(90.);
@@ -3103,7 +3172,7 @@ void DAutomap::DrawMarker (FGameTexture *tex, double x, double y, int yadjust,
 		flip = !flip;
 		xscale = -xscale;
 	}
-	if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+	if (IsRotating())
 	{
 		rotatePoint (&x, &y);
 	}
@@ -3154,7 +3223,7 @@ void DAutomap::drawMarks ()
 				double x = markpoints[i].x;
 				double y = markpoints[i].y;
 
-				if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+				if (IsRotating())
 				{
 					rotatePoint (&x, &y);
 				}
@@ -3267,7 +3336,7 @@ void DAutomap::Drawer (int bottom)
 	if (!automapactive)
 		return;
 
-	if (am_followplayer)
+	if (TopDownCamera || am_followplayer)
 	{
 		doFollowPlayer();
 	}
@@ -3323,7 +3392,7 @@ void DAutomap::Drawer (int bottom)
 	}
 	activateNewScale();
 
-	if (am_textured && !viewactive)
+	if ((TopDownCamera || am_textured) && !viewactive)
 		drawSubsectors();
 
 	if (am_showgrid)	
@@ -3338,7 +3407,7 @@ void DAutomap::Drawer (int bottom)
 
 	drawAuthorMarkers();
 
-	if (!viewactive)
+	if (!viewactive && !TopDownCamera)
 		drawCrosshair(AMColors[AMColors.XHairColor]);
 
 	drawMarks();
@@ -3457,6 +3526,10 @@ void AM_Stop()
 void AM_ToggleMap()
 {
 	if (gamestate != GS_LEVEL)
+		return;
+	// The experimental presentation already owns the full automap. Do not let
+	// the normal map toggle close it for one frame before its next game tic.
+	if (ECamera_IsTopDownModeActive())
 		return;
 
 	// Don't activate the automap if we're not allowed to use it.

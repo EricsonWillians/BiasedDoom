@@ -18,8 +18,26 @@
 #include "doomdef.h"
 #include "doomstat.h"
 #include "g_levellocals.h"
+#include "am_map.h"
 #include "p_local.h"
 #include "r_utility.h"
+
+// Persist the old renderer-oriented controls so existing configs remain
+// loadable. The textured-automap presentation intentionally does not read
+// them anymore.
+CVAR(Float, cam_topdown_height, 320.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, cam_topdown_pitch, 82.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, cam_topdown_wall_overlay, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, cam_topdown_fov, 85.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+CUSTOM_CVAR(Int, cam_topdown_player_marker, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const int clampedMarker = clamp<int>(self, 0, 1);
+	if (self != clampedMarker)
+	{
+		self = clampedMarker;
+	}
+}
 
 namespace
 {
@@ -45,6 +63,10 @@ struct FTopDownCameraState
 	bool Initialized = false;
 	FLevelLocals* Level = nullptr;
 	DAngle Yaw = nullAngle;
+	bool AutomapClaimed = false;
+	FLevelLocals* AutomapLevel = nullptr;
+	bool RestoreAutomapActive = false;
+	bool RestoreViewActive = true;
 };
 
 FTopDownCameraState TopDownCamera;
@@ -58,8 +80,27 @@ bool IsExperimentalCameraAllowed()
 		&& players[consoleplayer].mo != nullptr;
 }
 
+void ReleaseTopDownAutomap()
+{
+	if (!TopDownCamera.AutomapClaimed)
+	{
+		return;
+	}
+
+	if (TopDownCamera.AutomapLevel != nullptr && TopDownCamera.AutomapLevel->automap != nullptr)
+	{
+		TopDownCamera.AutomapLevel->automap->SetTopDownCamera(false, false);
+	}
+
+	automapactive = TopDownCamera.RestoreAutomapActive;
+	viewactive = TopDownCamera.RestoreViewActive;
+	TopDownCamera.AutomapClaimed = false;
+	TopDownCamera.AutomapLevel = nullptr;
+}
+
 void ResetExperimentalCameras()
 {
+	ReleaseTopDownAutomap();
 	PhotoCamera.Initialized = false;
 	PhotoCamera.Level = nullptr;
 	TopDownCamera.Initialized = false;
@@ -119,8 +160,44 @@ void InitializeTopDownCamera()
 	}
 
 	TopDownCamera.Level = players[consoleplayer].mo->Level;
-	TopDownCamera.Yaw = players[consoleplayer].mo->Angles.Yaw;
+	// The automap is north-up. Yaw 90 maps W to screen-up in Doom's XY basis.
+	TopDownCamera.Yaw = DAngle::fromDeg(90.0);
 	TopDownCamera.Initialized = true;
+}
+
+void EnsureTopDownAutomap()
+{
+	if (!IsExperimentalCameraAllowed())
+	{
+		ReleaseTopDownAutomap();
+		return;
+	}
+
+	FLevelLocals* const level = players[consoleplayer].mo->Level;
+	if (TopDownCamera.AutomapClaimed && TopDownCamera.AutomapLevel != level)
+	{
+		ReleaseTopDownAutomap();
+	}
+
+	if (primaryLevel == nullptr || primaryLevel->automap == nullptr)
+	{
+		return;
+	}
+
+	if (!TopDownCamera.AutomapClaimed)
+	{
+		TopDownCamera.RestoreAutomapActive = automapactive;
+		TopDownCamera.RestoreViewActive = viewactive;
+		TopDownCamera.AutomapClaimed = true;
+		TopDownCamera.AutomapLevel = primaryLevel;
+		primaryLevel->automap->startDisplay();
+	}
+
+	// A full-screen automap is the complete presentation in this mode. It
+	// keeps every floor, wall, player, and marker in the same map transform.
+	automapactive = true;
+	viewactive = false;
+	primaryLevel->automap->SetTopDownCamera(true, cam_topdown_player_marker != 0);
 }
 
 bool CanToggleCamera(const char* modeName)
@@ -149,12 +226,6 @@ CUSTOM_CVAR(Int, cam_experimental_mode, ECM_Normal, CVAR_ARCHIVE | CVAR_GLOBALCO
 		self = ECM_Normal;
 		return;
 	}
-	if (self == ECM_TopDown && gamestate == GS_LEVEL && !V_IsHardwareRenderer())
-	{
-		Printf("Top-Down Camera requires a hardware renderer.\n");
-		self = ECM_Normal;
-		return;
-	}
 	ResetExperimentalCameras();
 }
 
@@ -172,20 +243,8 @@ CUSTOM_CVAR(Float, cam_photo_fov, 75.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CVAR(Bool, cam_photo_showhud, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
-CUSTOM_CVAR(Float, cam_topdown_height, 320.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-{
-	const float clampedHeight = clamp<float>(self, 64.0f, 1024.0f);
-	if (self != clampedHeight) self = clampedHeight;
-}
-
-CUSTOM_CVAR(Float, cam_topdown_pitch, 82.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-{
-	// A small visual tilt lets players read wall faces and door textures while
-	// the orthographic projection keeps the interaction plane top-down.
-	const float clampedPitch = clamp<float>(self, 65.0f, 89.0f);
-	if (self != clampedPitch) self = clampedPitch;
-}
-
+// Retained for configuration compatibility with the superseded 3D top-down
+// renderer. The Automap presentation has no separate aim-overlay controls.
 CUSTOM_CVAR(Float, cam_topdown_aim_radius, 128.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const float clampedRadius = clamp<float>(self, 48.0f, 320.0f);
@@ -193,13 +252,6 @@ CUSTOM_CVAR(Float, cam_topdown_aim_radius, 128.0f, CVAR_ARCHIVE | CVAR_GLOBALCON
 }
 
 CVAR(Bool, cam_topdown_aim_guide, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-CVAR(Bool, cam_topdown_wall_overlay, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-
-CUSTOM_CVAR(Float, cam_topdown_fov, 85.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-{
-	const float clampedFov = clamp<float>(self, 20.0f, 120.0f);
-	if (self != clampedFov) self = clampedFov;
-}
 
 bool ECamera_IsPhotoModeActive()
 {
@@ -208,16 +260,12 @@ bool ECamera_IsPhotoModeActive()
 
 bool ECamera_IsTopDownModeActive()
 {
-	// The engine's orthographic world renderer is hardware-only. Declining to
-	// enter this mode in the software renderer is preferable to presenting a
-	// misleading perspective fallback with broken ceiling and aiming behavior.
-	return cam_experimental_mode == ECM_TopDown && V_IsHardwareRenderer()
-		&& IsExperimentalCameraAllowed();
+	return cam_experimental_mode == ECM_TopDown && IsExperimentalCameraAllowed();
 }
 
 bool ECamera_IsThirdPersonActive()
 {
-	return ECamera_IsPhotoModeActive() || ECamera_IsTopDownModeActive();
+	return ECamera_IsPhotoModeActive();
 }
 
 bool ECamera_HidesHUD()
@@ -225,36 +273,11 @@ bool ECamera_HidesHUD()
 	return ECamera_IsPhotoModeActive() && !cam_photo_showhud;
 }
 
-bool ECamera_GetTopDownAimOffset(double radius, double &x, double &y)
-{
-	if (!ECamera_IsTopDownModeActive())
-	{
-		return false;
-	}
-
-	const DAngle playerYaw = players[consoleplayer].mo->Angles.Yaw;
-	const DAngle cameraYaw = TopDownCamera.Initialized
-		? TopDownCamera.Yaw
-		: playerYaw;
-	const double relativeYaw = deltaangle(cameraYaw, playerYaw).Radians();
-
-	// GZDoom projects a point at camera yaw to screen-up and a positive
-	// yaw delta to screen-left. Keep the marker in that same frame so its
-	// movement is an exact visual representation of horizontal weapon aim.
-	x = -sin(relativeYaw) * radius;
-	y = -cos(relativeYaw) * radius * DAngle::fromDeg(cam_topdown_pitch).Sin();
-	return true;
-}
-
 double ECamera_GetFieldOfView(double normalFov)
 {
 	if (ECamera_IsPhotoModeActive())
 	{
 		return cam_photo_fov;
-	}
-	if (ECamera_IsTopDownModeActive())
-	{
-		return cam_topdown_fov;
 	}
 	return normalFov;
 }
@@ -264,16 +287,15 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 	if (ECamera_IsTopDownModeActive())
 	{
 		InitializeTopDownCamera();
+		EnsureTopDownAutomap();
 		if (!TopDownCamera.Initialized)
 		{
 			return;
 		}
 
 		AActor* const player = players[consoleplayer].mo;
-		// Top-down is deliberately a classic horizontal-aim mode. Mouse/stick
-		// yaw still turns and aims the player, while pitch and roll are removed
-		// before the command reaches simulation so vertical aim cannot desync
-		// the reticle from weapon fire.
+		// The full-screen map is north-up, while yaw remains real gameplay aim.
+		// Keep vertical aiming level so its input cannot imply a 3D screen target.
 		player->Angles.Pitch = nullAngle;
 		cmd.pitch = 0;
 		cmd.roll = 0;
@@ -345,6 +367,12 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 		return false;
 	}
 
+	if (ECamera_IsTopDownModeActive())
+	{
+		EnsureTopDownAutomap();
+		return false;
+	}
+
 	if (ECamera_IsPhotoModeActive())
 	{
 		if (PhotoCamera.Level != viewPoint.ViewLevel)
@@ -358,44 +386,6 @@ bool ECamera_ApplyView(FRenderViewpoint& viewPoint)
 		viewPoint.sector = viewPoint.ViewLevel->PointInRenderSubsector(viewPoint.Pos)->sector;
 		viewPoint.showviewer = true;
 		viewPoint.bForceNoViewer = false;
-		return true;
-	}
-
-	if (ECamera_IsTopDownModeActive())
-	{
-		InitializeTopDownCamera();
-		const DAngle cameraYaw = TopDownCamera.Initialized
-			? TopDownCamera.Yaw
-			: players[consoleplayer].mo->Angles.Yaw;
-
-		// This is a genuine orthographic overhead view, not a high chase camera.
-		// It follows the player's XY position from outside map geometry, so low
-		// ceilings can neither push it down nor obscure the floor. The renderer's
-		// orthographic path also selects visible planes by view direction, which
-		// naturally hides ceiling flats while looking straight down.
-		const DVector3 focus = viewPoint.ActorPos;
-		const double scale = double(cam_topdown_height);
-		const DAngle pitch = DAngle::fromDeg(cam_topdown_pitch);
-		const DVector2 forward = cameraYaw.ToVector();
-		const DVector3 viewDirection = {
-			forward.X * pitch.Cos(), forward.Y * pitch.Cos(), -pitch.Sin()
-		};
-		// Position the camera on the same ray used by SetViewAngle, so OffPos
-		// stays locked to the player while the modest visual tilt exposes wall
-		// textures, doors, and switches.
-		viewPoint.Pos = focus - viewDirection * scale;
-		viewPoint.sector = viewPoint.ViewLevel->PointInRenderSubsector(focus)->sector;
-		viewPoint.Angles = { cameraYaw, pitch, nullAngle };
-		viewPoint.bDoOob = true;
-		viewPoint.bDoOrtho = true;
-		viewPoint.bExperimentalOrtho = true;
-		viewPoint.OrthoFocus = focus;
-		viewPoint.OrthoDistance = scale;
-		// The first-person pawn sprite is a vertical billboard and is misleading
-		// from an overhead view. The status bar supplies an exact map-facing
-		// player arrow at the same point as the aim guide instead.
-		viewPoint.showviewer = false;
-		viewPoint.bForceNoViewer = true;
 		return true;
 	}
 
@@ -416,11 +406,6 @@ CCMD(toggletopdowncamera)
 {
 	if (!CanToggleCamera("Top-Down Camera"))
 	{
-		return;
-	}
-	if (!V_IsHardwareRenderer())
-	{
-		Printf("Top-Down Camera requires a hardware renderer.\n");
 		return;
 	}
 	cam_experimental_mode = cam_experimental_mode == ECM_TopDown ? ECM_Normal : ECM_TopDown;

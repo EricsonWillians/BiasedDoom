@@ -788,6 +788,12 @@ OptionValue "ExperimentalCameraModes"
 	2, "Top-Down"
 }
 
+OptionValue "TopDownPlayerMarkers"
+{
+	0, "Arrow"
+	1, "Player sprite"
+}
+
 DefaultOptionMenu
 {
 	Position -15
@@ -1900,13 +1906,10 @@ OptionMenu "ExperimentalCameraOptions" protected
 	Option "Show HUD in Photo Mode",             "cam_photo_showhud", "OnOff"
 	StaticText ""
 	StaticText "Top-Down"
-	StaticText "Hardware renderer required"
-	Slider "Map zoom / view scale",              "cam_topdown_height", 64.0, 1024.0, 16.0, 0
-	Slider "View tilt / wall visibility",         "cam_topdown_pitch", 65.0, 89.0, 1.0, 0
-	Option "Readable wall / switch outlines",     "cam_topdown_wall_overlay", "OnOff"
-	Slider "Aim marker radius",                  "cam_topdown_aim_radius", 48.0, 320.0, 8.0, 0
-	Option "Show aim guide",                     "cam_topdown_aim_guide", "OnOff"
-	Slider "Top-down field of view",             "cam_topdown_fov", 20.0, 120.0, 1.0, 0
+	StaticText "Textured Automap presentation"
+	StaticText "North-up; follows the real player position"
+	Option "Player marker",                      "cam_topdown_player_marker", "TopDownPlayerMarkers"
+	StaticText "Use Automap options for zoom and line style"
 }
 
 OptionMenu "SWROptions" protected

@@ -5,8 +5,7 @@ single-player screenshots and experimentation; they never move an actor,
 change a savegame, or participate in demo or network input.
 
 Open **Options → Display Options → Appearance → Experimental cameras** to
-select and tune a mode. The same page exposes camera-specific field of view,
-free-flight speed, and the top-down framing controls.
+select and tune a mode.
 
 - **Photo Mode / Free Camera** (`P` by default, or `togglephotomode`) detaches
   the view from the player. Use the normal movement keys to fly, `PgUp` and
@@ -14,20 +13,17 @@ free-flight speed, and the top-down framing controls.
   input is consumed while the mode is active; the game continues to run. The
   HUD is hidden by default for clean captures and can be restored with
   `cam_photo_showhud`.
-- **Top-Down** (`O` by default, or `toggletopdowncamera`) is a genuine
-  orthographic, overhead map view on the hardware renderer. It renders from
-  above map geometry and selects floor-facing surfaces, so low ceilings do not
-  push the camera down or cover the scene; sky planes are excluded to prevent
-  ceiling portals from filling a sector. A small configurable visual tilt keeps
-  walls, doors, and switches readable without changing the classic horizontal
-  gameplay aim. The camera heading stays stable; W/A/S/D are screen-relative
-  while mouse/stick yaw still turns and aims the player. Pitch is locked level
-  for classic 1990s horizontal weapon aiming. The centered player arrow and
-  GTA-style aim marker share that exact horizontal firing direction. Tune map
-  scale, visual tilt, readable wall/switch outlines, marker radius, aim guide,
-  and field of view with `cam_topdown_height`, `cam_topdown_pitch`,
-  `cam_topdown_wall_overlay`, `cam_topdown_aim_radius`,
-  `cam_topdown_aim_guide`, and `cam_topdown_fov`.
+- **Top-Down** (`O` by default, or `toggletopdowncamera`) is a north-up,
+  full-screen textured Automap presentation. It deliberately uses the
+  automap's native coordinate transform for floors, lines, and the player
+  marker, so the displayed player position is the same authoritative position
+  used by the Automap. It works on every renderer, follows the player, and
+  keeps W/A/S/D screen-relative while mouse/stick yaw still turns and aims the
+  player. Pitch is locked level for classic horizontal weapon aiming. Choose
+  the exact-position **Arrow** or the actor's animated **Player sprite** with
+  `cam_topdown_player_marker`. Zoom, colors, and line style stay under the
+  standard Automap options, which the presentation honors; normal Automap
+  rotation is intentionally ignored so this view stays north-up.
 
 `cam_experimental_mode` selects **Off** (0), **Photo Mode / Free Camera** (1),
 or **Top-Down** (2). These commands and the menu options are unavailable in

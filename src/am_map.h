@@ -53,6 +53,9 @@ public:
 	virtual bool clearMarks() = 0;
 	virtual DVector2 GetPosition() = 0;
 	virtual void startDisplay() = 0;
+	// Experimental top-down mode uses the automap's own coordinate transform
+	// instead of trying to reproduce it in a renderer or HUD overlay.
+	virtual void SetTopDownCamera(bool enabled, bool playerSprite) = 0;
 
 };
 

@@ -571,11 +571,6 @@ bool Clipper::CheckBoxOrthoPitch(const float *bspcoord)
 	angle_t pitchmin, pitchmax;
 	auto &vp = viewpoint;
 	if (!vp->bDoOrtho) return true;
-	// The local top-down camera owns its focus point and has no camera actor at
-	// the rendering height. The legacy isometric pitch clipper derives its Z
-	// bounds from that actor, which can incorrectly discard valid sectors.
-	if (vp->bExperimentalOrtho) return true;
-
 	angle_t pitchtemp;
 	double padding = 1.0/viewpoint->ScreenProj/viewpoint->PitchCos;
 	double camz = vp->camera->Pos().Z - padding;
