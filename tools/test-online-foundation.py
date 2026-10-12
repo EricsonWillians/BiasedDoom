@@ -300,6 +300,7 @@ def main() -> None:
     require("cmake/toolchains/mingw-w64-x86_64.cmake", "CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH")
     require("cmake/toolchains/mingw-w64-x86_64.cmake", "CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH")
     require("src/common/online/online_service.cpp", "#undef max")
+    require("src/common/online/online_service.cpp", "#define NOMINMAX")
     require(".github/workflows/continuous_integration.yml", "./build/biaseddoom-online-snapshot-fuzz")
     require("src/launcher/networkpage.cpp", "I approve downloading and mounting")
     require("src/launcher/networkpage.cpp", "Refresh public sessions")
