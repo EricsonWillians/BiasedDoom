@@ -25,9 +25,11 @@ select and tune a mode.
   standard Automap options, which the presentation honors; normal Automap
   rotation is intentionally ignored so this view stays north-up. Top-Down is
   intentionally more than the normal Automap in full-screen mode: it always
-  draws non-hidden actor and pickup markers plus actionable special
-  boundaries (including doors), while retaining the user's Automap colors,
-  zoom, and marker-style preference. Explicit mapper `ML_DONTDRAW` and actor
+  draws non-hidden monsters and pickups as their live animated, rotated
+  sprites (including their translation, alpha, and render style), plus
+  actionable special boundaries including doors. This is independent of the
+  normal Automap's **Show things as sprites** preference; Top-Down retains
+  the user's Automap colors and zoom. Explicit mapper `ML_DONTDRAW` and actor
   `NOTONAUTOMAP` opt-outs retain their normal Automap treatment.
 
 `cam_experimental_mode` selects **Off** (0), **Photo Mode / Free Camera** (1),

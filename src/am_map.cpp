@@ -3032,6 +3032,10 @@ void DAutomap::drawThings ()
 	AActor*	 t;
 	mpoint_t p;
 	DAngle	 angle;
+	// Top-Down is an actor-level presentation, so it always draws the current
+	// animated, directional sprite. The ordinary Automap keeps honoring its
+	// user-selected marker mode below.
+	const int thingSpriteMode = TopDownCamera ? 3 : am_showthingsprites;
 
 	for (auto &sec : Level->sectors)
 	{
@@ -3046,14 +3050,14 @@ void DAutomap::drawThings ()
 				p.x = pos.X;
 				p.y = pos.Y;
 
-				if (am_showthingsprites > 0 && t->sprite > 0)
+				if (thingSpriteMode > 0 && t->sprite > 0)
 				{
 					FGameTexture *texture = nullptr;
 					spriteframe_t *frame;
 					int rotation = 0;
 
 					// try all modes backwards until a valid texture has been found.
-					for(int show = am_showthingsprites; show > 0 && texture == nullptr; show--)
+					for(int show = thingSpriteMode; show > 0 && texture == nullptr; show--)
 					{
 						const spritedef_t& sprite = sprites[t->sprite];
 						const size_t spriteIndex = sprite.spriteframes + (show > 1 ? t->frame : 0);
@@ -3076,7 +3080,7 @@ void DAutomap::drawThings ()
 					const double spriteXScale = (t->Scale.X * (10. / 16.) * scale_mtof);
 					const double spriteYScale = (t->Scale.Y * (10. / 16.) * scale_mtof);
 
-					if (am_thingrenderstyles) DrawMarker(texture, p.x, p.y, 0, !!(frame->Flip & (1 << rotation)),
+					if (TopDownCamera || am_thingrenderstyles) DrawMarker(texture, p.x, p.y, 0, !!(frame->Flip & (1 << rotation)),
 						spriteXScale, spriteYScale, t->Translation, t->Alpha, t->fillcolor, t->RenderStyle);
 					else DrawMarker(texture, p.x, p.y, 0, !!(frame->Flip & (1 << rotation)),
 						spriteXScale, spriteYScale, t->Translation, 1., 0, LegacyRenderStyles[STYLE_Normal]);
