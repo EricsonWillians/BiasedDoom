@@ -1,5 +1,16 @@
 #include "online_service.h"
 
+// The Windows SDK may enter through the precompiled header or libcurl. It
+// defines min/max as function-like macros, which corrupt RapidJSON and the
+// numeric_limits<T>::max() checks below. Keep the cleanup local to this modern
+// C++ translation unit instead of changing legacy Windows-header consumers.
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
 #include <curl/curl.h>
 #include <sodium.h>
 
