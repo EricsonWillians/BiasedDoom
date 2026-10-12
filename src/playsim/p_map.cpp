@@ -70,6 +70,7 @@
 #include "d_player.h"
 #include "decallib.h"
 #include "doomdef.h"
+#include "experimental_camera.h"
 #include "events.h"
 #include "g_levellocals.h"
 #include "gi.h"
@@ -4603,14 +4604,17 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 {
 	double shootz = t1->Center() - t1->Floorclip + t1->AttackOffset();
 
-	// Classic aiming context: monsters always get it, players only when the
-	// level does not allow freelook. Vanilla Doom does not stop its vertical
-	// autoaim at a fixed cone — it keeps widening the slope search on a miss,
-	// so steeply elevated targets stay hittable without any manual aiming.
+	// Classic aiming context: monsters always get it; players use it when the
+	// level disallows freelook or Top-Down has removed their vertical aim axis.
+	// Vanilla Doom does not stop its vertical autoaim at a fixed cone — it
+	// keeps widening the slope search on a miss, so steeply elevated targets
+	// stay hittable without any manual aiming.
 	// Without this the fixed 35 degree cone below makes monsters on high
 	// ledges unhittable in the classic no-freelook play style.
 	static const double classicRanges[] = { 35., 50., 65., 80. };
-	const bool classicAim = (vrange == nullAngle) && (t1->player == NULL || !t1->Level->IsFreelookAllowed());
+	const bool topDownClassicAim = ECamera_UsesTopDownClassicAim(t1);
+	const bool classicAim = (vrange == nullAngle)
+		&& (topDownClassicAim || t1->player == NULL || !t1->Level->IsFreelookAllowed());
 	int rangeStep = 0;
 
 	// can't shoot outside view angles
@@ -4624,9 +4628,11 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 				!(flags & ALF_NOWEAPONCHECK) &&
 				// User opt-in for the classic play style: keep autoaim even when a
 				// mod (e.g. Brutal Doom) flags its whole arsenal NOAUTOAIM.
-				!bd_classic_autoaim;
+				// Top-Down has no vertical aim axis, so its local player always
+				// needs this classic vertical acquisition.
+				!bd_classic_autoaim && !topDownClassicAim;
 			bool playerDisablesAutoaim = t1->player->userinfo.GetAimDist() <= 0 &&
-				!(flags & ALF_IGNORENOAUTOAIM);
+				!(flags & ALF_IGNORENOAUTOAIM) && !topDownClassicAim;
 			if (target == nullptr && (weaponDisablesAutoaim || playerDisablesAutoaim))
 			{
 				if (pLineTarget != nullptr)

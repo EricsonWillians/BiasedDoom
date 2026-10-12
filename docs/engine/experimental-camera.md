@@ -22,9 +22,12 @@ select and tune a mode.
   screen-relative. **Pointer aim (mouse / stick)** is enabled by default:
   mouse, right-stick, gyro, and keyboard-look input move a real cursor across
   the map. The player turns and fires toward that cursor, so the reticle,
-  weapon direction, and input stay in agreement. It is a planar mode: aim is
-  level with the map rather than using first-person vertical pitch. Turn it
-  off to restore ordinary first-person look and autoaim.
+  weapon direction, and input stay in agreement. It is a planar mode: pitch
+  is held level and the local player uses mandatory classic vertical autoaim
+  at the cursor's horizontal heading. Its widening vanilla-style search keeps
+  enemies on high ledges or lower floors hittable, including weapons whose
+  mods ordinarily disable autoaim. Turn it off to restore ordinary
+  first-person look and autoaim.
   Choose the exact-position **Arrow** or the actor's animated **Player sprite** with
   `cam_topdown_player_marker`. Zoom, colors, and line style stay under the
   standard Automap options, which the presentation honors. In particular,

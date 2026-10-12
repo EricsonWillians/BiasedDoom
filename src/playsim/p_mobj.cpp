@@ -8226,7 +8226,15 @@ AActor *P_SpawnPlayerMissile (AActor *source, double x, double y, double z,
 	bool weaponDisablesAutoaim = noautoaim ||
 		(!(aimflags & ALF_NOWEAPONCHECK) && source->player && source->player->ReadyWeapon &&
 		(source->player->ReadyWeapon->IntVar(NAME_WeaponFlags) & WIF_NOAUTOAIM));
-	if (ECamera_UsesTopDownDirectAim(source) || playerDisablesAutoaim || weaponDisablesAutoaim)
+	if (ECamera_UsesTopDownClassicAim(source))
+	{
+		// The cursor has already selected the horizontal heading. Let the
+		// classic null-range path choose only the vertical slope, including its
+		// widening search for targets on tall ledges.
+		an = angle;
+		pitch = P_AimLineAttack(source, an, 16. * 64., pLineTarget, nullAngle, aimflags);
+	}
+	else if (ECamera_UsesTopDownDirectAim(source) || playerDisablesAutoaim || weaponDisablesAutoaim)
 	{
 		// Keep exactly the same angle and pitch as the player's own aim
 		an = angle;

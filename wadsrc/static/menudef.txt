@@ -1910,6 +1910,7 @@ OptionMenu "ExperimentalCameraOptions" protected
 	StaticText "Top-Down"
 	StaticText "Textured Automap presentation"
 	StaticText "North-up; pointer aim follows mouse / stick"
+	StaticText "Level aim; vertical autoaim reaches raised monsters"
 	StaticText "Shows actors, pickups, and special boundaries"
 	StaticText "Actors use their live animated sprites"
 	Option "Player marker",                      "cam_topdown_player_marker", "TopDownPlayerMarkers"

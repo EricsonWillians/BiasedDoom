@@ -1246,16 +1246,12 @@ DEFINE_ACTION_FUNCTION(AActor, A_ClearOverlays)
 
 DAngle P_BulletSlope (AActor *mo, FTranslatedLineTarget *pLineTarget, int aimflags)
 {
-	// Top-Down pointer aim is deliberately local-player-only. It follows the
-	// map cursor's already-resolved horizontal direction while leaving all
-	// monster and remote-player targeting rules untouched.
-	if (ECamera_UsesTopDownDirectAim(mo))
+	// Top-Down preserves the cursor's exact horizontal heading, but has no
+	// vertical aim axis. Use P_AimLineAttack directly at that heading so its
+	// classic widening vertical search can acquire enemies above or below.
+	if (ECamera_UsesTopDownClassicAim(mo))
 	{
-		if (pLineTarget != nullptr)
-		{
-			*pLineTarget = {};
-		}
-		return mo->Angles.Pitch;
+		return P_AimLineAttack(mo, mo->Angles.Yaw, 16. * 64, pLineTarget, nullAngle, aimflags);
 	}
 
 	int i;

@@ -337,10 +337,16 @@ bool ECamera_IsTopDownModeActive()
 	return cam_experimental_mode == ECM_TopDown && IsExperimentalCameraAllowed();
 }
 
+bool ECamera_UsesTopDownClassicAim(const AActor* actor)
+{
+	return ECamera_IsTopDownModeActive()
+		&& actor != nullptr
+		&& actor == players[consoleplayer].mo;
+}
+
 bool ECamera_UsesTopDownDirectAim(const AActor* actor)
 {
-	return cam_topdown_direct_aim && ECamera_IsTopDownModeActive()
-		&& actor != nullptr && actor == players[consoleplayer].mo;
+	return cam_topdown_direct_aim && ECamera_UsesTopDownClassicAim(actor);
 }
 
 bool ECamera_AddTopDownMouseMotion(float right, float down)
@@ -421,6 +427,13 @@ void ECamera_ConsumeTiccmd(usercmd_t& cmd)
 		{
 			TopDownCamera.PointerDelta = {};
 		}
+
+		// A Top-Down view has no usable vertical aim axis. Always return the
+		// pawn to the horizontal plane, even when pointer aim is disabled, so
+		// classic vertical autoaim can acquire actors on raised/lowered floors.
+		const double pitchDegrees = player->Angles.Pitch.Normalized180().Degrees();
+		cmd.pitch = short(clamp<double>(round(pitchDegrees * (65536.0 / 360.0)), -32767.0, 32767.0));
+		cmd.roll = 0;
 
 		// Re-express movement in the player's basis after turning it into the
 		// stable screen/map basis. W always means screen-up, S screen-down, and

@@ -86,6 +86,7 @@
 #include "p_local.h"
 #include "p_pspr.h"
 #include "p_spec.h"
+#include "experimental_camera.h"
 #include "r_utility.h"
 #include "s_music.h"
 #include "s_sound.h"
@@ -1373,11 +1374,11 @@ void P_PlayerThink (player_t *player)
 		player->angleOffsetTargets[i] = nullAngle;
 	}
 
-	// When the level does not allow freelook, keep the view pitch pinned to
-	// the horizon. Mod scripts (A_Recoil/A_SetPitch) can otherwise still tilt
-	// the view, which silently defeats the classic no-verticality play style
-	// and drags the autoaim cone off-center with it.
-	if (!primaryLevel->IsFreelookAllowed())
+	// When the level or Top-Down mode does not allow vertical control, keep the
+	// view pitch pinned to the horizon. Mod scripts (A_Recoil/A_SetPitch) can
+	// otherwise still tilt the view, which silently defeats classic vertical
+	// autoaim and drags its cone off-center.
+	if (!primaryLevel->IsFreelookAllowed() || ECamera_UsesTopDownClassicAim(player->mo))
 	{
 		player->mo->Angles.Pitch = nullAngle;
 	}

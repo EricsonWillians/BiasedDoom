@@ -1198,11 +1198,8 @@ bool DAutomap::UpdateTopDownAim(AActor* player, usercmd_t& cmd, const DVector2& 
 		cmd.yaw = 0;
 	}
 
-	// Pointer aim is planar. Flatten any first-person pitch in the same tic so
-	// hitscan and player missiles use the map cursor's horizontal direction.
-	const double pitchDegrees = player->Angles.Pitch.Normalized180().Degrees();
-	cmd.pitch = short(clamp<double>(round(pitchDegrees * (65536.0 / 360.0)), -32767.0, 32767.0));
-	cmd.roll = 0;
+	// ECamera_ConsumeTiccmd flattens pitch for all Top-Down input modes after
+	// this cursor calculation. Keeping it there also covers pointer aim off.
 	cmd.buttons &= ~BT_TURN180;
 	return true;
 }

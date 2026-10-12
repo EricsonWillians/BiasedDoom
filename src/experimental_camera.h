@@ -9,6 +9,10 @@ class AActor;
 // for demos and netgames.
 bool ECamera_IsPhotoModeActive();
 bool ECamera_IsTopDownModeActive();
+// Top-Down is a planar gameplay mode. The local pawn therefore uses the
+// classic vertical autoaim model: its view pitch stays level while weapons
+// acquire vertical slope to targets at the selected horizontal heading.
+bool ECamera_UsesTopDownClassicAim(const AActor* actor);
 // True only for the local player while the opt-in Top-Down pointer aim model
 // is active. Weapon helpers use this to keep their shot ray on that cursor.
 bool ECamera_UsesTopDownDirectAim(const AActor* actor);

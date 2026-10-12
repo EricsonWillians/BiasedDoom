@@ -11,6 +11,8 @@
 #
 # Asserts: the near zombie dies (autoaim works at all) and the high zombie
 # dies too (classic vanilla-like vertical autoaim, not a hard 35 degree cap).
+# With --topdown, it proves the same behavior for the experimental Top-Down
+# gameplay view, where vertical autoaim is mandatory because pitch is planar.
 set -euo pipefail
 
 usage() {
@@ -25,6 +27,8 @@ Options:
   --exe PATH        executable for the test (default: build/biaseddoom)
   --mod PATH        optional mod PK3 to load (e.g. Brutal Doom, whose weapons
                     are flagged NOAUTOAIM — the classic-aim override must win)
+  --topdown         run through experimental Top-Down with autoaim disabled in
+                    the user configuration; Top-Down must still hit vertically
   --timeout SEC     maximum seconds for the engine process (default: 120)
   --keep-temp       retain the driver PK3, config, and logs
   -h, --help        show this help
@@ -36,6 +40,7 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 engine_exe="${repo_root}/build/biaseddoom"
 iwad_path=""
 mod_path=""
+topdown=0
 test_timeout=120
 keep_temp=0
 
@@ -60,6 +65,10 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || { printf 'error: --mod requires a path\n' >&2; exit 2; }
             mod_path="$2"
             shift 2
+            ;;
+        --topdown)
+            topdown=1
+            shift
             ;;
         --keep-temp)
             keep_temp=1
@@ -152,12 +161,14 @@ EOF
 cat > "${driver_src}/pyscripts/main.py" <<'EOF'
 """Vertical autoaim test driver."""
 
+import math
 import os
 
 import biaseddoom as bd
 
 MONSTER = "AimTarget"
 IS_MOD = os.environ.get("AIM_MOD", "") == "1"
+TOPDOWN = os.environ.get("AIM_TOPDOWN", "") == "1"
 
 
 def player_pawn():
@@ -205,14 +216,34 @@ def rifle_ammo():
 
 def step_watch():
     pawn = player_pawn()
-    bd.log(f"PYTEST AIMWATCH z={zombies_verbose()} pitch={pawn.pitch if pawn else 'n/a'} ammo={rifle_ammo()}")
+    bd.log(f"PYTEST AIMWATCH z={zombies_verbose()} pos={(round(pawn.x), round(pawn.y)) if pawn else 'n/a'} "
+           f"yaw={pawn.angles[0] if pawn else 'n/a'} pitch={pawn.pitch if pawn else 'n/a'} ammo={rifle_ammo()}")
+
+
+def hold_test_player():
+    """Keep test input noise from changing the firing origin between samples."""
+    pawn = player_pawn()
+    if pawn:
+        pawn.set_position(0.0, 0.0, 0.0, check=False)
+        pawn.set_velocity(0.0, 0.0, 0.0)
 
 
 def step_setup():
-    bd.execute("freelook false")
-    bd.execute("sv_freelook 1")
-    bd.execute("autoaimenabled true")
-    bd.execute("autoaim 35")
+    # Keep Xvfb mouse events from becoming forward movement. Top-Down itself
+    # still pins pitch, so this is also a direct test that its lock wins in a
+    # freelook-enabled level.
+    bd.execute("freelook true" if TOPDOWN else "freelook false")
+    bd.execute("sv_freelook 2" if TOPDOWN else "sv_freelook 1")
+    bd.execute("autoaimenabled false" if TOPDOWN else "autoaimenabled true")
+    bd.execute("autoaim 0" if TOPDOWN else "autoaim 35")
+    if TOPDOWN:
+        # Top-Down is level-only even in a freelook-enabled level. Its own
+        # vertical acquisition must override disabled user/mod autoaim.
+        # Disable Xvfb's synthetic mouse motion so this regression isolates
+        # the selected horizontal heading from physical input noise.
+        bd.set_cvar("use_mouse", False)
+        bd.set_cvar("cam_topdown_direct_aim", False)
+        bd.set_cvar("cam_experimental_mode", 2)
     if IS_MOD:
         # Classic-aim override must defeat the mod arsenal's NOAUTOAIM flags.
         # (Test-sensitivity hook: AIM_NO_OVERRIDE=1 skips this so the failure
@@ -227,8 +258,29 @@ def step_setup():
     else:
         bd.execute("give Clip 200")
     bd.execute("god")
+    bd.schedule(hold_test_player, delay=1, repeat=1)
     pawn = player_pawn()
-    bd.log(f"PYTEST AIMSETUP zombies={zombies()} clip={ammo()} pitch={pawn.pitch if pawn else 'n/a'}")
+    if TOPDOWN and pawn:
+        # The two raised targets sit in separate pillars. Point precisely at
+        # the first pillar, then move to the other later; this mirrors the
+        # horizontal selection a real Top-Down cursor makes.
+        pawn.angles = (math.degrees(math.atan2(-16.0, 520.0)), 0.0, 0.0)
+    bd.log(f"PYTEST AIMSETUP zombies={zombies()} clip={ammo()} pitch={pawn.pitch if pawn else 'n/a'} "
+           f"yaw={pawn.angles[0] if pawn else 'n/a'} topdown={bd.get_cvar('cam_experimental_mode')}")
+
+
+def step_topdown_second_heading():
+    pawn = player_pawn()
+    if pawn:
+        pawn.angles = (math.degrees(math.atan2(16.0, 520.0)), 0.0, 0.0)
+        bd.log(f"PYTEST TOPDOWN_HEADING yaw={pawn.angles[0]} zombies={zombies()}")
+
+
+def step_topdown_control_heading():
+    pawn = player_pawn()
+    if pawn:
+        pawn.angles = (0.0, 0.0, 0.0)
+        bd.log(f"PYTEST TOPDOWN_CONTROL_HEADING yaw={pawn.angles[0]} zombies={zombies()}")
 
 
 def step_fire():
@@ -250,10 +302,19 @@ def on_map_load(event):
     bd.schedule(step_setup, delay=10)
     bd.schedule(step_fire, delay=40)
     bd.schedule(step_watch, delay=45)
-    bd.schedule(step_watch, delay=120)
-    bd.schedule(step_watch, delay=230)
-    bd.schedule(step_stop, delay=40 + 200)
-    bd.schedule(step_report, delay=40 + 220)
+    if TOPDOWN:
+        bd.schedule(step_topdown_second_heading, delay=40 + 180)
+        bd.schedule(step_topdown_control_heading, delay=40 + 360)
+        bd.schedule(step_watch, delay=40 + 200)
+        bd.schedule(step_watch, delay=40 + 380)
+        bd.schedule(step_watch, delay=40 + 560)
+        bd.schedule(step_stop, delay=40 + 580)
+        bd.schedule(step_report, delay=40 + 600)
+    else:
+        bd.schedule(step_watch, delay=120)
+        bd.schedule(step_watch, delay=230)
+        bd.schedule(step_stop, delay=40 + 200)
+        bd.schedule(step_report, delay=40 + 220)
 EOF
 
 # UDMF test map: player at the west end facing east (+x) in a sealed room;
@@ -273,7 +334,7 @@ textmap = """namespace = "zdoom";
 thing { x = 0.0; y = 0.0; angle = 0; type = 1; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; skill6 = true; skill7 = true; skill8 = true; single = true; coop = true; dm = true; }
 thing { x = 520.0; y = -16.0; angle = 180; type = 31000; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; skill6 = true; skill7 = true; skill8 = true; single = true; coop = true; dm = true; }  // on pillar A (z=256)
 thing { x = 520.0; y = 16.0; angle = 180; type = 31000; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; skill6 = true; skill7 = true; skill8 = true; single = true; coop = true; dm = true; }   // on pillar B (z=1024)
-thing { x = 300.0; y = 16.0; angle = 180; type = 31000; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; skill6 = true; skill7 = true; skill8 = true; single = true; coop = true; dm = true; }   // control: same floor as the player
+thing { x = 300.0; y = 0.0; angle = 180; type = 31000; skill1 = true; skill2 = true; skill3 = true; skill4 = true; skill5 = true; skill6 = true; skill7 = true; skill8 = true; single = true; coop = true; dm = true; }   // control: same floor as the player
 
 vertex { x = -256.0; y = -512.0; }  // 0..3: room
 vertex { x = 1024.0; y = -512.0; }
@@ -385,6 +446,7 @@ if [[ -n "${mod_path}" ]]; then
 else
     export AIM_MOD=0
 fi
+export AIM_TOPDOWN="${topdown}"
 
 set +e
 timeout --signal=INT --kill-after=5s "${test_timeout}s" \
@@ -453,4 +515,8 @@ for err in errors:
 sys.exit(1 if errors else 0)
 EOF
 
-printf 'PASS: classic vertical autoaim hits elevated targets at any vanilla-reachable angle\n'
+if [[ "${topdown}" -eq 1 ]]; then
+    printf 'PASS: Top-Down level aim hits elevated targets at any vanilla-reachable angle\n'
+else
+    printf 'PASS: classic vertical autoaim hits elevated targets at any vanilla-reachable angle\n'
+fi

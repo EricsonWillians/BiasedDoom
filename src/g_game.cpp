@@ -939,7 +939,7 @@ void G_AddViewPitch (int look, bool mouse)
 		return;
 	}
 	look = LookAdjust(look);
-	if (!primaryLevel->IsFreelookAllowed())
+	if (!primaryLevel->IsFreelookAllowed() || ECamera_UsesTopDownClassicAim(players[consoleplayer].mo))
 	{
 		LocalViewPitch = 0;
 	}
