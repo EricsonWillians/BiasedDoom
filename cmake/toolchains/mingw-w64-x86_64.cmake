@@ -28,8 +28,13 @@ set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres CACHE FILEPATH "MinGW-w64 resou
 
 set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32)
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+# vcpkg's generated compatibility wrappers probe their installation prefix
+# with absolute PATHS and NO_DEFAULT_PATH. With an ONLY root mode, CMake
+# rewrites those paths below /usr/x86_64-w64-mingw32 and hides an otherwise
+# valid MinGW package (notably zlib while CURL is being discovered). BOTH
+# keeps the sysroot lookup first, then permits the explicit vcpkg prefix.
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-static -static-libgcc -static-libstdc++")

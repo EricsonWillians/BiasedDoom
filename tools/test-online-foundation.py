@@ -297,6 +297,8 @@ def main() -> None:
     require(".github/workflows/continuous_integration.yml", "curl unzip")
     require(".github/workflows/release.yml", "curl")
     require(".github/workflows/release.yml", "unzip")
+    require("cmake/toolchains/mingw-w64-x86_64.cmake", "CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH")
+    require("cmake/toolchains/mingw-w64-x86_64.cmake", "CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH")
     require(".github/workflows/continuous_integration.yml", "./build/biaseddoom-online-snapshot-fuzz")
     require("src/launcher/networkpage.cpp", "I approve downloading and mounting")
     require("src/launcher/networkpage.cpp", "Refresh public sessions")
