@@ -27,7 +27,9 @@ select and tune a mode.
   off to restore ordinary first-person look and autoaim.
   Choose the exact-position **Arrow** or the actor's animated **Player sprite** with
   `cam_topdown_player_marker`. Zoom, colors, and line style stay under the
-  standard Automap options, which the presentation honors; normal Automap
+  standard Automap options, which the presentation honors. In particular,
+  **Options → Automap Options → Set custom colors** changes the Top-Down
+  background and linedef colors; normal Automap
   rotation is intentionally ignored so this view stays north-up. Top-Down is
   intentionally more than the normal Automap in full-screen mode: it always
   draws non-hidden monsters and pickups as their live animated, rotated
@@ -50,9 +52,10 @@ Top-Down also has a temporary framing mode: **Top-Down Free Pan** (`I` by
 default, or `toggletopdownpan`). While it is enabled, W/A/S/D moves the
 north-up map camera in any planar direction instead of moving the player, so
 you can choose how much of the level to show. Pointer aim remains active.
-Toggle it off to hold the chosen framing; it does not snap back to the player.
-Use `resettopdowncamera` (available in **Customize Controls → Other
-Controls**) when you want to resume following the player. The ordinary
+Toggle it off to keep that panned offset while the camera follows the player;
+it does not snap back to center or freeze in place. Use
+`resettopdowncamera` (available in **Customize Controls → Other Controls**)
+when you want to center the camera on the player again. The ordinary
 Automap follow preference is never changed. Configure Free Pan through
 `cam_topdown_freepan` and `cam_topdown_pan_speed`, or in the Experimental
 cameras menu. The shortcut can be changed in **Customize Controls → Other

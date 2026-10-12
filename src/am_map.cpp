@@ -979,7 +979,8 @@ class DAutomap :public DAutomapBase
 	// coordinates used for floors, walls, and actor markers.
 	bool TopDownCamera = false;
 	bool TopDownPlayerSprite = false;
-	bool TopDownFollowPlayer = true;
+	bool TopDownFreePanActive = false;
+	DVector2 TopDownFollowOffset = {};
 	DVector2 TopDownPanInput = {};
 	DVector2 TopDownAimCursor = {};
 	bool TopDownAimCursorInitialized = false;
@@ -1032,6 +1033,7 @@ class DAutomap :public DAutomapBase
 	void rotatePoint(double *x, double *y);
 	void rotate(double *x, double *y, DAngle an);
 	void doFollowPlayer();
+	void resumeTopDownFollowFromCurrentFrame();
 	void saveScaleAndLoc();
 	void restoreScaleAndLoc();
 	void minOutWindowScale();
@@ -1119,7 +1121,8 @@ void DAutomap::SetTopDownCamera(bool enabled, bool playerSprite)
 	TopDownPlayerSprite = enabled && playerSprite;
 	if (entering)
 	{
-		TopDownFollowPlayer = !cam_topdown_freepan;
+		TopDownFreePanActive = cam_topdown_freepan;
+		TopDownFollowOffset = {};
 		TopDownAimCursorInitialized = false;
 		// Recenter on the exact player position on the first Top-Down frame.
 		// Regular follow state remains untouched for when the mode is exited.
@@ -1128,7 +1131,8 @@ void DAutomap::SetTopDownCamera(bool enabled, bool playerSprite)
 	else if (!enabled)
 	{
 		TopDownPanInput = {};
-		TopDownFollowPlayer = true;
+		TopDownFreePanActive = false;
+		TopDownFollowOffset = {};
 		TopDownAimCursorInitialized = false;
 	}
 }
@@ -1210,8 +1214,10 @@ void DAutomap::ResetTopDownCameraFollow()
 		return;
 	}
 
-	TopDownFollowPlayer = true;
+	TopDownFreePanActive = false;
+	TopDownFollowOffset = {};
 	TopDownPanInput = {};
+	m_paninc.x = m_paninc.y = 0;
 	f_oldloc.x = FLT_MAX;
 }
 
@@ -1666,8 +1672,9 @@ void DAutomap::doFollowPlayer ()
 
 		if (f_oldloc.x != ampos.X || f_oldloc.y != ampos.Y)
 		{
-			m_x = ampos.X - m_w / 2;
-			m_y = ampos.Y - m_h / 2;
+			const DVector2 followOffset = TopDownCamera ? TopDownFollowOffset : DVector2{};
+			m_x = ampos.X + followOffset.X - m_w / 2;
+			m_y = ampos.Y + followOffset.Y - m_h / 2;
 			m_x2 = m_x + m_w;
 			m_y2 = m_y + m_h;
 
@@ -1684,6 +1691,24 @@ void DAutomap::doFollowPlayer ()
 			f_oldloc.y = ampos.Y;
 		}
 	}
+}
+
+void DAutomap::resumeTopDownFollowFromCurrentFrame()
+{
+	auto cam = players[consoleplayer].camera;
+	if (cam != nullptr)
+	{
+		const DVector3 playerPosition = cam->InterpolatedPosition(r_viewpoint.TicFrac);
+		const DVector2 currentCenter = { m_x + m_w / 2, m_y + m_h / 2 };
+		// Keep the camera's panned offset from the player, then advance that
+		// framing as the player moves instead of freezing it or snapping home.
+		TopDownFollowOffset = currentCenter - playerPosition.XY();
+	}
+
+	TopDownFreePanActive = false;
+	TopDownPanInput = {};
+	m_paninc.x = m_paninc.y = 0;
+	f_oldloc.x = FLT_MAX;
 }
 
 //=============================================================================
@@ -3514,14 +3539,24 @@ void DAutomap::Drawer (int bottom)
 	if (!automapactive)
 		return;
 
-	if (TopDownCamera && cam_topdown_freepan)
+	bool topDownFollowing = false;
+	if (TopDownCamera)
 	{
-		// Once the user has panned manually, turning Free Pan back off should
-		// hold that framing. Recenter is an explicit separate action.
-		TopDownFollowPlayer = false;
+		if (cam_topdown_freepan)
+		{
+			TopDownFreePanActive = true;
+		}
+		else
+		{
+			if (TopDownFreePanActive)
+			{
+				resumeTopDownFollowFromCurrentFrame();
+			}
+			topDownFollowing = true;
+		}
 	}
 
-	if ((TopDownCamera && TopDownFollowPlayer) || (!TopDownCamera && am_followplayer))
+	if (topDownFollowing || (!TopDownCamera && am_followplayer))
 	{
 		doFollowPlayer();
 	}

@@ -557,7 +557,7 @@ CCMD(toggletopdownpan)
 	{
 		primaryLevel->automap->SetTopDownCameraPan({});
 	}
-	Printf("Top-Down Free Pan %s\n", cam_topdown_freepan ? "enabled (W/A/S/D move the camera)" : "disabled (holding current framing)");
+	Printf("Top-Down Free Pan %s\n", cam_topdown_freepan ? "enabled (W/A/S/D move the camera)" : "disabled (following from current framing)");
 }
 
 CCMD(resettopdowncamera)
